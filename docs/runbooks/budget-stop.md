@@ -7,7 +7,7 @@
 | `aiven-alert` | €10/month | Emails at 50 %, 90 % and 100 % |
 | `aiven-stop` | €25/month | At 100 %, triggers the `budget-stop` function through Pub/Sub |
 
-Both budgets cover the agents, gateway and control projects, and both are set to exclude all credits (`EXCLUDE_ALL_CREDITS`). On the free trial the credit pays for usage, so net cost stays near zero. A budget that subtracted credits would never fire. If the billing account's currency is USD, use about $11 and $27.
+Both budgets cover the agents, gateway and control projects, and both are set to exclude all credits (`EXCLUDE_ALL_CREDITS`). While the promotional credit lasts (until 2027-01-04), it pays for usage, so net cost stays near zero. A budget that subtracted credits would never fire. If the billing account's currency is USD, use about $11 and $27.
 
 ## What happens at the stop
 
@@ -41,7 +41,7 @@ Both budgets cover the agents, gateway and control projects, and both are set to
 
 Don't drill on the real projects, because Google may delete resources. Instead:
 
-1. Create a scratch project linked to the same billing account. On the trial, first check that the account can hold a fourth project.
+1. Create a scratch project linked to the same billing account. First check that the account can hold a fourth project (setup S1).
 2. Deploy a copy of the function with a project list that holds only the scratch project, and give it its own topic.
 3. Publish a test message to that topic. Use the real notification's fields, with `budgetDisplayName` `aiven-stop`, and set `costAmount` greater than or equal to `budgetAmount`.
 4. Pass when:
@@ -51,7 +51,7 @@ Don't drill on the real projects, because Google may delete resources. Instead:
    - the real projects are untouched.
 5. Relink billing on the scratch project. Then run BD-2: a message just below the amount, a duplicate, and one sent with `STOP_ENABLED=false`.
 
-## Free trial
+## Credit
 
-- **Trial end.** The trial ends after 90 days or once the $300 is used. Upgrade to a paid account before that. Without the upgrade, Google stops every project, including control, and deletes them after a 30-day grace period. The audit log would be lost with them.
-- **Billing errors.** If relinking fails with a billing error, check whether the trial has ended.
+- The account is paid since 2026-10-06. The remaining promotional credit (€252.56 then) expires on 2027-01-04, and an alert on 2026-12-20 is the reminder.
+- After that, all usage is billed. The budgets already count gross cost, so when they fire doesn't change.

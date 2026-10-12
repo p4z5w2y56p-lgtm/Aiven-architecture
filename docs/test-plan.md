@@ -206,7 +206,7 @@ These run at L2 now (fake Gmail, wrapper switched on for test agents only), and 
 | BD-1 | Drill on a scratch project (runbook): publish a test notification at or above the stop amount | Billing on the scratch project is unlinked within 5 minutes, a `budget_stop` audit entry is written, the alert email arrives, the real projects are untouched, and relinking works |
 | BD-2 | A notification just below the amount (€24.99), a duplicate notification, and a notification while `STOP_ENABLED=false` | No action, then idempotent, then no action |
 | BD-3 | Configuration check with `gcloud billing budgets describe` | Both budgets count gross cost (`EXCLUDE_ALL_CREDITS`). The alert is €10 with thresholds at 50/90/100 %. The stop is €25 and wired to the `budget-stop` topic. |
-| BD-4 | Wiring check: the real function logs every notification it receives | Within 24 h a notification arrives showing gross cost above 0, even while the trial credit covers it |
+| BD-4 | Wiring check: the real function logs every notification it receives | Within 24 h a notification arrives showing gross cost above 0, even while the credit covers it |
 | CR-1 | Shadow-mode runs | Every `run_end` has `usage` and `cost_estimate_eur`, and the shadow review shows cost per run |
 | CR-2 | Monthly: the sum of estimates against the billing report (gross, model SKUs) | Within ±30 %; otherwise investigate |
 
@@ -235,4 +235,4 @@ Every full run writes `test-reports/<date>.md` with:
 - Model-driven runs are samples. `t-obedient` is what proves that the gateway holds whatever the model does.
 - A person with direct Drive or Gmail access isn't covered (the plan's honest limit).
 - The Changes feed only cross-checks Drive. Email gets its own cross-check (the sent folder against the audit log) once wrap 2 is live.
-- On the free trial, `t-llm` can only use Gemini. Repeat AT-INJ and AT-PASTE with the production model after upgrading (gateway-design §14).
+- `t-llm` uses the model configured for AIVEN's agents. Repeat AT-INJ and AT-PASTE whenever that model changes, for example from Gemini to Claude.

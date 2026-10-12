@@ -20,7 +20,7 @@ Every rule is decided by one pure function (`decide`). Wrappers do the I/O. Terr
 - ruamel.yaml (YAML 1.2), markdown-it-py
 - google-auth, google-cloud-firestore, google-cloud-logging, google-cloud-storage, google-cloud-billing
 - google-api-python-client (Drive v3, Sheets v4, Gmail v1)
-- google-genai (Gemini on Vertex AI), anthropic[vertex] (Claude on Vertex AI, later)
+- google-genai (Gemini on Vertex AI), anthropic[vertex] (Claude on Vertex AI)
 - functions-framework
 - pytest + pytest-cov, ruff
 - Terraform (google provider)
@@ -104,7 +104,7 @@ src/aiven/policy/                       # M1 validator
 src/aiven/gateway/                      # M3 core, M4 wrappers/drive.py, M6 wrappers/email.py
 src/aiven/control_ui/                   # M5
 src/aiven/functions/budget_stop.py      # M2
-src/aiven/functions/trial_reminder.py   # M2
+src/aiven/functions/credit_reminder.py  # M2
 src/aiven/agent/                        # M7 runtime + model layer
 agents/<id>/policy.md, agents/<id>/runtime.yaml   # test agents (M8); real agents later
 infra/terraform/                        # M2
@@ -116,29 +116,28 @@ tests/{policy,gateway,control_ui,functions,agent,l3}/
 
 ## S. Setup (human, before Task 2.1)
 
-- [ ] **S1. Check the project quota (need 4).** You need four projects: agents, gateway, control, and a scratch project for the budget drill. Create the four projects and link each to the trial billing account (Console, then Billing, then Account management shows linked projects). If the fourth won't link, stop and choose: upgrade, or run drill BD-1 later in a temporary project you delete straight after. Record the four project IDs.
+- [ ] **S1. Check the project quota (need 4).** You need four projects: agents, gateway, control, and a scratch project for the budget drill. Create the four projects and link each to the billing account (Console, then Billing, then Account management shows linked projects). If the fourth won't link, stop and choose: upgrade, or run drill BD-1 later in a temporary project you delete straight after. Record the four project IDs.
 - [ ] **S2. Check the billing currency.** Run `gcloud billing accounts describe <BILLING_ACCOUNT_ID> --format='value(currencyCode)'`. For EUR, set alert 10 and stop 25; for USD, set 11 and 27. Record these in `infra/terraform/terraform.tfvars` as `budget_currency`, `budget_alert_amount` and `budget_stop_amount`.
-- [ ] **S3. Record the trial dates.** Note the trial start date from Billing, then Overview, as `trial_start` in tfvars. Put a calendar entry on day 75 (see the trial calendar). Task 2.4 adds an automatic alert for the same day.
+- [ ] **S3. Record the credit.** The account was upgraded to paid on 2026-10-06. €252.56 of promotional credit is left, valid until 2027-01-04. Put a calendar entry on 2026-12-20; Task 2.4 adds an automatic alert the same day.
 - [ ] **S4. Confirm the organisation node.** Confirm the Google Cloud organisation for aivenstudios.com exists (it comes with Workspace). Task 2.1 applies the org policies there.
 - [ ] **S5. Create the Sandbox.** Set up the Shared Drive as in drive-wrapper §1, with folders `Invoices`, `Test` and `Rollback test`. Record the drive ID and the folder IDs.
 - [ ] **S6. Create the signing key.** Run `ssh-keygen -t ed25519-sk -f ~/.ssh/aiven_policy_sk` on the hardware key, then write the one-line `allowed_signers` (validator-spec §2).
-- [ ] **S7. Pick the Gemini model.** In Vertex AI Model Garden, choose a Gemini model that is available in `europe-west4` on the trial. Record its ID for `agents/*/runtime.yaml`.
+- [ ] **S7. Pick the model for Phase 1 agents.** Gemini is the default. Claude on Vertex AI is also available, since the account is paid. In Vertex AI Model Garden, check that the chosen model is available for `aiven-agents`, and record its ID and region for `agents/*/runtime.yaml`.
 - [ ] **S8. Later, before wrap 2 goes live:** set up the agent Workspace as in email-wrapper §1.
 
-## Trial calendar
+## Credit calendar
 
-| Day | Check |
+| Date | Check |
 |---|---|
-| 0 | The trial starts (S3). The trial ends at day 90 or when $300 is used, whichever comes first. |
-| 75 | Upgrade check. The email alert (Task 2.4) and the calendar entry both fire. See the checklist below. |
-| 90 | The trial ends at the latest. |
+| 2026-10-06 | The account was upgraded to paid, with €252.56 of promotional credit left. |
+| 2026-12-20 | Credit check. The email alert (Task 2.4) and the calendar entry both fire. See the checklist below. |
+| 2027-01-04 | The credit expires. From then on all usage is billed; the budgets are unchanged. |
 
-Day-75 checklist:
+2026-12-20 checklist:
 
-1. Upgrade to a paid billing account before day 90. If agents need Claude earlier, upgrade now.
-2. Check the remaining credit against expected use until day 90.
-3. After the upgrade, run `scripts/deploy_check.py budgets` (BD-3). Both budgets must still count gross cost, with the right amounts and currency.
-4. If you are switching agents to Claude: change `runtime.yaml` (Task 7.3) and re-run AT-INJ and AT-PASTE with the production model.
+1. Check the remaining credit in Billing, then Credits.
+2. Decide whether €10/€25 still fit, now that real charges follow.
+3. Run `scripts/deploy_check.py budgets` (BD-3). Both budgets must still count gross cost, with the right amounts and currency.
 
 ---
 
@@ -377,7 +376,7 @@ Plus:
   - `gateway`
   - `control-ui`
   - `budget-stop`
-  - `trial-reminder`
+  - `credit-reminder`
   - `agent-<id>`, one per entry of `var.agents`
 - IAM exactly as in gateway-design §3. That includes `datastore.viewer` on the gateway project for `control-ui`.
 - Terraform state in a versioned bucket in control.
@@ -395,11 +394,11 @@ Plus:
 - Log bucket `aiven-audit`: 365 days, with a sink for log `aiven-audit` and an exclusion from `_Default`.
 - Firestore databases `control` (control project) and `gateway` (gateway project), with TTL on `runs` and `calls` (90 days).
 
-Locking `aiven-audit` is a separate, explicit apply (`locked = true`) after Matthijs confirms, because it can't be undone.
+Locking `aiven-audit` (`locked = true`) can't be undone. **Do not apply it until Matthijs explicitly confirms in the conversation.** The task ships with `locked = false`, and the lock is a separate one-line change that waits for that confirmation.
 
 **Test:** `scripts/deploy_check.py stores` checks the retentions, the lock, versioning and the exclusion.
 
-**Commit:** `infra: control stores and locked audit log`
+**Commit:** `infra: control stores and audit log (lock waits for confirmation)`
 
 ### Task 2.3: Shared audit writer, budgets and budget stop (runbook budget-stop.md)
 
@@ -442,24 +441,24 @@ Locking `aiven-audit` is a separate, explicit apply (`locked = true`) after Matt
 
 **Commit:** `feat(functions): budget hard stop with gross-cost budgets`
 
-### Task 2.4: Alerts and day-75 trial reminder
+### Task 2.4: Alerts and credit reminder
 
 **Files:**
 
-- Create: `src/aiven/functions/trial_reminder.py`
+- Create: `src/aiven/functions/credit_reminder.py`
 - Create: `infra/terraform/modules/control/alerts.tf`
-- Test: `tests/functions/test_trial_reminder.py`
+- Test: `tests/functions/test_credit_reminder.py`
 
 **Resources:**
 
 - A log-based alert in control on `jsonPayload.alert=true`, with an email channel to Matthijs.
 - A second alert that fires when `jsonPayload.reason="CONTROL_UNREACHABLE"` refusals continue for more than 1 minute.
-- Cloud Scheduler job `trial-day-75`, scheduled for `trial_start + 75 days` (tfvars). It calls `trial-reminder` with OIDC.
-- `trial-reminder` writes a `control` audit entry with `alert: true` and the text "Trial day 75: upgrade the billing account (implementation plan, trial calendar)."
+- Cloud Scheduler job `credit-reminder`, running once at 2026-12-20 09:00 Europe/Amsterdam (`credit_alert_date` in tfvars). It calls `credit-reminder` with OIDC.
+- `credit-reminder` writes a `control` audit entry with `alert: true` and the text "Google Cloud credit expires on 2027-01-04 (€252.56 at the upgrade). Check what is left; from then on all usage is billed."
 
-**Tests:** `test_reminder_writes_alert_entry`. Manually: `gcloud scheduler jobs run trial-day-75` must deliver the email.
+**Tests:** `test_reminder_writes_alert_entry`. Manually: `gcloud scheduler jobs run credit-reminder` must deliver the email.
 
-**Commit:** `feat(functions): alert policy and day-75 trial reminder`
+**Commit:** `feat(functions): alert policies and credit-expiry reminder`
 
 ### Task 2.5: Deploy checks
 
@@ -654,7 +653,7 @@ Locking `aiven-audit` is a separate, explicit apply (`locked = true`) after Matt
 
 - `amsterdam_day(now: datetime) -> str`
 - `start_run(store, p: Policy, shadow: bool, now) -> RunState | Refusal`
-- `end_run(store, run_id, usage: list[Usage], now) -> RunSummary`
+- `end_run(store, run_id, usage: list[Usage], end_reason: Literal["done","model_refusal","max_turns","error"], now) -> RunSummary`
 - `idempotent(store, run_id, request_id) -> StoredCall | None`
 
 **Tests:**
@@ -663,6 +662,7 @@ Locking `aiven-audit` is a separate, explicit apply (`locked = true`) after Matt
 - `test_each_limit_refuses_and_ends_run`
 - `test_counters_use_amsterdam_date_at_request_time`: covers 23:59 and 00:01, and the DST dates 2026-10-25 and 2027-03-28.
 - `test_same_request_id_executes_once` (G-3)
+- `test_end_reason_logged_on_run_end`
 - `test_parallel_reservations_never_exceed_limit`: Firestore emulator, 20 concurrent reservations against a limit of 10; exactly 10 succeed.
 
 **Commit:** `feat(gateway): runs, limits and idempotency`
@@ -731,7 +731,7 @@ Locking `aiven-audit` is a separate, explicit apply (`locked = true`) after Matt
 - `Usage(model: str, input_tokens: int, output_tokens: int)`. This is the same shape as the agent runtime's `Usage` in Task 7.1.
 - `Pricing.load(data: bytes) -> Pricing`, read from `pricing/models.yaml`.
 - `Pricing.estimate(usage: list[Usage]) -> Decimal | None`. It returns None when a model is missing.
-- `run_end` gets `usage` and `cost_estimate_eur`.
+- `run_end` gets `usage`, `cost_estimate_eur` and `end_reason`.
 
 **Tests:**
 
@@ -1032,14 +1032,14 @@ Deploy behind IAP for Matthijs only. `deploy_check.py iam` then confirms the IAP
 
 **Commit:** `feat(agent): model interface and Gemini adapter`
 
-### Task 7.2: Claude adapter (built now, used after the upgrade)
+### Task 7.2: Claude adapter
 
 **Files:**
 
 - Create: `src/aiven/agent/model/claude.py`
 - Test: `tests/agent/model/test_claude.py`, using recorded responses in `tests/agent/model/fixtures/claude/`
 
-**Interfaces (produces):** `VertexClaudeModel(project: str, region: str, model_id: str, max_tokens: int, effort: str | None, fallback_models: list[str])`.
+**Interfaces (produces):** `VertexClaudeModel(project: str, region: str, model_id: str, max_tokens: int, effort: str | None)`.
 
 - **Client.** `anthropic.AnthropicVertex(project_id=project, region=region)`, authenticated with Google sign-in (no key).
 - **Tools.**
@@ -1053,7 +1053,7 @@ Deploy behind IAP for Matthijs only. `deploy_check.py iam` then confirms the IAP
   - `stop_reason == "refusal"` maps to `refusal`.
   - `pause_turn` triggers a resend.
 - **Usage** is summed over `usage.iterations` when present.
-- **Refusal fallbacks.** When `fallback_models` is non-empty, register `BetaRefusalFallbackMiddleware(fallback_models)` on the client, with one `BetaFallbackState` per conversation. Vertex has no server-side fallbacks, so this is client-side.
+- **Refusals.** A refusal is returned as `stop="refusal"` and is never retried on another model: no fallback middleware is used.
 
 **Tests:**
 
@@ -1063,7 +1063,7 @@ Deploy behind IAP for Matthijs only. `deploy_check.py iam` then confirms the IAP
 - `test_all_tool_results_in_one_message`
 - `test_refusal_mapped`
 - `test_iterations_usage_summed`
-- `test_fallback_middleware_only_when_configured`
+- `test_refusal_not_retried_on_another_model`
 
 **Commit:** `feat(agent): Claude on Vertex adapter`
 
@@ -1076,7 +1076,7 @@ Deploy behind IAP for Matthijs only. `deploy_check.py iam` then confirms the IAP
 
 **Interfaces (produces):**
 
-- `ModelConfig(provider: Literal["vertex-gemini","vertex-claude"], model_id: str, region: str, max_output_tokens: int, effort: str | None = None, fallback_models: tuple[str, ...] = ())`
+- `ModelConfig(provider: Literal["vertex-gemini","vertex-claude"], model_id: str, region: str, max_output_tokens: int, effort: str | None = None)`
 - `model_from_config(cfg: ModelConfig, project: str) -> ModelClient`
 
 `runtime.yaml` example (Phase 1):
@@ -1089,7 +1089,7 @@ model:
   max_output_tokens: 8192
 ```
 
-After the upgrade, only these lines change:
+To switch an agent to Claude (available now), only these lines change:
 
 ```yaml
 model:
@@ -1097,7 +1097,6 @@ model:
   model_id: claude-opus-5-5
   region: eu
   max_output_tokens: 16000
-  fallback_models: [<chosen at switch time>]
 ```
 
 The switch also needs the model's price added to `pricing/models.yaml`.
@@ -1120,13 +1119,14 @@ The switch also needs the model's price added to `pricing/models.yaml`.
 
 **Interfaces (produces):**
 
-- `GatewayClient(base_url: str, audience: str)`, with methods `me()`, `start_run()`, `call(run_id, action, args, request_id)`, `call_status(run_id, call_id)` and `end_run(run_id, usage)`. It gets ID tokens from `google.oauth2.id_token.fetch_id_token`.
-- `run_agent(task: str, gateway: GatewayClient, model: ModelClient, max_turns: int = 30) -> dict`, returning the gateway's end-run summary. Tools come from `GET /v1/me` at run start. A refused call becomes an `is_error` tool result. The run's usage is reported at `end_run`.
+- `GatewayClient(base_url: str, audience: str)`, with methods `me()`, `start_run()`, `call(run_id, action, args, request_id)`, `call_status(run_id, call_id)` and `end_run(run_id, usage, end_reason)`. It gets ID tokens from `google.oauth2.id_token.fetch_id_token`.
+- `run_agent(task: str, gateway: GatewayClient, model: ModelClient, max_turns: int = 30) -> dict`, returning the gateway's end-run summary. Tools come from `GET /v1/me` at run start. A refused call becomes an `is_error` tool result. A model refusal ends the run with `end_reason="model_refusal"`. The run's usage is reported at `end_run`.
 - `scripted.py` holds `t-reader`, `t-writer`, `t-shadow`, `t-attacker` and `t-obedient`, as in test-plan §3.
 
 **Tests:**
 
 - `test_refusal_becomes_error_result`
+- `test_model_refusal_ends_run_and_is_logged`
 - `test_usage_reported_at_end` (CR-1)
 - `test_max_turns_stops`
 
@@ -1213,7 +1213,7 @@ AT-INJ at L3 waits for gate G2.
 | gateway-design §9 | S2, 2.3, 3.9 |
 | gateway-design §10 | 2.4 |
 | gateway-design §12 | M6 |
-| gateway-design §14 | S1–S3, the trial calendar, 2.4 |
+| gateway-design §14 | S1–S3, the credit calendar, 2.4 |
 | gateway-design §15 | M7 |
 | drive-wrapper §1–§7 | S5, 4.1–4.5 |
 | email-wrapper §1–§7 | S8, 6.1–6.2 |

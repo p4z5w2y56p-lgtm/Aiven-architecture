@@ -16,7 +16,8 @@ It builds on `docs/validator-spec.md`, which defines the policy format, the acti
 | `untrusted_input: strict` is the v1 default. | Your go |
 | Budget alert at €10/month and hard stop at €25/month, both on gross cost (before credits). The stop may take the gateway down. | Your go (step 3) |
 | Cost per run is logged during shadow mode. | Your go (step 3) |
-| The billing account is a Google Cloud free trial for now (section 14). | Your note (step 3) |
+| The billing account is paid since 2026-10-06, with €252.56 promotional credit valid until 2027-01-04 (section 14). | Your correction (M1 go) |
+| Claude refusals end the run and are logged. There is no fallback model. | Your go (M1) |
 
 ## 2. Projects
 
@@ -59,7 +60,7 @@ Every call is HTTPS to the gateway's Cloud Run URL, carrying a Google-signed ID 
 | `POST /v1/runs` | Starts a run. Checks the kill switches, a verified policy and `runs_per_day`. | `run_id`, `deadline`, `shadow`, `policy_hash` |
 | `POST /v1/runs/{run_id}/calls` | Requests one action: `{action, args, request_id}` | `call_id`, `outcome` (`executed`, `proposed`, `queued`, `refused`), `class`, `reason`, `result`, `confirm_id`, `tainted` |
 | `GET /v1/runs/{run_id}/calls/{call_id}` | Gives the status of a call, for example a queued R2 | Outcome, status, result |
-| `POST /v1/runs/{run_id}:end` | Ends the run. The body reports model usage: `{usage: [{model, input_tokens, output_tokens}]}`. | Calls by outcome, records used, taint, cost estimate |
+| `POST /v1/runs/{run_id}:end` | Ends the run. The body reports model usage and why the run ended: `{usage: [{model, input_tokens, output_tokens}], end_reason}`, where `end_reason` is `done`, `model_refusal`, `max_turns` or `error`. | Calls by outcome, records used, taint, cost estimate |
 
 `request_id` is unique within a run. A retry with the same `request_id` gets the stored answer, so an action never executes twice.
 
@@ -141,7 +142,7 @@ Each entry is a Cloud Logging `jsonPayload` in log `aiven-audit` in control:
 ```
 
 - `event` is one of `run_start`, `call_start`, `call`, `decision`, `run_end`, `policy_load`, `control` (kill switch, sign-off, taint clear, wrapper switch, rollback or restart record) and `budget_stop`.
-- `run_end` adds `usage` (model, input and output tokens, as reported by the agent) and `cost_estimate_eur`.
+- `run_end` adds `usage` (model, input and output tokens, as reported by the agent), `cost_estimate_eur` and `end_reason`. A model refusal is logged as `end_reason: model_refusal`.
 - `approver` is `policy` for R0 or R1 under the signed policy, the confirming person's address for R2, and `none` for refused or proposed calls.
 - Entries hold IDs and hashes only, never file content, file names or email text. That keeps the log free of personal data, bank details and credentials.
 
@@ -207,7 +208,7 @@ Control UI pages, all in NL and EN:
 
 ## 9. Budget: alert and hard stop
 
-- **Gross cost.** Both budgets count cost before credits (`creditTypesTreatment: EXCLUDE_ALL_CREDITS`). On the free trial the credit covers the spend, so net cost stays near zero, and budgets that subtract credits would never fire (section 14).
+- **Gross cost.** Both budgets count cost before credits (`creditTypesTreatment: EXCLUDE_ALL_CREDITS`). While the promotional credit lasts, it covers the spend, so net cost stays near zero, and budgets that subtract credits would never fire (section 14).
 - **Alert.** Budget `aiven-alert` is €10/month across the three projects. It sends email at 50 %, 90 % and 100 % of actual cost.
 - **Hard stop.** Budget `aiven-stop` is €25/month across the same three projects. At 100 % it publishes to Pub/Sub topic `budget-stop` in control. The `budget-stop` function then:
   - acts only on notifications from `aiven-stop` where `costAmount >= budgetAmount`;
@@ -261,22 +262,17 @@ The choice is option (a): the agent mailbox lives in a separate small Workspace.
 | Working data TTL (runs, calls) | 90 days |
 | Confirm args and previews erased | 7 days after closing |
 
-## 14. Free trial
+## 14. Billing account and credit
 
-The billing account is a Google Cloud free trial: a $300 credit for 90 days, ending at whichever comes first.
+The billing account is paid: it was upgraded from the free trial on 2026-10-06. The remaining promotional credit was €252.56, valid until 2027-01-04.
 
-- **Budgets count gross cost.** On the trial the credit pays for usage, so net cost stays near zero. Budgets that subtract credits, which is Google's default, would never fire. Both budgets therefore exclude all credits (section 9).
-- **Not on Google's list of trial restrictions:** everything this design uses. That covers Cloud Run, Cloud Run functions, Firestore, Cloud Storage, Cloud Logging (including locked buckets), Pub/Sub, budgets with Pub/Sub notifications, IAP, and Vertex AI with Google's own models (Gemini).
-- **Needs the paid upgrade:**
-  - **Third-party models on Vertex AI, such as Claude.** Google unlocks them only after the upgrade, so on the trial agents can use only Gemini. If AIVEN's agents should run on Claude, upgrade before the first real agent.
-  - **Quota increases**, which are blocked on the trial. If Vertex AI's default quota is too low for the agents or the model-driven tests, the only fix is the upgrade.
-  - **Cloud Marketplace products**, which this design doesn't use.
-- **Upgrade before the trial ends.** When the trial ends without an upgrade, the trial billing account closes, everything stops (the control project included), and after a 30-day grace period Google deletes it all. That would break the 1-year audit log. Upgrading keeps the remaining credit until the original 90-day mark, and the €10/€25 budgets keep working on gross cost.
+- **Budgets count gross cost.** While the credit lasts it pays for usage, so net cost stays near zero. Budgets that subtract credits, which is Google's default, would never fire. Both budgets therefore exclude all credits (section 9). After the credit ends nothing changes: gross cost is then also what is billed.
+- **No trial restrictions remain.** Third-party models on Vertex AI (Claude) and quota increases are available.
+- **Credit reminder.** On 2026-12-20 an alert email says the credit is about to run out (plan Task 2.4), and a calendar entry backs it up.
 - **Check first** (setup steps S1–S3 in `docs/plans/2026-10-12-phase1-implementation.md`):
   - The project quota. The design needs 4 projects: 3, plus 1 scratch project for the budget drill.
   - The billing currency. The budgets use it: €10/€25, or $11/$27.
-  - The trial start date. A day-75 alert reminds Matthijs to upgrade.
-- **Not covered by the trial:** the agent Workspace (email option a) is its own Workspace subscription, billed outside Google Cloud.
+- **Not covered by Google Cloud billing:** the agent Workspace (email option a) is its own Workspace subscription.
 
 ## 15. Agent runtime and model layer
 
@@ -284,8 +280,8 @@ Agents run as Cloud Run jobs in `aiven-agents`, using the `aiven.agent` runtime.
 
 - **One interface.** `ModelClient.start(system, tools)` and `send(...)` work with neutral tool specs, tool calls, tool results and usage. Tool specs are built from the same JSON Schemas the gateway validates against (`catalog/schemas/`), and they are fixed for the whole run.
 - **Two adapters.**
-  - Gemini on Vertex AI (`google-genai`, `vertexai=True`) for Phase 1 on the trial.
-  - Claude on Vertex AI (`anthropic[vertex]`, `AnthropicVertex`), ready for after the upgrade.
+  - Gemini on Vertex AI (`google-genai`, `vertexai=True`), the Phase 1 default.
+  - Claude on Vertex AI (`anthropic[vertex]`, `AnthropicVertex`), available now that the account is paid.
 
   Both use the agent's own service account, so no API key is involved.
 - **Append-only history.** Each adapter keeps the provider's own reply content and sends it back unchanged on the next turn. Claude's thinking blocks and Gemini's thought signatures must be returned exactly as received. Switching provider happens between runs, never inside one.
@@ -295,9 +291,9 @@ Agents run as Cloud Run jobs in `aiven-agents`, using the `aiven.agent` runtime.
   - `model_id`, for example `claude-opus-5-5`;
   - `region`, for example `eu` to keep processing in the EU.
 
-  It also needs a price entry in `pricing/models.yaml`, and the model enabled in Model Garden, which requires the paid upgrade. A conformance test runs one scripted conversation through both adapters and expects the same gateway calls.
+  It also needs a price entry in `pricing/models.yaml`, and the model enabled in Model Garden. A conformance test runs one scripted conversation through both adapters and expects the same gateway calls.
 - **Claude specifics** handled inside the adapter:
   - Forced tool choice isn't allowed on current models, so the adapter uses `auto`.
   - Thinking stays at the model default.
-  - Refusals end the run, unless `fallback_models` is set; then the SDK's client-side refusal fallback is used, because Vertex has no server-side fallback.
+  - A refusal ends the run and is logged (`end_reason: model_refusal`). It is never retried on another model.
   - Usage is summed over every attempt, so cost per run stays right.

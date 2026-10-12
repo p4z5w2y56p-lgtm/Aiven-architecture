@@ -6,10 +6,10 @@ Status: Phase 1 (internal only). The specs and the test plan are done. The imple
 
 | Path | Contents |
 |---|---|
-| `docs/plans/2026-10-12-phase1-implementation.md` | Implementation plan: setup steps, trial calendar, milestones M1–M8 |
+| `docs/plans/2026-10-12-phase1-implementation.md` | Implementation plan: setup steps, credit calendar, milestones M1–M8 |
 | `templates/policy-template.md` | Policy template, filled in for the example agent `invoice-reminder` |
 | `docs/validator-spec.md` | What the validator checks: action catalog v1, platform constants, error messages (EN + NL) |
-| `docs/gateway-design.md` | Projects, identities, endpoints, data model, class enforcement, kill switch, budgets, free trial, model layer |
+| `docs/gateway-design.md` | Projects, identities, endpoints, data model, class enforcement, kill switch, budgets, billing and credit, model layer |
 | `docs/drive-wrapper.md` | Wrap 1: Shared Drive setup, Drive actions, snapshots, taint rules |
 | `docs/email-wrapper.md` | Wrap 2: separate agent Workspace; built, but disabled until that Workspace exists |
 | `docs/test-plan.md` | Gates, the "absolute" criteria as tests, functional tests, the basic attack set, budget drill |
@@ -20,4 +20,4 @@ First setup steps (plan section S):
 
 1. Check the project quota: 4 projects are needed.
 2. Check the billing currency, and set the budgets in it.
-3. Record the trial start date. The day-75 upgrade check follows from it.
+3. Note the credit expiry: the alert fires on 2026-12-20, and the credit ends on 2027-01-04.
