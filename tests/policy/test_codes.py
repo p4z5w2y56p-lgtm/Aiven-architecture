@@ -24,6 +24,7 @@ import pytest
 
 from aiven.policy.catalog import load_catalog
 from aiven.policy.config import load_platform_config
+from aiven.policy.fileformat import decode_text
 from aiven.policy.findings import Finding, format_line, message
 from aiven.policy.validate import validate_file
 from tests.support import REPO_ROOT, gen
@@ -167,8 +168,49 @@ def test_content_findings_never_contain_value(code, kind, label, value):
         assert squeezed not in text
 
 
+# A value glued to a placeholder word: the placeholder's own text would carry it into a finding.
+GLUED_VALUES = {
+    "BSN": ("E-ID-NUMBER", gen.valid_bsn()),
+    "IBAN": ("E-BANK-DETAILS", gen.valid_iban()),
+    "card number": ("E-BANK-DETAILS", gen.valid_card()),
+    "AWS access key": ("E-SECRET", gen.secret_values()["AWS access key"][0]),
+    "GitHub token": ("E-SECRET", gen.secret_values()["GitHub token"][0]),
+}
+
+
+@pytest.mark.parametrize(("code", "value"), GLUED_VALUES.values(), ids=GLUED_VALUES)
+def test_a_placeholder_glued_to_a_value_does_not_echo_it(code, value):
+    new = new_findings(insert_after(WHY_DRAFT, f" REPLACE_ME_{value}")(BASE))
+    # Both are reported, on the same line, and neither output contains the value.
+    assert sorted(f.code for f in new) == sorted(["E-PLACEHOLDER", code])
+    assert {f.line for f in new} == {WHY_LINE}
+    for finding in new:
+        shown = [
+            format_line(finding),
+            message(finding, "en"),
+            message(finding, "nl"),
+            json.dumps(dataclasses.asdict(finding)),
+        ]
+        assert all(value not in text for text in shown)
+    placeholder = next(f for f in new if f.code == "E-PLACEHOLDER")
+    assert placeholder.params == {"token": "[hidden]"}
+
+
+def test_validate_file_decodes_the_bytes_once(monkeypatch):
+    calls = []
+
+    def counting(data: bytes) -> str:
+        calls.append(len(data))
+        return decode_text(data)
+
+    monkeypatch.setattr("aiven.policy.validate.decode_text", counting)
+    monkeypatch.setattr("aiven.policy.fileformat.decode_text", counting)
+    findings_of(BASE)
+    assert calls == [len(BASE)]
+
+
 def test_content_columns_do_not_count_the_byte_order_mark():
-    data = codecs.BOM_UTF8 + b"password: Zq7f\n"
+    data = codecs.BOM_UTF8 + gen.assignment("password").encode() + b"\n"
     assert ("E-SECRET", 1, 1) in {(f.code, f.line, f.column) for f in findings_of(data)}
 
 

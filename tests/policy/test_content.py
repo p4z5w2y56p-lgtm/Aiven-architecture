@@ -1,7 +1,6 @@
 """Content safety (validator-spec section 3.8): what `scan` finds, where, and what it never says."""
 
 import dataclasses
-import re
 import string
 import time
 
@@ -9,7 +8,8 @@ import pytest
 
 from aiven.policy.content import KIND_CODES, ContentHit, scan
 from tests.support import gen
-from tests.support.gen import grouped
+from tests.support.checksums import eleven_test_ok, luhn_ok, mod97_remainder
+from tests.support.gen import assignment, grouped
 from tests.support.policies import valid_base
 from tests.support.spec_tables import table_after
 
@@ -31,29 +31,6 @@ PASSWORD = "password or secret value"
 
 def hits(text: str) -> list[tuple[str, int, int]]:
     return [(hit.kind, hit.line, hit.column) for hit in scan(text)]
-
-
-# Independent of the code under test: other formulations of the three checksums.
-
-
-def mod97_remainder(value: str) -> int:
-    remainder = 0
-    for char in value[4:] + value[:4]:
-        for digit in str(int(char, 36)):
-            remainder = (remainder * 10 + int(digit)) % 97
-    return remainder
-
-
-def luhn_ok(number: str) -> bool:
-    backwards = number[::-1]
-    odd = [int(char) for char in backwards[0::2]]
-    even = [int(char) for char in backwards[1::2]]
-    return (sum(odd) + sum(sum(divmod(2 * digit, 10)) for digit in even)) % 10 == 0
-
-
-def eleven_test_ok(number: str) -> bool:
-    weights = (9, 8, 7, 6, 5, 4, 3, 2, -1)
-    return sum(w * int(d) for w, d in zip(weights, number, strict=True)) % 11 == 0
 
 
 # --- the contract
@@ -93,55 +70,6 @@ def test_clean_and_empty_text_have_no_hits():
     assert scan("") == []
     assert scan("\n\n") == []
     assert scan("Nothing to see here.\nNot even on the second line.\n") == []
-
-
-# --- the generators that every test of this module relies on
-
-
-def test_a_generated_iban_has_the_nl_shape_and_passes_mod_97():
-    for _ in range(100):
-        iban = gen.valid_iban()
-        assert re.fullmatch(r"NL[0-9]{2}[A-Z]{4}[0-9]{10}", iban)
-        assert mod97_remainder(iban) == 1
-
-
-def test_an_iban_of_another_country_is_refused():
-    with pytest.raises(ValueError, match="NL"):
-        gen.valid_iban("DE")
-
-
-@pytest.mark.parametrize("length", [15, 18, 34])
-def test_a_generated_iban_of_a_given_length_passes_mod_97(length):
-    for _ in range(20):
-        value = gen.valid_iban_of_length(length)
-        assert len(value) == length
-        assert re.fullmatch(r"NL[0-9]{2}[A-Z0-9]+", value)
-        assert mod97_remainder(value) == 1
-
-
-@pytest.mark.parametrize("length", [13, 16, 19])
-def test_a_generated_card_number_passes_luhn(length):
-    for _ in range(100):
-        card = gen.valid_card(length)
-        assert re.fullmatch(r"[1-9][0-9]*", card) and len(card) == length
-        assert luhn_ok(card)
-
-
-def test_a_generated_bsn_passes_the_eleven_test():
-    for _ in range(200):
-        bsn = gen.valid_bsn()
-        assert re.fullmatch(r"[1-9][0-9]{8}", bsn)
-        assert eleven_test_ok(bsn)
-
-
-def test_generated_values_differ_from_call_to_call():
-    assert len({gen.valid_iban() for _ in range(20)}) > 1
-    assert len({gen.valid_card() for _ in range(20)}) > 1
-    assert len({gen.valid_bsn() for _ in range(20)}) > 1
-
-
-def test_every_secret_kind_has_a_sample_and_no_other_kind_does():
-    assert list(gen.secret_values()) == SECRET_KINDS
 
 
 # --- E-SECRET
@@ -201,33 +129,121 @@ def test_look_alikes_are_not_credentials(value):
     assert scan(f"see {value} here") == []
 
 
+# Kinds that begin with a fixed prefix. The prefix inside a longer word is not the start of a token.
+PREFIX_KINDS = [
+    "Google API key",
+    "OAuth token",
+    "GitHub token",
+    "Slack token",
+    "Anthropic API key",
+    "OpenAI API key",
+    "AWS access key",
+    "JWT",
+]
+PREFIX_SAMPLES = [
+    pytest.param(kind, value, id=f"{kind}-{number}")
+    for kind, values in gen.secret_values().items()
+    if kind in PREFIX_KINDS
+    for number, value in enumerate(values, start=1)
+]
+BEFORE_A_TOKEN = {
+    "space": " ",
+    "double quote": '"',
+    "single quote": "'",
+    "equals sign": "=",
+    "colon": ":",
+    "open parenthesis": "(",
+    "slash": "/",
+    "underscore": "_",
+    "hyphen": "-",
+    "period": ".",
+}
+HYPHENATED_WORDS = [
+    "risk-adjusted-return-calculation",
+    "task-oriented-workflow-management",
+    "desk-" + "-".join(["abcde"] * 5),
+    "-".join(["risk", *string.ascii_lowercase]),
+]
+
+
+@pytest.mark.parametrize(("kind", "value"), PREFIX_SAMPLES)
+@pytest.mark.parametrize("glue", ["x", "X", "7"])
+def test_a_token_glued_to_a_letter_or_digit_is_not_found(kind, value, glue):
+    assert scan(f"say {glue}{value} now") == []
+
+
+@pytest.mark.parametrize(("kind", "value"), PREFIX_SAMPLES)
+@pytest.mark.parametrize("before", BEFORE_A_TOKEN.values(), ids=BEFORE_A_TOKEN)
+def test_a_token_after_a_separator_is_still_found(kind, value, before):
+    assert hits(f"{before}{value}") == [(kind, 1, 2)]
+
+
+@pytest.mark.parametrize("word", HYPHENATED_WORDS)
+def test_a_hyphenated_word_that_ends_in_sk_is_not_an_openai_key(word):
+    assert scan(f"see the {word} here") == []
+
+
+@pytest.mark.parametrize(
+    ("after_prefix", "found"),
+    [(5, True), (33, True), (300, True), (301, False)],
+    ids=["shortest", "a usual header", "longest", "too long"],
+)
+def test_the_first_segment_of_a_jwt_may_be_up_to_300_characters(after_prefix, found):
+    # A usual header is 36 characters, 33 of them after the eyJ. The cap keeps the scan linear.
+    token = "eyJ" + "a" * after_prefix + ".eyJ" + "b" * 8 + "."
+    assert hits(f"see {token} here") == ([("JWT", 1, 5)] if found else [])
+
+
+def test_a_pgp_armor_header_is_a_private_key():
+    private = "-----BEGIN " + "PGP PRIVATE KEY BLOCK" + "-----"
+    public = "-----BEGIN " + "PGP PUBLIC KEY BLOCK" + "-----"
+    cut_short = "-----BEGIN " + "PGP PRIVATE KEY BLOCKS" + "-----"
+    no_space = "-----BEGIN " + "PGP PRIVATE KEYBLOCK" + "-----"
+    assert hits(f"see {private} here") == [("private key", 1, 5)]
+    assert scan(f"see {public} here") == []
+    assert scan(f"see {cut_short} here") == []
+    assert scan(f"see {no_space} here") == []
+
+
+# A made-up value of the shortest length that counts, and a longer one.
+SHORT = "Zq7f"
+LONG = SHORT + "L2mA"
+
+KEYWORDS = ["password", "secret", "token", "api_key", "api-key", "apikey"]
+
 PASSWORD_HITS = [
-    ("password: Zq7fL2mA", 1),
-    ("PASSWORD=Zq7fL2mA", 1),
-    ("Secret : Zq7f", 1),
-    ('"token": "Zq7f1234"', 2),
-    ("'api_key' = 'Zq7f'", 2),
-    ("api-key: Zq7f", 1),
-    ("APIKEY=Zq7f", 1),
-    ("client_secret:Zq7f", 1),
-    ("X-Password: Zq7f", 3),
-    ("set the secret = Zq7f now", 9),
+    # (text, column where the keyword starts)
+    (assignment("password", ": ", LONG), 1),
+    (assignment("PASSWORD", "=", LONG), 1),
+    (assignment("Secret", " : "), 1),
+    (assignment("token", ": ", SHORT + "1234", quote='"'), 2),
+    (assignment("api_key", " = ", quote="'"), 2),
+    (assignment("api-key"), 1),
+    (assignment("APIKEY", "="), 1),
+    (assignment("client_secret", ":"), 1),
+    (assignment("X-Password"), 3),
+    ("set the " + assignment("secret", " = ") + " now", 9),
+    # An identifier prefix that ends in _, - or . does not hide the keyword.
+    (assignment("db_password", "="), 4),
+    (assignment("x-api-key"), 3),
+    (assignment("aws.secret", "="), 5),
+    (assignment("GITHUB_TOKEN", "="), 8),
+    (assignment("max_token", ": ", "4096"), 5),  # a false alarm, and the price of that rule
 ]
 PASSWORD_MISSES = [
-    "max_tokens: 4096",
-    "max_token: 4096",
-    "mytoken: Zq7f",
-    "passwords: Zq7f",
-    "password Zq7f",
+    "max_tokens: 5000",  # the keyword must be followed by : or =, and here comes an s
+    assignment("mytoken"),  # a letter in front
+    assignment("2token", "="),  # a digit in front
+    assignment("passwords"),
+    assignment("password", " "),  # neither : nor =
     "password:",
-    "password: Zq7",
-    'password: "Zq"',
+    assignment("password", ": ", "Zq7"),  # three characters are too few
+    assignment("password", ": ", '"Zq"'),
     "password = ",
     "token-based: yes",
-    "password is: Zq7f",
-    "x_api_key: Zq7f",
+    assignment("password is"),
     "secret santa",
-    "the token\nZq7f",
+    "the token\n" + SHORT,
 ]
 
 
@@ -241,16 +257,29 @@ def test_a_keyword_without_a_usable_value_is_not_a_credential(text):
     assert scan(text) == []
 
 
+@pytest.mark.parametrize("prefix", ["db_", "x-", "aws.", "my_app_", "a.b-c_"])
+@pytest.mark.parametrize("keyword", [*KEYWORDS, "client_secret", "client-secret"])
+def test_an_identifier_prefix_ending_in_a_separator_does_not_hide_the_keyword(prefix, keyword):
+    assert hits(assignment(prefix + keyword, "=")) == [(PASSWORD, 1, len(prefix) + 1)]
+
+
+@pytest.mark.parametrize("prefix", ["a", "Z", "7", "ab_c", "x_9"])
+@pytest.mark.parametrize("keyword", KEYWORDS)
+def test_a_letter_or_digit_directly_in_front_hides_the_keyword(prefix, keyword):
+    assert scan(assignment(prefix + keyword, "=")) == []
+
+
 def test_every_keyword_is_found_in_every_case():
-    for keyword in ("password", "secret", "token", "api_key", "api-key", "apikey"):
+    for keyword in KEYWORDS:
         for spelled in (keyword, keyword.upper(), keyword.capitalize()):
-            assert hits(f"{spelled}: Zq7f") == [(PASSWORD, 1, 1)], spelled
+            assert hits(assignment(spelled)) == [(PASSWORD, 1, 1)], spelled
     for keyword in ("client_secret", "client-secret"):
-        assert hits(f"{keyword}=Zq7f") == [(PASSWORD, 1, 1)], keyword
+        assert hits(assignment(keyword, "=")) == [(PASSWORD, 1, 1)], keyword
 
 
 def test_two_keywords_on_one_line_are_two_hits():
-    assert hits("password: Zq7f and token=Zq7f") == [(PASSWORD, 1, 1), (PASSWORD, 1, 20)]
+    text = assignment("password") + " and " + assignment("token", "=")
+    assert hits(text) == [(PASSWORD, 1, 1), (PASSWORD, 1, 20)]
 
 
 # --- E-BANK-DETAILS: IBAN
@@ -446,6 +475,27 @@ def test_a_hit_is_dropped_only_by_a_hit_that_is_kept():
     assert hits(f"secret={aws}-{card}") == [("AWS access key", 1, 8), ("card number", 1, 29)]
 
 
+def test_hits_that_share_one_character_are_one_hit():
+    # The Google key ends in the s that starts a key of another kind. The first kind in the order
+    # keeps the shared character, so the second hit is dropped.
+    text = "AIza" + "-" * 34 + "s" + "k-" + "B" * 20
+    assert hits(text) == [("Google API key", 1, 1)]
+
+
+def test_a_card_number_and_a_token_that_share_one_digit():
+    # The card number ends in a 1, and the token starts with that 1. The token comes first in the
+    # order, so it keeps the 1 and the card number is dropped.
+    card = gen.valid_card(13, last_digit="1")
+    spaced = grouped(card)
+    assert hits(spaced + "//0" + "b" * 20) == [("OAuth token", 1, len(spaced))]
+
+
+def test_a_token_cannot_start_inside_a_run_of_digits():
+    # With no group before the last digit, the 1 is glued to the digits and starts no token.
+    card = gen.valid_card(16, last_digit="1")
+    assert hits(card + "//0" + "b" * 20) == [("card number", 1, 1)]
+
+
 def test_several_hits_on_one_line_are_listed_by_column():
     bsn, card, iban = gen.valid_bsn(), gen.valid_card(), gen.valid_iban()
     aws = gen.secret_values()["AWS access key"][0]
@@ -491,7 +541,7 @@ def test_columns_count_code_points():
 
 
 def test_a_cr_before_the_lf_does_not_hide_the_last_word_of_a_line():
-    assert hits("password: Zq7f\r\nnext\r\n") == [(PASSWORD, 1, 1)]
+    assert hits(assignment("password") + "\r\nnext\r\n") == [(PASSWORD, 1, 1)]
     bsn = gen.valid_bsn()
     assert hits(f"{bsn}\r\n") == [("BSN", 1, 1)]
 
@@ -503,13 +553,19 @@ def test_a_cr_before_the_lf_does_not_hide_the_last_word_of_a_line():
 
 HOSTILE = {
     "many JWT starts in one run": lambda: "eyJ" * 70_000,
+    "JWT starts after underscores": lambda: "eyJ_" * 50_000,
+    "JWT starts after hyphens, then a long run": lambda: "eyJ-" * 75 + ".eyJ" + "a" * 200_000,
     "JWT segments back to back": lambda: ("eyJ" + "aaaaa.") * 25_000,
     "PEM header and a long run": lambda: "-----BEGIN " + "A" * 200_000,
     "many PEM headers": lambda: "-----BEGIN " * 20_000,
+    "a PEM header that repeats its own words": lambda: "-----BEGIN " + "PRIVATE KEY " * 20_000,
     "keyword and a long run of spaces": lambda: "password" + " " * 200_000,
     "keyword, colon, spaces and a quote": lambda: "password:" + " " * 200_000 + '"',
     "many keywords": lambda: "password " * 20_000,
+    "keywords behind identifier prefixes": lambda: "token_" * 40_000,
+    "keywords behind dots and hyphens": lambda: "secret.api-key." * 15_000,
     "key prefixes back to back": lambda: "sk-" * 70_000,
+    "key prefixes glued to letters": lambda: "xAKIA" * 40_000,
     "token prefixes": lambda: "ghp_" * 50_000,
     "a long digit run": lambda: "1" * 200_000,
     "digits with separators": lambda: "1 " * 12_000,
@@ -521,8 +577,9 @@ HOSTILE = {
 
 
 @pytest.mark.parametrize("make_text", HOSTILE.values(), ids=HOSTILE)
-def test_scan_time_grows_linearly_with_hostile_input(make_text):
+def test_scan_finishes_quickly_on_hostile_input(make_text):
     text = make_text()
     started = time.perf_counter()
     scan(text)
+    # Generous: a linear scan takes a fraction of a second, a quadratic one minutes.
     assert time.perf_counter() - started < 5

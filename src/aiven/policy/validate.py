@@ -20,8 +20,9 @@ def validate_file(path: Path, data: bytes, cfg: PlatformConfig, catalog: Catalog
     follow do. The result is in report order: findings about the whole file first, then by line,
     then by column, then by code.
     """
-    findings = check_file(path, data)
-    findings.extend(_content_finding(str(path), hit) for hit in scan(decode_text(data)))
+    text = decode_text(data)
+    findings = check_file(path, data, text)
+    findings.extend(_content_finding(str(path), hit) for hit in scan(text))
     return sorted(findings, key=_report_order)
 
 

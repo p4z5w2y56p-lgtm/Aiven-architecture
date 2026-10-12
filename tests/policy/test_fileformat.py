@@ -37,6 +37,13 @@ def test_decode_text_replaces_invalid_bytes_and_changes_nothing_else():
     assert decode_text(b"a\xffb\r\n\xe2\x82\xac\n") == "a\ufffdb\r\n\u20ac\n"
 
 
+def test_check_file_does_not_decode_again_when_it_is_given_the_text(monkeypatch):
+    data = codecs.BOM_UTF8 + b"TODO \xff\r\nTBD\n"
+    expected = check_file(PATH, data)
+    monkeypatch.setattr("aiven.policy.fileformat.decode_text", lambda _: pytest.fail("decoded"))
+    assert check_file(PATH, data, decode_text(data)) == expected
+
+
 # --- clean files
 
 

@@ -9,6 +9,9 @@ The patterns are heuristics for the usual accidents. A value that is split up, s
 in an image is not found (spec section 8), and an innocent number can be flagged by mistake.
 Letters and digits mean ASCII ones throughout. Every pattern takes linear time, because the
 gateway scans text that an agent may have been tricked into writing.
+
+`safe_text` and `escape_unprintable` are the single place where text from a file may enter a
+message. `Finding` runs every param and its path through them, so no check has to remember to.
 """
 
 import re
@@ -145,42 +148,49 @@ def _bsn_finder(line: str) -> Iterator[Span]:
 
 # --- the kinds, most specific first
 
-# The password pattern: a keyword that is not part of a longer name (so not max_tokens, mytoken
-# or x_api_key), an optional closing quote, `:` or `=`, an optional opening quote and a value of
-# at least four characters.
+# A token starts where no letter or digit stands in front of it. Without this, any word that
+# ends in the prefix is a token: `risk-adjusted-return-calculation` holds an `sk-` key.
+_LEFT = r"(?<![A-Za-z0-9])"
+
+# The password pattern: a keyword that does not directly follow a letter or digit (so not
+# mytoken), but may follow an identifier prefix that ends in `_`, `-` or `.` (db_password,
+# x-api-key, aws.secret). Then an optional closing quote, `:` or `=` (so not max_tokens), an
+# optional opening quote and a value of at least four characters.
 _PASSWORD = (
-    r"(?<![A-Za-z0-9_])"
-    r"(?:password|secret|token|api_key|api-key|apikey|client_secret|client-secret)"
-    r"""["']? *[:=] *["']?[^\s"']{4,}"""
+    _LEFT
+    + r"(?:password|secret|token|api_key|api-key|apikey|client_secret|client-secret)"
+    + r"""["']? *[:=] *["']?[^\s"']{4,}"""
 )
 
 # Each kind with the finding code it gets. When two hits overlap on a line, the kind that comes
 # first in this list wins, so a known token keeps its own name even after `token:`, and an
 # Anthropic key is not also an OpenAI key.
 _KINDS: tuple[tuple[str, str, Finder], ...] = (
-    ("private key", "E-SECRET", _regex(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")),
+    # The PGP armor header ends in `KEY BLOCK` instead of `KEY`.
+    ("private key", "E-SECRET", _regex(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----")),
     ("service account key", "E-SECRET", _regex(r'"private_key"')),
-    ("Google API key", "E-SECRET", _regex(r"AIza[0-9A-Za-z_-]{35}")),
+    ("Google API key", "E-SECRET", _regex(_LEFT + r"AIza[0-9A-Za-z_-]{35}")),
     (
         "OAuth token",
         "E-SECRET",
-        _regex(r"ya29\.[0-9A-Za-z_-]{20,}|1//0[0-9A-Za-z_-]{20,}"),
+        _regex(_LEFT + r"(?:ya29\.[0-9A-Za-z_-]{20,}|1//0[0-9A-Za-z_-]{20,})"),
     ),
     (
         "GitHub token",
         "E-SECRET",
-        _regex(r"gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}"),
+        _regex(_LEFT + r"(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})"),
     ),
-    ("Slack token", "E-SECRET", _regex(r"xox[abposr]-[A-Za-z0-9-]{10,}")),
-    ("Anthropic API key", "E-SECRET", _regex(r"sk-ant-[A-Za-z0-9_-]{20,}")),
-    ("OpenAI API key", "E-SECRET", _regex(r"sk-[A-Za-z0-9_-]{20,}")),
-    ("AWS access key", "E-SECRET", _regex(r"(?:AKIA|ASIA)[0-9A-Z]{16}")),
-    # A JWT must start where a run of its characters starts. Without that, `eyJ` repeated inside
-    # one long run is retried from every `eyJ` and the scan takes quadratic time.
+    ("Slack token", "E-SECRET", _regex(_LEFT + r"xox[abposr]-[A-Za-z0-9-]{10,}")),
+    ("Anthropic API key", "E-SECRET", _regex(_LEFT + r"sk-ant-[A-Za-z0-9_-]{20,}")),
+    ("OpenAI API key", "E-SECRET", _regex(_LEFT + r"sk-[A-Za-z0-9_-]{20,}")),
+    ("AWS access key", "E-SECRET", _regex(_LEFT + r"(?:AKIA|ASIA)[0-9A-Z]{16}")),
+    # The first segment of a JWT is short, so it is capped. Without the cap, `eyJ_` repeated inside
+    # one long run is retried from every `eyJ`, each time to the end of the run, and the scan
+    # takes quadratic time.
     (
         "JWT",
         "E-SECRET",
-        _regex(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*"),
+        _regex(_LEFT + r"eyJ[A-Za-z0-9_-]{5,300}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*"),
     ),
     ("password or secret value", "E-SECRET", _regex(_PASSWORD, re.IGNORECASE)),
     # An IBAN starts at the start of a word with two letters and two digits, and has 15 to 34
@@ -227,3 +237,49 @@ def _hits_in_line(line: str) -> list[tuple[int, str]]:
                 covered[start:end] = b"\x01" * (end - start)
                 hits.append((start + 1, kind))
     return sorted(hits)
+
+
+# --- the single entry for file text into a message
+
+# What a finding shows of a value, at most; and what it shows in place of a sensitive one.
+_SHOWN = 200
+_HIDDEN = "[hidden]"
+_CUT = "\N{HORIZONTAL ELLIPSIS}"
+
+
+def _escape(char: str) -> str:
+    code = ord(char)
+    if code <= 0xFFFF:
+        return "\\u" + format(code, "04x")
+    return "\\U" + format(code, "08x")
+
+
+def escape_unprintable(text: str) -> str:
+    """`text` with every character that is not printable written out as an escape.
+
+    The escape is a backslash and `u` with four hex digits, or a backslash and `U` with eight
+    above U+FFFF. So a newline, a bidi control or a terminal escape in text from a file cannot
+    start another line of output, reorder it or hide anything from the reader.
+    """
+    if text.isprintable():
+        return text
+    return "".join(char if char.isprintable() else _escape(char) for char in text)
+
+
+def safe_text(value: str) -> str:
+    """`value`, text from a file, as a finding may show it.
+
+    A value in which `scan` finds anything is replaced by `[hidden]`, whatever else it holds, so a
+    finding never repeats a credential, a bank detail or an ID number that the scan recognises.
+    Anything else is escaped with `escape_unprintable` and cut to 200 characters, ending in an
+    ellipsis.
+
+    The guard sees what `scan` sees. A credential glued onto the letters or digits in front of it,
+    or disguised in some other way (spec section 8), is not recognised and would be shown.
+    """
+    if scan(value):
+        return _HIDDEN
+    shown = escape_unprintable(value)
+    if len(shown) > _SHOWN:
+        shown = shown[: _SHOWN - 1] + _CUT
+    return shown

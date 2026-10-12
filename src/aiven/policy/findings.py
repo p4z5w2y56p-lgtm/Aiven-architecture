@@ -2,6 +2,10 @@
 
 A finding carries a code, a place and the parameters of its message. The text itself lives in
 `messages/en.json` and `messages/nl.json`, copied verbatim from appendix A.
+
+Text from a file reaches a finding only through its `params` and its `path`, and a finding cleans
+both when it is made (see `content.safe_text`). So whichever check builds a finding, it cannot put
+a credential, a bank detail or an ID number into the output, and it cannot start a second line.
 """
 
 import json
@@ -11,6 +15,8 @@ from functools import cache
 from importlib import resources
 from types import MappingProxyType
 from typing import Literal
+
+from aiven.policy.content import escape_unprintable, safe_text
 
 Severity = Literal["error", "warning"]
 Lang = Literal["en", "nl"]
@@ -25,6 +31,11 @@ class Finding:
     `line` and `column` are 1-based; `line` is None for a finding about the whole file. `params`
     fills the `{placeholders}` of the message. It is left out of the hash because a dict cannot
     be hashed; equal findings still hash equal.
+
+    Making a finding cleans it. Each value in `params` goes through `safe_text`: a value that
+    holds a credential, a bank detail or an ID number becomes `[hidden]`, unprintable characters
+    are written as escapes, and a long value is cut to 200 characters. The `path` only gets the
+    escapes. Cleaning twice changes nothing.
     """
 
     code: str
@@ -33,6 +44,13 @@ class Finding:
     line: int | None = None
     column: int | None = None
     params: dict[str, str] = field(default_factory=dict, hash=False)
+
+    def __post_init__(self) -> None:
+        # The dataclass is frozen, so the cleaned values go in with object.__setattr__.
+        object.__setattr__(self, "path", escape_unprintable(self.path))
+        object.__setattr__(
+            self, "params", {name: safe_text(value) for name, value in self.params.items()}
+        )
 
 
 @cache

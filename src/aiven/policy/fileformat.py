@@ -32,15 +32,20 @@ def decode_text(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def check_file(path: Path, data: bytes) -> list[Finding]:
+def check_file(path: Path, data: bytes, text: str | None = None) -> list[Finding]:
     """Every finding of section 3.1 for `data`, the content of the file called `path`.
 
-    `path` only names the file in the findings; nothing is read from disk. E-ENCODING, E-LINE-ENDINGS, E-FINAL-NEWLINE and E-FILE-SIZE are reported once per file, and
+    `path` only names the file in the findings; nothing is read from disk. `text` is
+    `decode_text(data)`: pass it when you have decoded the bytes already, and they are not decoded
+    twice.
+
+    E-ENCODING, E-LINE-ENDINGS, E-FINAL-NEWLINE and E-FILE-SIZE are reported once per file, and
     E-HIDDEN-CHAR and E-PLACEHOLDER once per occurrence. The findings come in no particular
     order: `validate_file` sorts them.
     """
     where = str(path)
-    text = decode_text(data)
+    if text is None:
+        text = decode_text(data)
     findings: list[Finding] = []
 
     encoding_line = _encoding_line(data)

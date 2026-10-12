@@ -49,6 +49,15 @@ def grouped(value: str, separator: str = " ", size: int = 4) -> str:
     return separator.join(value[i : i + size] for i in range(0, len(value), size))
 
 
+def assignment(keyword: str, between: str = ": ", value: str = "Zq7f", quote: str = "") -> str:
+    """A made-up credential assignment (keyword, separator, value) joined from its parts.
+
+    Tests build these here, from parts, so that no keyword followed by a value stands in a test
+    source. `quote` goes around the keyword and around the value, as in JSON.
+    """
+    return f"{quote}{keyword}{quote}{between}{quote}{value}{quote}"
+
+
 def valid_iban(country: str = "NL") -> str:
     """A random IBAN that passes mod-97: NL, two check digits, four letters and ten digits."""
     if country != "NL":
@@ -80,8 +89,7 @@ def valid_mod97(head: str, length: int) -> str:
             return candidate
 
 
-def valid_card(length: int = 16) -> str:
-    """A random number of `length` digits (16 by default) that passes the Luhn check."""
+def _luhn_number(length: int) -> str:
     payload = _digits_without_leading_zero(length - 1)
     total = 0
     for index, char in enumerate(reversed(payload)):
@@ -90,6 +98,20 @@ def valid_card(length: int = 16) -> str:
             digit = digit * 2 - 9 if digit > 4 else digit * 2
         total += digit
     return payload + str((10 - total % 10) % 10)
+
+
+def valid_card(length: int = 16, last_digit: str = "") -> str:
+    """A random number of `length` digits (16 by default) that passes the Luhn check.
+
+    With `last_digit`, numbers are drawn until one ends in it. The last digit is the check digit,
+    so that takes ten draws on average.
+    """
+    if last_digit and not (len(last_digit) == 1 and last_digit in string.digits):
+        raise ValueError(f"last_digit must be one digit, not {last_digit!r}")
+    while True:
+        card = _luhn_number(length)
+        if card.endswith(last_digit):
+            return card
 
 
 def valid_bsn() -> str:
@@ -115,6 +137,7 @@ def secret_values() -> dict[str, list[str]]:
             "-----BEGIN " + "PRIVATE KEY" + "-----",
             "-----BEGIN " + "RSA PRIVATE KEY" + "-----",
             "-----BEGIN " + "EC2 PRIVATE KEY" + "-----",
+            "-----BEGIN " + "PGP PRIVATE KEY BLOCK" + "-----",
         ],
         "service account key": ['"private' + '_key"'],
         "Google API key": ["AIza" + "Sy-_" + "Q" * 31],
