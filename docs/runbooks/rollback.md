@@ -40,6 +40,7 @@ Going newest first means changes stacked on the same file unwind in the right or
 | `drive.update` | Download `before.bin` and check that its MD5 matches `before.json`. In Drive, right-click the file, choose File information, then Manage versions, then Upload new version, and pick `before.bin`. If the name changed, rename the file back to the `name` in `before.json`. |
 | `sheets.write` | Open `before-cells.json` and type each listed value back into the same sheet and cell; an empty value means clear the cell. For large ranges, use the Sheet's version history instead (File, then Version history) and restore the version from just before the call. That also undoes any other edits made after it. |
 | `drive.create` | Move the file named in `after.json` to the trash. You are Manager, so you can; agents can't. |
+| `gmail.draft` (once wrap 2 is live) | In the agent mailbox, delete the draft named in `after.json`, or restore its text from `before.json`. |
 
 If a call has `before.json` but no `after.json`, the write may or may not have happened. Compare the file with `before.json`; if they differ, undo it as above.
 

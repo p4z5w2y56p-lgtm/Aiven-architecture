@@ -132,7 +132,7 @@ What the gateway does with each field:
 | E-FORBIDDEN-UNKNOWN | An entry matches nothing in the catalog or the reserved list. A typo protects nothing. |
 | E-FORBIDDEN-BASELINE | One of `payments.*`, `drive.delete`, `drive.share` or `gmail.send_bulk` is missing |
 | W-MAX-CLASS-SLACK | `max_class` is higher than the highest tool class |
-| W-TOOL-NOT-LIVE | The tool's wrapper is not live yet. At load this becomes E-TOOL-NOT-LIVE. |
+| W-TOOL-NOT-LIVE | The tool's wrapper is planned or disabled. At load this becomes E-TOOL-NOT-LIVE. |
 
 ### 3.5 Limits, scope and untrusted input
 
@@ -198,7 +198,7 @@ E-BODY-DRIFT closes a gap in the plan: you sign the body, but the gateway enforc
 | E-SIG-MISSING | There is no `<agent>.md.sig` |
 | E-SIG-INVALID | `ssh-keygen -Y verify` fails against the control project's `allowed_signers` |
 | E-VERSION-ORDER | The version is lower than the active one, or equal to it with a different hash. Old versions can never come back. |
-| E-TOOL-NOT-LIVE | A tool's wrapper is not live |
+| E-TOOL-NOT-LIVE | A tool's wrapper is not live for this agent: it is planned, disabled, or the agent isn't on its `enabled_for` list |
 | E-SCOPE-NOT-IN-SANDBOX | The folder's `driveId` is not the Sandbox drive, or the folder's real path differs from `drive_folder_path` |
 
 If a new version fails `verify`, the gateway keeps the active version and alerts Matthijs. If the active version fails (for example, its file changed), the agent is stopped and Matthijs is alerted.
@@ -254,7 +254,7 @@ Rules for every action:
 - **Typed actions only.** The gateway never passes a raw API call through. Each action accepts a fixed set of fields. A Drive update that sets `trashed`, changes parents or touches permissions is classed as `drive.delete`, `drive.move` or `drive.share`.
 - **Taint.** A read taints the run when it touches untrusted content: email, the web, uploaded files, files last changed by someone other than a trusted author (Matthijs) or the gateway, and files the gateway wrote during a tainted run. File names count as content. Details are in drive-wrapper §5.
 - **Content scan.** Every R1 and R2 payload is scanned with the patterns in 3.8, and a match refuses the write. This keeps bank details, ID numbers and credentials out of Drive, drafts and snapshots written through the gateway.
-- **Wrapper status today:** all three wrappers (1 Drive, 2 Email, 3 Agent Builder) are `planned`.
+- **Wrapper status.** Each wrapper is `planned` (not built), `disabled` (built but switched off: `wrappers/<name>.enabled_for` is empty), or live for the agents on its `enabled_for` list. Today all three (1 Drive, 2 Email, 3 Agent Builder) are `planned`. Email ships `disabled` until the agent Workspace exists (email-wrapper §2).
 
 ## 6. Platform constants v1
 
@@ -270,7 +270,7 @@ Changing a constant means a new validator version, reviewed and signed the same 
 | Drive root | The Shared Drive `AIVEN Architecture Sandbox`, with its ID set at deploy |
 | Trusted authors | Matthijs's AIVEN account, set at deploy (taint rules) |
 | Phase 1 email recipients | `@aivenstudios.com` only |
-| Agent mailbox | Dedicated, set at deploy; never a person's own mailbox |
+| Agent mailbox | Dedicated, in the separate agent Workspace (email-wrapper §1), set at deploy; never a person's own mailbox |
 | `untrusted_input` default | `strict` |
 | Agents project | Set at deploy; used in `principal` |
 | Day | Calendar day, Europe/Amsterdam |

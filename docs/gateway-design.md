@@ -12,8 +12,11 @@ It builds on `docs/validator-spec.md`, which defines the policy format, the acti
 | Google Workspace. The Sandbox is a Shared Drive, and the gateway service account is a Contributor on it. | Your go |
 | Agents run on Google Cloud, with one identity each. | Your go |
 | Email goes through a dedicated agent mailbox, never Matthijs's personal mailbox. Phase 1 email goes only to @aivenstudios.com. | Your go |
+| The agent mailbox lives in a separate small Workspace (option a). The email wrapper is built but stays disabled until that Workspace exists. | Your go (step 3) |
 | `untrusted_input: strict` is the v1 default. | Your go |
-| A €10/month budget alert plus a hard stop, even if the stop takes the gateway down | Your go |
+| Budget alert at €10/month and hard stop at €25/month, both on gross cost (before credits). The stop may take the gateway down. | Your go (step 3) |
+| Cost per run is logged during shadow mode. | Your go (step 3) |
+| The billing account is a Google Cloud free trial for now (section 14). | Your note (step 3) |
 
 ## 2. Projects
 
@@ -33,7 +36,7 @@ It builds on `docs/validator-spec.md`, which defines the policy format, the acti
 | Identity | Can | Cannot |
 |---|---|---|
 | `agent-<id>@aiven-agents`, one per agent | Call the gateway (`run.invoker` on the gateway service). Call its model through Vertex AI (`aiplatform.user`). | Reach any Workspace data: the Drive, Sheets and Gmail APIs are disabled in `aiven-agents`, and no file is ever shared with an agent. Touch gateway or control. Hold keys. |
-| `gateway@aiven-gateway` | Use the Drive and Sheets APIs with OAuth scope `drive`, as Contributor of the Sandbox drive only. Read and write its own Firestore. In control: write audit entries (`logging.logWriter`), create snapshot objects (`storage.objectCreator` on the snapshot bucket), read policies (`storage.objectViewer` on the policy bucket), and read kill switches, decisions and sign-offs (`datastore.viewer`). | Read, overwrite or delete snapshots. Read or delete the audit log. Change kill switches, decisions, sign-offs or policies. Trash, move or share Drive files (Google blocks this, see the Drive wrapper). Use Drive files outside the Sandbox (`driveId` check on every call). |
+| `gateway@aiven-gateway` | Use the Drive and Sheets APIs with OAuth scope `drive`, as Contributor of the Sandbox drive only. Use Gmail as the agent mailbox only, through delegation in the separate agent Workspace (`signJwt` on its own account, no key; email-wrapper §1). Read and write its own Firestore. In control: write audit entries (`logging.logWriter`), create snapshot objects (`storage.objectCreator` on the snapshot bucket), read policies (`storage.objectViewer` on the policy bucket), and read kill switches, decisions and sign-offs (`datastore.viewer`). | Read, overwrite or delete snapshots. Read or delete the audit log. Change kill switches, decisions, sign-offs or policies. Trash, move or share Drive files (Google blocks this, see the Drive wrapper). Use Drive files outside the Sandbox (`driveId` check on every call). |
 | `control-ui@aiven-control` | Serve the control UI behind IAP, to Matthijs only. Write kill switches, decisions, sign-offs and taint clears. Read the audit log, the policies and the snapshot list. Call the gateway's control endpoints. | Drive, Gmail, billing |
 | `budget-stop@aiven-control` | Unlink billing from `aiven-agents` and `aiven-gateway`. Write audit entries. | Anything else |
 | Matthijs | Owns the three projects. Is Manager of the Sandbox drive. Signs policies with the hardware key, publishes them to the policy bucket, and restores snapshots by hand. | |
@@ -42,7 +45,7 @@ It builds on `docs/validator-spec.md`, which defines the policy format, the acti
 - **Why the `drive` scope.** Google has no folder-level or drive-level OAuth scope, and `drive.file` can't see files the gateway didn't create. The real limit is membership: the gateway account belongs to the Sandbox drive only, and every call checks the file's `driveId`.
 - **Models** are reached through Vertex AI with IAM, because a model API key would be a stored credential.
 - **`budget-stop` role.** It gets `billing.projectManager` on the two projects. Google's own guide may require Billing Account Administrator instead; verify at setup and grant no more than the guide needs.
-- **Email** (wrap 2) needs a decision first, see section 12.
+- **Email** (wrap 2) is decided as option (a), and the wrapper ships disabled. See section 12 and `docs/email-wrapper.md`.
 
 ## 4. Endpoints
 
@@ -56,7 +59,7 @@ Every call is HTTPS to the gateway's Cloud Run URL, carrying a Google-signed ID 
 | `POST /v1/runs` | Starts a run. Checks the kill switches, a verified policy and `runs_per_day`. | `run_id`, `deadline`, `shadow`, `policy_hash` |
 | `POST /v1/runs/{run_id}/calls` | Requests one action: `{action, args, request_id}` | `call_id`, `outcome` (`executed`, `proposed`, `queued`, `refused`), `class`, `reason`, `result`, `confirm_id`, `tainted` |
 | `GET /v1/runs/{run_id}/calls/{call_id}` | Gives the status of a call, for example a queued R2 | Outcome, status, result |
-| `POST /v1/runs/{run_id}:end` | Ends the run | Calls by outcome, records used, taint |
+| `POST /v1/runs/{run_id}:end` | Ends the run. The body reports model usage: `{usage: [{model, input_tokens, output_tokens}]}`. | Calls by outcome, records used, taint, cost estimate |
 
 `request_id` is unique within a run. A retry with the same `request_id` gets the stored answer, so an action never executes twice.
 
@@ -76,7 +79,7 @@ Policy decisions come back as HTTP 200 with an `outcome`. HTTP errors are only f
 - 409: the run is closed.
 - 503: failing closed because control is unreachable.
 
-Reason codes the agent can see: `KILL_SWITCH`, `NO_POLICY`, `FORBIDDEN`, `RESERVED_R4`, `NOT_GRANTED`, `R3_DISABLED`, `ABOVE_MAX_CLASS`, `OUT_OF_SCOPE`, `LIMIT_RUNS`, `LIMIT_RUNTIME`, `LIMIT_RECORDS`, `LIMIT_EMAILS`, `LIMIT_SPEND`, `CONTENT_BLOCKED`, `SNAPSHOT_FAILED`, `STALE_TARGET`, `BAD_ARGS`, `RUN_CLOSED`, `TOO_MANY_REFUSALS`, `CONTROL_UNREACHABLE`.
+Reason codes the agent can see: `KILL_SWITCH`, `NO_POLICY`, `FORBIDDEN`, `RESERVED_R4`, `NOT_GRANTED`, `R3_DISABLED`, `ABOVE_MAX_CLASS`, `OUT_OF_SCOPE`, `LIMIT_RUNS`, `LIMIT_RUNTIME`, `LIMIT_RECORDS`, `LIMIT_EMAILS`, `LIMIT_SPEND`, `CONTENT_BLOCKED`, `SNAPSHOT_FAILED`, `STALE_TARGET`, `BAD_ARGS`, `RUN_CLOSED`, `TOO_MANY_REFUSALS`, `CONTROL_UNREACHABLE`, `WRAPPER_DISABLED`.
 
 ## 5. Data model
 
@@ -88,7 +91,8 @@ Reason codes the agent can see: `KILL_SWITCH`, `NO_POLICY`, `FORBIDDEN`, `RESERV
 | Firestore `control`: `decisions/{confirm_id}` | `{decision: approve or reject, preview_sha256, by, at}` | Control UI | Gateway |
 | Firestore `control`: `signoffs/{agent}` | `{tools, max_class, policy_hash, shadow_runs_seen, by, at}` | Control UI | Gateway |
 | Firestore `control`: `taint_clears/{file_id}` | `{revision, by, at}`: clears the taint label of one file version | Control UI | Gateway |
-| Bucket `aiven-control-policies` (versioned) | `policies/<agent>.md` + `.sig`, `catalog/catalog-v1.yaml` + `.sig` (the machine form of validator-spec §5), `allowed_signers` | Matthijs | Gateway, control UI |
+| Firestore `control`: `wrappers/{name}` | `{enabled_for: [agents], by, at}`. An empty list means the wrapper is off. Email starts empty. | Control UI | Gateway |
+| Bucket `aiven-control-policies` (versioned) | `policies/<agent>.md` + `.sig`, `catalog/catalog-v1.yaml` + `.sig` (the machine form of validator-spec §5), `allowed_signers`, `pricing/models.yaml` (EUR per million tokens, for cost estimates) | Matthijs | Gateway, control UI |
 | Bucket `aiven-control-snapshots` (30-day retention, then deleted) | Per run: `manifest.json`. Per call: `before.json`, `before.bin` or `before-cells.json`, `after.json` | Gateway (create only) | Matthijs, control UI (list) |
 | Log bucket `aiven-audit` (365 days, retention locked) | One entry per event (see below) | Gateway, control UI, budget stop (write only) | Matthijs, control UI |
 
@@ -136,7 +140,8 @@ Each entry is a Cloud Logging `jsonPayload` in log `aiven-audit` in control:
 }
 ```
 
-- `event` is one of `run_start`, `call_start`, `call`, `decision`, `run_end`, `policy_load`, `control` (kill switch, sign-off, taint clear, rollback or restart record) and `budget_stop`.
+- `event` is one of `run_start`, `call_start`, `call`, `decision`, `run_end`, `policy_load`, `control` (kill switch, sign-off, taint clear, wrapper switch, rollback or restart record) and `budget_stop`.
+- `run_end` adds `usage` (model, input and output tokens, as reported by the agent) and `cost_estimate_eur`.
 - `approver` is `policy` for R0 or R1 under the signed policy, the confirming person's address for R2, and `none` for refused or proposed calls.
 - Entries hold IDs and hashes only, never file content, file names or email text. That keeps the log free of personal data, bank details and credentials.
 
@@ -202,12 +207,18 @@ Control UI pages, all in NL and EN:
 
 ## 9. Budget: alert and hard stop
 
-- **Budget.** Budget `aiven-monthly` is €10 and covers the three projects. It sends email alerts at 50 %, 90 % and 100 % of actual cost, and publishes to Pub/Sub topic `budget-alerts` in control.
-- **Hard stop.** The function `budget-stop` (in control) acts when `costAmount >= budgetAmount`: it unlinks billing from `aiven-agents` and `aiven-gateway` (the list is configurable for drills), writes a `budget_stop` audit entry and raises an alert. It is idempotent.
+- **Gross cost.** Both budgets count cost before credits (`creditTypesTreatment: EXCLUDE_ALL_CREDITS`). On the free trial the credit covers the spend, so net cost stays near zero, and budgets that subtract credits would never fire (section 14).
+- **Alert.** Budget `aiven-alert` is €10/month across the three projects. It sends email at 50 %, 90 % and 100 % of actual cost.
+- **Hard stop.** Budget `aiven-stop` is €25/month across the same three projects. At 100 % it publishes to Pub/Sub topic `budget-stop` in control. The `budget-stop` function then:
+  - acts only on notifications from `aiven-stop` where `costAmount >= budgetAmount`;
+  - unlinks billing from `aiven-agents` and `aiven-gateway` (the list is configurable for drills);
+  - writes a `budget_stop` audit entry and raises an alert;
+  - is idempotent;
+  - logs every notification it receives, so the wiring can be checked without a stop.
 - **Control keeps running.** The control project stays billed, so the audit log, snapshots, kill switch and control UI keep working during an incident.
 - **What a stop does.** Every billable service in agents and gateway stops. Google warns that some resources may be deleted and not be recoverable, which is why both projects must be rebuildable from Git.
-- **It isn't a precise cap.** Cost data and notifications arrive hours late, so spend can pass €10 before the stop fires. Google's guide says the same.
-- **Model use counts too.** The €10 also covers model calls through Vertex AI. Measure cost per run during shadow mode: normal use could hit the stop.
+- **It isn't a precise cap.** Cost data and notifications arrive hours late, so spend can pass €25 before the stop fires. Google's guide says the same.
+- **Cost per run.** When an agent ends a run, it reports its model usage. The gateway turns that into an estimate using `pricing/models.yaml`, logs it on `run_end`, and the shadow review shows it for each run. The figure is the agent's own report: good enough for budgeting, not for security. Reconcile it monthly against the billing report (test CR-2).
 - **Restarting** follows `docs/runbooks/budget-stop.md`.
 
 ## 10. Alerts
@@ -233,15 +244,9 @@ These are checked at every deploy, and again in step 3:
 - The control UI admits only Matthijs through IAP.
 - The audit log bucket is locked at 365 days, and the snapshot bucket keeps 30 days.
 
-## 12. Decision needed before wrap 2 (email)
+## 12. Email (wrap 2): decided
 
-For a service account, Gmail access means domain-wide delegation. As far as I know, Google can't limit delegation to one mailbox, so the gateway account could act as any mailbox in the domain, including Matthijs's. The options:
-
-- **(a) Separate Workspace for the agent mailbox**, for example on a second domain. Delegation there can only reach agent mailboxes, so Google itself enforces "never my personal mailbox". It costs one extra seat. Recipients stay @aivenstudios.com only, and Workspace can also restrict that mailbox's delivery to that domain.
-- **(b) Delegation inside aivenstudios.com.** No extra cost, but only the gateway's code enforces "never my personal mailbox". Workspace audit logs would show any misuse after the fact.
-- A stored OAuth token for the mailbox is ruled out by the no-credentials rule.
-
-My recommendation is (a). I'll verify the delegation limit before building wrap 2.
+The choice is option (a): the agent mailbox lives in a separate small Workspace. Delegation there can reach only agent mailboxes, so Google itself enforces "never my personal mailbox", and restricting delivery to aivenstudios.com enforces the Phase 1 recipient rule. The wrapper is built with the gateway but stays disabled (`wrappers/email.enabled_for` is empty) until that Workspace exists and gate G2 in the test plan passes. Details are in `docs/email-wrapper.md`.
 
 ## 13. Gateway constants
 
@@ -255,3 +260,19 @@ My recommendation is (a). I'll verify the delegation limit before building wrap 
 | Drive call timeout | 30 s |
 | Working data TTL (runs, calls) | 90 days |
 | Confirm args and previews erased | 7 days after closing |
+
+## 14. Free trial
+
+The billing account is a Google Cloud free trial: a $300 credit for 90 days, ending at whichever comes first.
+
+- **Budgets count gross cost.** On the trial the credit pays for usage, so net cost stays near zero. Budgets that subtract credits, which is Google's default, would never fire. Both budgets therefore exclude all credits (section 9).
+- **Not on Google's list of trial restrictions:** everything this design uses. That covers Cloud Run, Cloud Run functions, Firestore, Cloud Storage, Cloud Logging (including locked buckets), Pub/Sub, budgets with Pub/Sub notifications, IAP, and Vertex AI with Google's own models (Gemini).
+- **Needs the paid upgrade:**
+  - **Third-party models on Vertex AI, such as Claude.** Google unlocks them only after the upgrade, so on the trial agents can use only Gemini. If AIVEN's agents should run on Claude, upgrade before the first real agent.
+  - **Quota increases**, which are blocked on the trial. If Vertex AI's default quota is too low for the agents or the model-driven tests, the only fix is the upgrade.
+  - **Cloud Marketplace products**, which this design doesn't use.
+- **Upgrade before the trial ends.** When the trial ends without an upgrade, the trial billing account closes, everything stops (the control project included), and after a 30-day grace period Google deletes it all. That would break the 1-year audit log. Upgrading keeps the remaining credit until the original 90-day mark, and the €10/€25 budgets keep working on gross cost.
+- **Check now:**
+  - How many projects the trial billing account can hold. The design needs 3, plus 1 scratch project for the budget drill.
+  - The billing account's currency. If it's USD, set the budgets to about $11 and $27.
+- **Not covered by the trial:** the agent Workspace (email option a) is its own Workspace subscription, billed outside Google Cloud.

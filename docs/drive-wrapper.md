@@ -100,10 +100,6 @@ Known gap: text Matthijs pastes into a Google Doc counts as trusted. Put outside
 | `SNAPSHOT_FAILED` | The snapshot couldn't be written or checked, so the write was not made |
 | `STALE_TARGET` | The file changed between the snapshot (or the R2 preview) and the write |
 
-## 7. What step 3 must prove for this wrapper
+## 7. Tests
 
-- Every action is tested in scope and out of scope, including a file shared with the gateway from outside the Sandbox.
-- Smuggled fields (`trashed`, `addParents`, permissions) are refused, not ignored.
-- A test folder rolls back exactly to its run manifest.
-- Direct Drive calls made with an agent identity fail.
-- With the gateway's own credentials, trash, move and share calls fail at Google, which proves the backstop.
+See `docs/test-plan.md`: D-1 to D-8, RB-1 and RB-2, and the forced-delete attacks AT-DEL-1 to AT-DEL-7. AT-DEL-7 proves the Google-side backstop.
