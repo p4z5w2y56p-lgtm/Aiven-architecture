@@ -1,6 +1,15 @@
 # Policy validator: spec v1
 
-Status: draft for review (Phase 1, step 1). It covers `aiven-policy/v1` files such as `templates/policy-template.md`.
+Status: revised in step 2 after review. It covers `aiven-policy/v1` files such as `templates/policy-template.md`.
+Changes since step 1:
+
+- `strict` is the v1 default.
+- `runs_per_day` is capped at 10.
+- Phase 1 email goes to @aivenstudios.com only.
+- The Sandbox is a Shared Drive.
+- Taint now comes from where content came from (drive-wrapper §5).
+- Drive actions are narrowed so rollback is exact.
+
 Policy files are written in English. Validator messages come in English and Dutch (appendix A) because the UI is bilingual.
 
 ## 1. What it does
@@ -81,15 +90,15 @@ Every front matter field is enforced, or used to enforce something; none is deco
 | `max_class` | `R0`, `R1` or `R2` | E-MAX-CLASS-R3, E-MAX-CLASS-R4, E-FIELD-TYPE |
 | `tools` | 1–20 exact catalog names | see 3.4 |
 | `forbidden` | Exact names or `namespace.*`, including the baseline | see 3.4 |
-| `untrusted_input` | `taint` or `strict` | E-UNTRUSTED-INPUT |
+| `untrusted_input` | `strict` (the v1 default) or `taint` | E-UNTRUSTED-INPUT, W-UNTRUSTED-TAINT |
 | `limits.emails_per_day` | 0–50 | E-RANGE, E-LIMIT-CONFLICT |
 | `limits.records_per_run` | 0–200 | E-RANGE, E-LIMIT-CONFLICT |
 | `limits.spend_eur_per_run` | 0 | E-LIMIT-SPEND |
 | `limits.max_runtime_s` | 30–900 | E-RANGE |
-| `limits.runs_per_day` | 1–24 | E-RANGE |
+| `limits.runs_per_day` | 1–10 | E-RANGE |
 | `scope.drive_folder_id` | Required with any `drive.*` or `sheets.*` tool. Matches `^[A-Za-z0-9_-]{10,100}$`. | E-SCOPE-MISSING, E-FIELD-TYPE |
-| `scope.drive_folder_path` | Required with the folder ID. `AIVEN Architecture / Sandbox`, optionally followed by more ` / <folder>` parts. | E-SCOPE-MISSING, E-SCOPE-SANDBOX |
-| `scope.email_to` | Required with `gmail.draft` or `gmail.send`. 1–50 lowercase entries, each `name@domain.tld` or `@domain.tld`. A domain entry matches that exact domain, not its subdomains. | E-SCOPE-MISSING, E-SCOPE-EMAIL, E-SCOPE-EMAIL-PUBLIC |
+| `scope.drive_folder_path` | Required with the folder ID. `AIVEN Architecture Sandbox` (the Shared Drive), optionally followed by more ` / <folder>` parts. | E-SCOPE-MISSING, E-SCOPE-SANDBOX |
+| `scope.email_to` | Required with `gmail.draft` or `gmail.send`. 1–50 lowercase entries, each `name@domain.tld` or `@domain.tld`. A domain entry matches that exact domain, not its subdomains. In Phase 1 every entry must be `@aivenstudios.com` or an address in it. | E-SCOPE-MISSING, E-SCOPE-EMAIL, E-SCOPE-EMAIL-PUBLIC, E-SCOPE-EMAIL-EXTERNAL |
 | `shadow.min_runs` | 1–100 | E-RANGE, W-SHADOW-LOW |
 
 What the gateway does with each field:
@@ -97,9 +106,9 @@ What the gateway does with each field:
 - **`principal`:** the gateway authenticates every call and applies only the policy whose principal matches the caller. Each agent has its own identity.
 - **`max_class`:** caps the effective class of a call after any runtime escalation (for example, an edit to a shared file becomes R2). A call above the cap is refused, not queued.
 - **`forbidden`:** an attempt is refused, logged and alerted. A tool that is simply not listed is refused and logged, without an alert.
-- **`untrusted_input`:**
-  - `taint`: each R2 action from a tainted run is confirmed on its own, and the preview shows the untrusted sources the run read.
-  - `strict`: in a tainted run, R1 actions also wait for a confirm.
+- **`untrusted_input`:** a run is tainted once it reads untrusted content: email, the web, uploaded files, files last changed by someone other than a trusted author or the gateway, or files the gateway wrote during a tainted run (drive-wrapper §5).
+  - `strict`: in a tainted run, R1 actions wait for a confirm, and each R2 action is confirmed on its own with the untrusted sources shown.
+  - `taint`: only the R2 part applies; R1 actions still run at once.
 - **`limits`:** the call that would cross a limit is refused, and the run ends.
   - A day is a calendar day in Europe/Amsterdam.
   - Emails are counted per recipient (To, Cc and Bcc) at the moment the send is requested.
@@ -125,7 +134,7 @@ What the gateway does with each field:
 | W-MAX-CLASS-SLACK | `max_class` is higher than the highest tool class |
 | W-TOOL-NOT-LIVE | The tool's wrapper is not live yet. At load this becomes E-TOOL-NOT-LIVE. |
 
-### 3.5 Limits and scope
+### 3.5 Limits, scope and untrusted input
 
 | Code | Fails when |
 |---|---|
@@ -133,9 +142,11 @@ What the gateway does with each field:
 | E-LIMIT-SPEND | `spend_eur_per_run` is not 0 |
 | E-LIMIT-CONFLICT | `gmail.send` is listed but `emails_per_day` is 0, or an R1+ tool is listed but `records_per_run` is 0 |
 | E-SCOPE-MISSING | A tool needs a scope field that is missing |
-| E-SCOPE-SANDBOX | `drive_folder_path` is not the Sandbox or a folder inside it |
+| E-SCOPE-SANDBOX | `drive_folder_path` is not the Sandbox drive or a folder inside it |
 | E-SCOPE-EMAIL | An `email_to` entry is malformed, uppercase or has a wildcard |
 | E-SCOPE-EMAIL-PUBLIC | An `@domain` entry is a public mail domain (see 6) |
+| E-SCOPE-EMAIL-EXTERNAL | An `email_to` entry is outside `aivenstudios.com` (Phase 1) |
+| W-UNTRUSTED-TAINT | `untrusted_input` is `taint` rather than the v1 default `strict` |
 | W-LIMIT-UNUSED | `emails_per_day` is above 0 without `gmail.send`, or `records_per_run` is above 0 without an R1+ tool |
 | W-SCOPE-UNUSED | A scope field is set, but no tool uses it |
 
@@ -188,7 +199,7 @@ E-BODY-DRIFT closes a gap in the plan: you sign the body, but the gateway enforc
 | E-SIG-INVALID | `ssh-keygen -Y verify` fails against the control project's `allowed_signers` |
 | E-VERSION-ORDER | The version is lower than the active one, or equal to it with a different hash. Old versions can never come back. |
 | E-TOOL-NOT-LIVE | A tool's wrapper is not live |
-| E-SCOPE-NOT-IN-SANDBOX | Following the folder ID's parent chain does not reach the Sandbox, or the folder's real path differs from `drive_folder_path` |
+| E-SCOPE-NOT-IN-SANDBOX | The folder's `driveId` is not the Sandbox drive, or the folder's real path differs from `drive_folder_path` |
 
 If a new version fails `verify`, the gateway keeps the active version and alerts Matthijs. If the active version fails (for example, its file changed), the agent is stopped and Matthijs is alerted.
 
@@ -220,11 +231,11 @@ Classes are defined here and nowhere else. A policy grants tools, but it can nev
 | Action | Class | Wrapper | Gateway rule | Undo text (rendered) |
 |---|---|---|---|---|
 | `drive.list` | R0 | Drive | Lists items in the scope folder; anything outside scope is dropped | nothing to undo (read only). |
-| `drive.read` | R0 | Drive | Reads one file's content and metadata in scope | nothing to undo (read only). |
+| `drive.read` | R0 | Drive | Reads one file in scope: Google Docs as plain text; text, Markdown, CSV and JSON as they are | nothing to undo (read only). |
 | `sheets.read` | R0 | Drive | Reads the cells of a Sheet in scope | nothing to undo (read only). |
-| `drive.create` | R1 | Drive | Creates a file or folder in scope | remove the new file by hand (agents cannot delete). |
-| `drive.update` | R1, or R2 if the file is shared beyond Matthijs and the gateway | Drive | Changes content or name only | restore the previous version from its snapshot (kept 30 days). |
-| `sheets.write` | R1, or R2 if shared (as above) | Drive | Writes or appends cells in a Sheet in scope | restore the previous cell values from the snapshot (kept 30 days). |
+| `drive.create` | R1 | Drive | Creates a text, Markdown, CSV or JSON file in scope, or a Google Doc or Sheet converted from text or CSV | remove the new file by hand (agents cannot delete). |
+| `drive.update` | R1, or R2 if the file is shared beyond the drive's members | Drive | Renames any file in scope, or replaces the content of a text, Markdown, CSV or JSON file (not Google Docs or Slides) | restore the previous version from its snapshot (kept 30 days). |
+| `sheets.write` | R1, or R2 if shared (as above) | Drive | Writes literal values, never formulas, into one range inside the existing grid of a Sheet in scope | restore the previous cell values from the snapshot (kept 30 days). |
 | `drive.move` | R3 | Drive | A move changes who inherits access | (not grantable) |
 | `drive.share` | R3 | Drive | Any change to permissions, link sharing or sharing settings | (not grantable) |
 | `drive.delete` | R3 | Drive | Trash, delete, empty trash | (not grantable) |
@@ -241,7 +252,7 @@ These namespaces are reserved and count as R4 for every agent, whatever a file s
 Rules for every action:
 
 - **Typed actions only.** The gateway never passes a raw API call through. Each action accepts a fixed set of fields. A Drive update that sets `trashed`, changes parents or touches permissions is classed as `drive.delete`, `drive.move` or `drive.share`.
-- **Taint.** In v1, every R0 action taints the run, because file names, file content, cells, email and agent definitions can all carry injected instructions.
+- **Taint.** A read taints the run when it touches untrusted content: email, the web, uploaded files, files last changed by someone other than a trusted author (Matthijs) or the gateway, and files the gateway wrote during a tainted run. File names count as content. Details are in drive-wrapper §5.
 - **Content scan.** Every R1 and R2 payload is scanned with the patterns in 3.8, and a match refuses the write. This keeps bank details, ID numbers and credentials out of Drive, drafts and snapshots written through the gateway.
 - **Wrapper status today:** all three wrappers (1 Drive, 2 Email, 3 Agent Builder) are `planned`.
 
@@ -256,7 +267,11 @@ Changing a constant means a new validator version, reviewed and signed the same 
 | Signature namespace | `aiven-policy-v1` |
 | Classes a policy may use | R0, R1, R2. R3 is disabled; R4 is never allowed. |
 | Forbidden baseline | `payments.*`, `drive.delete`, `drive.share`, `gmail.send_bulk` |
-| Drive root | `AIVEN Architecture / Sandbox`, with its folder ID set at deploy |
+| Drive root | The Shared Drive `AIVEN Architecture Sandbox`, with its ID set at deploy |
+| Trusted authors | Matthijs's AIVEN account, set at deploy (taint rules) |
+| Phase 1 email recipients | `@aivenstudios.com` only |
+| Agent mailbox | Dedicated, set at deploy; never a person's own mailbox |
+| `untrusted_input` default | `strict` |
 | Agents project | Set at deploy; used in `principal` |
 | Day | Calendar day, Europe/Amsterdam |
 | Bulk email | More than 3 recipients in one message |
@@ -275,7 +290,11 @@ Changing a constant means a new validator version, reviewed and signed the same 
   - R0: `R0 read` / `Runs at once, logged`
   - R1: `R1 reversible` / `Snapshot first, then runs at once, logged`
   - R2: `R2 costly to undo` / `Waits for Matthijs to confirm a plain-language preview`
-- Untrusted input: `taint` renders the template's sentence. `strict` renders the same sentence followed by ` In a tainted run, R1 actions also wait for Matthijs to confirm.`
+- Untrusted input has a fixed first sentence followed by a mode-specific part:
+  - Fixed: `Untrusted input ({mode}): a run is tainted once it reads untrusted content: email, web pages, uploaded files, files last changed by someone other than Matthijs or the gateway, and files the gateway wrote during a tainted run.`
+  - `strict` adds: ` In a tainted run, R1 actions also wait for Matthijs to confirm, each R2 action is reviewed on its own (no batch confirm), and every preview lists the untrusted content the run read.`
+  - `taint` adds: ` In a tainted run, each R2 action is reviewed on its own (no batch confirm) and its preview lists the untrusted content the run read; R1 actions still run at once.`
+- Platform rules is a fixed line, exactly as in the template. It includes the Phase 1 email rule.
 - Scope: a Drive bullet if `drive_folder_id` is set, and an Email bullet if `email_to` is set (entries in backticks, separated by commas). If neither is set: `- None: this agent has no Drive or email tools.`
 - Undo: one bullet per tool, using the Undo text from the catalog.
 - Spend renders as `€0`. When `min_runs` is 1, the shadow sentence uses the singular ("the first run only proposes", "after 1 run").
@@ -307,12 +326,10 @@ Today no wrapper is live, so `aiven-policy validate templates/policy-template.md
 | warning | W-TOOL-NOT-LIVE | 10 | `gmail.draft` (Email) |
 | warning | W-TOOL-NOT-LIVE | 11 | `gmail.send` (Email) |
 | error | E-PLACEHOLDER | 25 | `REPLACE_ME_FOLDER_ID` |
-| error | E-PLACEHOLDER | 28 | `REPLACE_ME_CLIENT_DOMAIN` |
 | error | E-PLACEHOLDER | 56 | `REPLACE_ME_AGENTS_PROJECT` |
 | error | E-PLACEHOLDER | 84 | `REPLACE_ME_FOLDER_ID` |
-| error | E-PLACEHOLDER | 85 | `REPLACE_ME_CLIENT_DOMAIN` |
 
-To turn the template into a real policy, fill in the three values in the front matter, run `aiven-policy render`, and save the file as `policies/invoice-reminder.md`. After that only the three warnings remain (exit 0), and they disappear once the Drive and Email wrappers are live.
+To turn the template into a real policy, fill in the two values in the front matter, run `aiven-policy render`, and save the file as `policies/invoice-reminder.md`. After that only the three warnings remain (exit 0). They disappear once the Drive and Email wrappers are live.
 
 ## Appendix A. Messages (EN + NL)
 
@@ -355,9 +372,10 @@ Values in `{braces}` are parameters. The UI translates parameters that are words
 | E-LIMIT-SPEND | limits.spend_eur_per_run must be 0 in v1. No agent may spend money. | limits.spend_eur_per_run moet 0 zijn in v1. Geen enkele agent mag geld uitgeven. |
 | E-LIMIT-CONFLICT | limits.{limit} is 0, but tool {tool} needs at least 1. | limits.{limit} is 0, maar tool {tool} heeft minstens 1 nodig. |
 | E-SCOPE-MISSING | scope.{field} is required because tools include {tool}. | scope.{field} is verplicht omdat tools {tool} bevat. |
-| E-SCOPE-SANDBOX | scope.drive_folder_path must be AIVEN Architecture / Sandbox or a folder inside it. The gateway can reach nothing else. | scope.drive_folder_path moet AIVEN Architecture / Sandbox zijn of een map daarbinnen. De gateway kan nergens anders bij. |
+| E-SCOPE-SANDBOX | scope.drive_folder_path must be AIVEN Architecture Sandbox or a folder inside it. The gateway can reach nothing else. | scope.drive_folder_path moet AIVEN Architecture Sandbox zijn of een map daarbinnen. De gateway kan nergens anders bij. |
 | E-SCOPE-EMAIL | email_to item {entry} is invalid. Use a full address (name@domain.nl) or a domain (@domain.nl), lowercase, without wildcards. | email_to-item {entry} is ongeldig. Gebruik een volledig adres (naam@domein.nl) of een domein (@domein.nl), in kleine letters, zonder wildcards. |
 | E-SCOPE-EMAIL-PUBLIC | email_to item {entry} would allow every user of a public mail service. List exact addresses instead. | email_to-item {entry} zou elke gebruiker van een publieke maildienst toestaan. Noem in plaats daarvan exacte adressen. |
+| E-SCOPE-EMAIL-EXTERNAL | email_to item {entry} is outside aivenstudios.com. In Phase 1 agents may only email @aivenstudios.com addresses. | email_to-item {entry} valt buiten aivenstudios.com. In fase 1 mogen agents alleen mailen naar @aivenstudios.com-adressen. |
 | E-BODY-TITLE | The body must start with: # {agent} | De body moet beginnen met: # {agent} |
 | E-BODY-SECTIONS | Sections must be exactly, in order: Purpose, Why each tool, Data and risks, Enforced rules (generated), Sign-off (generated). Found: {found}. | De secties moeten precies deze zijn, in deze volgorde: Purpose, Why each tool, Data and risks, Enforced rules (generated), Sign-off (generated). Gevonden: {found}. |
 | E-BODY-EMPTY | Section {section} is empty. Write at least one full sentence. | Sectie {section} is leeg. Schrijf minstens één volledige zin. |
@@ -375,13 +393,14 @@ Values in `{braces}` are parameters. The UI translates parameters that are words
 | E-SIG-INVALID | The signature does not verify for signer matthijs (namespace aiven-policy-v1). The file changed after signing, or another key signed it. | De handtekening klopt niet voor ondertekenaar matthijs (namespace aiven-policy-v1). Het bestand is na ondertekening gewijzigd, of een andere sleutel heeft getekend. |
 | E-VERSION-ORDER | version is {value}, but the next version must be {next}. Older versions can never come back. | version is {value}, maar de volgende versie moet {next} zijn. Oudere versies kunnen nooit terugkomen. |
 | E-TOOL-NOT-LIVE | Tool {tool} needs the {wrapper} wrapper, which is not live. The agent cannot load until it is. | Tool {tool} heeft de {wrapper}-wrapper nodig, die niet live is. De agent kan pas laden als die live is. |
-| E-SCOPE-NOT-IN-SANDBOX | Drive folder {id} is not inside AIVEN Architecture / Sandbox, or its real path is not {path}. | Drive-map {id} ligt niet in AIVEN Architecture / Sandbox, of het echte pad is niet {path}. |
+| E-SCOPE-NOT-IN-SANDBOX | Drive folder {id} is not in the AIVEN Architecture Sandbox drive, or its real path is not {path}. | Drive-map {id} ligt niet in de drive AIVEN Architecture Sandbox, of het echte pad is niet {path}. |
 | E-INTERNAL | The validator could not finish ({detail}). The file counts as invalid. | De validator kon niet afronden ({detail}). Het bestand geldt als ongeldig. |
 | W-MAX-CLASS-SLACK | max_class is {max} but the highest tool is {highest}. Calls that escalate at runtime (such as an edit to a shared file) will wait for your confirm instead of being refused. Lower max_class if you don't want that. | max_class is {max} maar de hoogste tool is {highest}. Acties die tijdens de run hoger uitvallen (zoals een wijziging in een gedeeld bestand) wachten dan op jouw bevestiging in plaats van geweigerd te worden. Verlaag max_class als je dat niet wilt. |
 | W-TOOL-NOT-LIVE | Tool {tool} needs the {wrapper} wrapper, which is not live yet. You can sign now; the gateway loads the agent once the wrapper is live. | Tool {tool} heeft de {wrapper}-wrapper nodig, die nog niet live is. Ondertekenen kan nu; de gateway laadt de agent zodra de wrapper live is. |
 | W-LIMIT-UNUSED | limits.{limit} is {value} but no tool uses it. Set it to 0. | limits.{limit} is {value} maar geen tool gebruikt het. Zet het op 0. |
 | W-SCOPE-UNUSED | scope.{field} is set but no tool uses it. Remove it. | scope.{field} is ingesteld maar geen tool gebruikt het. Verwijder het. |
 | W-SHADOW-LOW | shadow.min_runs is {value}, below the default of 10. | shadow.min_runs is {value}, lager dan de standaard van 10. |
+| W-UNTRUSTED-TAINT | untrusted_input is taint. The v1 default is strict: with taint, R1 actions still run at once after the run has read untrusted content. | untrusted_input staat op taint. De standaard in v1 is strict: met taint lopen R1-acties direct door nadat de run onbetrouwbare inhoud heeft gelezen. |
 | W-WIDENS | This version gives the agent more room: {changes}.{restart} | Deze versie geeft de agent meer ruimte: {changes}.{restart} |
 
 For W-WIDENS, `{restart}` is " Shadow mode starts again for {n} runs." (NL: " De schaduwmodus begint opnieuw voor {n} runs.") when a tool is added or `max_class` rises; otherwise it is empty.
