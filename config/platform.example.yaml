@@ -1,0 +1,16 @@
+# Platform values that are set at deploy (docs/validator-spec.md section 6).
+# Copy this file, fill in the real values, and give the copy to the validator and the gateway.
+# Everything below is an example. None of it is a real project or account.
+
+# The project that holds the agents' service accounts. It is the project in every policy's `principal`.
+agents_project: aiven-agents-example
+
+# AIVEN accounts whose edits to a Drive file do not make a run untrusted (docs/drive-wrapper.md section 5).
+trusted_authors:
+  - trusted-author@aivenstudios.com
+
+# The gateway's own service account (docs/drive-wrapper.md section 1).
+gateway_principal: gateway@aiven-gateway-example.iam.gserviceaccount.com
+
+# sandbox_drive_id: the ID of the Shared Drive "AIVEN Architecture Sandbox". Leave it out until
+# the drive exists; the checks that need it run at load time only.

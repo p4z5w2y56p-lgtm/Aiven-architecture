@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "gmail.send arguments",
+  "description": "docs/email-wrapper.md section 4. draft_id must be a draft this agent created.",
+  "type": "object",
+  "properties": {
+    "draft_id": { "type": "string" }
+  },
+  "required": ["draft_id"],
+  "additionalProperties": false
+}

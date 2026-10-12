@@ -1,0 +1,35 @@
+# Action catalog v1: the machine form of docs/validator-spec.md section 5.
+# Classes are defined here and nowhere else. A policy grants tools; it can never set or lower a class.
+# The catalog is reviewed and signed like a policy, and its SHA-256 goes on every log line.
+schema: aiven-catalog/v1
+
+# planned: the wrapper is not built yet. built: it exists; whether it is switched on for an agent is
+# decided at runtime by wrappers/<name>.enabled_for in the control store.
+wrappers: {drive: planned, email: planned, agentbuilder: planned}
+
+# Reserved namespaces count as R4 for every agent, whatever a file says.
+reserved: [payments.*, policy.*, audit.*, killswitch.*, iam.*, secrets.*, agentbuilder.permissions]
+
+# class: R0 read, R1 reversible, R2 costly to undo, R3 not grantable in v1.
+# escalates_when_shared: R1 becomes R2 when the target is shared beyond the drive's members.
+# undo: the exact "Undo text (rendered)" cell; R3 actions have none.
+actions:
+  # Drive (docs/drive-wrapper.md)
+  drive.list: {class: R0, wrapper: drive, undo: "nothing to undo (read only)."}
+  drive.read: {class: R0, wrapper: drive, undo: "nothing to undo (read only)."}
+  sheets.read: {class: R0, wrapper: drive, undo: "nothing to undo (read only)."}
+  drive.create: {class: R1, wrapper: drive, undo: "remove the new file by hand (agents cannot delete)."}
+  drive.update: {class: R1, wrapper: drive, escalates_when_shared: true, undo: "restore the previous version from its snapshot (kept 30 days)."}
+  sheets.write: {class: R1, wrapper: drive, escalates_when_shared: true, undo: "restore the previous cell values from the snapshot (kept 30 days)."}
+  drive.move: {class: R3, wrapper: drive}
+  drive.share: {class: R3, wrapper: drive}
+  drive.delete: {class: R3, wrapper: drive}
+  # Email (docs/email-wrapper.md)
+  gmail.read: {class: R0, wrapper: email, undo: "nothing to undo (read only)."}
+  gmail.draft: {class: R1, wrapper: email, undo: "restore or remove the draft from its snapshot (kept 30 days)."}
+  gmail.send: {class: R2, wrapper: email, undo: "a sent email cannot be recalled; follow up by hand."}
+  gmail.send_bulk: {class: R3, wrapper: email}
+  # Agent Builder (wrap 3)
+  agentbuilder.read: {class: R0, wrapper: agentbuilder, undo: "nothing to undo (read only)."}
+  agentbuilder.create: {class: R1, wrapper: agentbuilder, undo: "remove the unpublished agent by hand."}
+  agentbuilder.publish: {class: R2, wrapper: agentbuilder, undo: "unpublish by hand; anyone who used it in the meantime has seen it."}

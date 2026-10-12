@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "gmail.read arguments",
+  "description": "docs/email-wrapper.md section 4. Either message_id, or search fields; the gateway builds the Gmail query itself.",
+  "type": "object",
+  "properties": {
+    "message_id": { "type": "string" },
+    "from": { "type": "string" },
+    "subject_contains": { "type": "string" },
+    "newer_than_days": { "type": "integer", "minimum": 1 }
+  },
+  "required": [],
+  "additionalProperties": false
+}

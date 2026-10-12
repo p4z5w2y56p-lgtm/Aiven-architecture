@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sheets.write arguments",
+  "description": "docs/drive-wrapper.md section 3. range is one rectangle in A1 notation. Values are literal; a string starting with = is stored as text.",
+  "type": "object",
+  "properties": {
+    "file_id": { "type": "string" },
+    "range": { "type": "string" },
+    "values": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": { "type": ["string", "number", "boolean"] }
+      }
+    }
+  },
+  "required": ["file_id", "range", "values"],
+  "additionalProperties": false
+}

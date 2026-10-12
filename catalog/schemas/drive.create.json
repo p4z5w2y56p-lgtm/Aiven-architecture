@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "drive.create arguments",
+  "description": "docs/drive-wrapper.md section 3. google_doc is made from text, google_sheet from CSV.",
+  "type": "object",
+  "properties": {
+    "parent_id": { "type": "string" },
+    "name": { "type": "string" },
+    "type": {
+      "type": "string",
+      "enum": ["text", "markdown", "csv", "json", "google_doc", "google_sheet"]
+    },
+    "content": { "type": "string" }
+  },
+  "required": ["parent_id", "name", "type", "content"],
+  "additionalProperties": false
+}

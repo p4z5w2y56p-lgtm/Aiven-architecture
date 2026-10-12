@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "drive.list arguments",
+  "description": "docs/drive-wrapper.md section 3. folder_id defaults to the policy's scope folder.",
+  "type": "object",
+  "properties": {
+    "folder_id": { "type": "string" },
+    "name_contains": { "type": "string" },
+    "page_token": { "type": "string" },
+    "page_size": { "type": "integer", "minimum": 1, "maximum": 100 }
+  },
+  "required": [],
+  "additionalProperties": false
+}

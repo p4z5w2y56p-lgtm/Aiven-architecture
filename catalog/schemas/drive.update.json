@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "drive.update arguments",
+  "description": "docs/drive-wrapper.md section 3. At least one of name and content is required; the gateway enforces that, not this schema.",
+  "type": "object",
+  "properties": {
+    "file_id": { "type": "string" },
+    "name": { "type": "string" },
+    "content": { "type": "string" }
+  },
+  "required": ["file_id"],
+  "additionalProperties": false
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "gmail.draft arguments",
+  "description": "docs/email-wrapper.md section 4. draft_id edits a draft this agent created; leave it out to create a new one.",
+  "type": "object",
+  "properties": {
+    "to": { "type": "array", "items": { "type": "string" } },
+    "cc": { "type": "array", "items": { "type": "string" } },
+    "bcc": { "type": "array", "items": { "type": "string" } },
+    "subject": { "type": "string" },
+    "body": { "type": "string" },
+    "draft_id": { "type": "string" }
+  },
+  "required": ["to", "subject", "body"],
+  "additionalProperties": false
+}

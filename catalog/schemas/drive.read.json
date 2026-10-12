@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "drive.read arguments",
+  "description": "docs/drive-wrapper.md section 3.",
+  "type": "object",
+  "properties": {
+    "file_id": { "type": "string" }
+  },
+  "required": ["file_id"],
+  "additionalProperties": false
+}

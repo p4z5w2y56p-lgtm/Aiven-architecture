@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sheets.read arguments",
+  "description": "docs/drive-wrapper.md section 3. range is in A1 notation.",
+  "type": "object",
+  "properties": {
+    "file_id": { "type": "string" },
+    "range": { "type": "string" }
+  },
+  "required": ["file_id", "range"],
+  "additionalProperties": false
+}
