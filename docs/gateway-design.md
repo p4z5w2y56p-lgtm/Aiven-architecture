@@ -37,7 +37,7 @@ It builds on `docs/validator-spec.md`, which defines the policy format, the acti
 |---|---|---|
 | `agent-<id>@aiven-agents`, one per agent | Call the gateway (`run.invoker` on the gateway service). Call its model through Vertex AI (`aiplatform.user`). | Reach any Workspace data: the Drive, Sheets and Gmail APIs are disabled in `aiven-agents`, and no file is ever shared with an agent. Touch gateway or control. Hold keys. |
 | `gateway@aiven-gateway` | Use the Drive and Sheets APIs with OAuth scope `drive`, as Contributor of the Sandbox drive only. Use Gmail as the agent mailbox only, through delegation in the separate agent Workspace (`signJwt` on its own account, no key; email-wrapper §1). Read and write its own Firestore. In control: write audit entries (`logging.logWriter`), create snapshot objects (`storage.objectCreator` on the snapshot bucket), read policies (`storage.objectViewer` on the policy bucket), and read kill switches, decisions and sign-offs (`datastore.viewer`). | Read, overwrite or delete snapshots. Read or delete the audit log. Change kill switches, decisions, sign-offs or policies. Trash, move or share Drive files (Google blocks this, see the Drive wrapper). Use Drive files outside the Sandbox (`driveId` check on every call). |
-| `control-ui@aiven-control` | Serve the control UI behind IAP, to Matthijs only. Write kill switches, decisions, sign-offs and taint clears. Read the audit log, the policies and the snapshot list. Call the gateway's control endpoints. | Drive, Gmail, billing |
+| `control-ui@aiven-control` | Serve the control UI behind IAP, to Matthijs only. Write kill switches, decisions, sign-offs, wrapper switches and taint clears. Read the audit log, the policies and the snapshot list. Read the gateway's working database (`datastore.viewer` on `aiven-gateway`) for pending confirms, proposals and runs. Call the gateway's control endpoints. | Drive, Gmail, billing, and writing the gateway's database |
 | `budget-stop@aiven-control` | Unlink billing from `aiven-agents` and `aiven-gateway`. Write audit entries. | Anything else |
 | Matthijs | Owns the three projects. Is Manager of the Sandbox drive. Signs policies with the hardware key, publishes them to the policy bucket, and restores snapshots by hand. | |
 
@@ -272,7 +272,32 @@ The billing account is a Google Cloud free trial: a $300 credit for 90 days, end
   - **Quota increases**, which are blocked on the trial. If Vertex AI's default quota is too low for the agents or the model-driven tests, the only fix is the upgrade.
   - **Cloud Marketplace products**, which this design doesn't use.
 - **Upgrade before the trial ends.** When the trial ends without an upgrade, the trial billing account closes, everything stops (the control project included), and after a 30-day grace period Google deletes it all. That would break the 1-year audit log. Upgrading keeps the remaining credit until the original 90-day mark, and the €10/€25 budgets keep working on gross cost.
-- **Check now:**
-  - How many projects the trial billing account can hold. The design needs 3, plus 1 scratch project for the budget drill.
-  - The billing account's currency. If it's USD, set the budgets to about $11 and $27.
+- **Check first** (setup steps S1–S3 in `docs/plans/2026-10-12-phase1-implementation.md`):
+  - The project quota. The design needs 4 projects: 3, plus 1 scratch project for the budget drill.
+  - The billing currency. The budgets use it: €10/€25, or $11/$27.
+  - The trial start date. A day-75 alert reminds Matthijs to upgrade.
 - **Not covered by the trial:** the agent Workspace (email option a) is its own Workspace subscription, billed outside Google Cloud.
+
+## 15. Agent runtime and model layer
+
+Agents run as Cloud Run jobs in `aiven-agents`, using the `aiven.agent` runtime. The gateway is their only tool. The model is behind a provider-neutral interface, so moving from Gemini to Claude on Vertex AI changes configuration only, never code.
+
+- **One interface.** `ModelClient.start(system, tools)` and `send(...)` work with neutral tool specs, tool calls, tool results and usage. Tool specs are built from the same JSON Schemas the gateway validates against (`catalog/schemas/`), and they are fixed for the whole run.
+- **Two adapters.**
+  - Gemini on Vertex AI (`google-genai`, `vertexai=True`) for Phase 1 on the trial.
+  - Claude on Vertex AI (`anthropic[vertex]`, `AnthropicVertex`), ready for after the upgrade.
+
+  Both use the agent's own service account, so no API key is involved.
+- **Append-only history.** Each adapter keeps the provider's own reply content and sends it back unchanged on the next turn. Claude's thinking blocks and Gemini's thought signatures must be returned exactly as received. Switching provider happens between runs, never inside one.
+- **Gateway tools only.** Adapters send function or tool definitions only: no Google Search grounding, no web search, no other built-in tools (deployment check, AT-BYP-7).
+- **The switch** is a change in `agents/<id>/runtime.yaml`:
+  - `provider` from `vertex-gemini` to `vertex-claude`;
+  - `model_id`, for example `claude-opus-5-5`;
+  - `region`, for example `eu` to keep processing in the EU.
+
+  It also needs a price entry in `pricing/models.yaml`, and the model enabled in Model Garden, which requires the paid upgrade. A conformance test runs one scripted conversation through both adapters and expects the same gateway calls.
+- **Claude specifics** handled inside the adapter:
+  - Forced tool choice isn't allowed on current models, so the adapter uses `auto`.
+  - Thinking stays at the model default.
+  - Refusals end the run, unless `fallback_models` is set; then the SDK's client-side refusal fallback is used, because Vertex has no server-side fallback.
+  - Usage is summed over every attempt, so cost per run stays right.
