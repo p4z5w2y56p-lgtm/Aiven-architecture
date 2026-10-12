@@ -1,4 +1,4 @@
-"""Platform constants v1 (validator-spec section 6).
+"""Platform constants v1 (validator-spec section 6), and the other fixed values the checks use.
 
 Changing a constant means a new validator version, reviewed and signed the same way.
 
@@ -107,3 +107,23 @@ LIST_SIZES: dict[str, tuple[int, int]] = {
     "tools": (1, 20),
     "scope.email_to": (1, 50),
 }
+
+# A policy file is at most 64 KiB (validator-spec 3.1, E-FILE-SIZE).
+MAX_FILE_BYTES = 64 * 1024
+
+# Hidden characters (validator-spec 3.1, E-HIDDEN-CHAR): every character in these Unicode
+# categories, and in these code point ranges (inclusive, in the order of the spec). The check
+# itself leaves out LF, CR and the normal space. The ranges are needed because those characters
+# are not in the categories: the tag characters are mostly unassigned, and the others are
+# marks and letters that draw nothing.
+HIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp", "Zs"})
+HIDDEN_RANGES = (
+    (0xE0000, 0xE007F),  # tag characters
+    (0x034F, 0x034F),  # combining grapheme joiner
+    (0x115F, 0x115F),  # Hangul choseong filler
+    (0x1160, 0x1160),  # Hangul jungseong filler
+    (0x3164, 0x3164),  # Hangul filler
+    (0xFFA0, 0xFFA0),  # halfwidth Hangul filler
+    (0xFE00, 0xFE0F),  # variation selectors
+    (0xE0100, 0xE01EF),  # variation selectors supplement
+)
