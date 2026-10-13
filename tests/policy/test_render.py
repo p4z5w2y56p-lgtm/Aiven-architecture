@@ -19,9 +19,10 @@ from aiven.policy.catalog import Action
 from aiven.policy.constants import POLICY_CLASSES
 from aiven.policy.model import Limits, Scope
 from aiven.policy.render import render_generated, rewrite
+from aiven.policy.validate import validate_file
 from tests.support.bodies import ENFORCED, SIGNOFF, generated_of, policy_of, rerendered
-from tests.support.policies import FOLDER_ID, TEMPLATE_PATH, valid_base
-from tests.support.rules import CATALOG
+from tests.support.policies import AGENTS_PROJECT, BASE_PATH, FOLDER_ID, TEMPLATE_PATH, valid_base
+from tests.support.rules import CATALOG, CFG
 from tests.support.spec_tables import code_spans, line_starting_with
 
 TEMPLATE = TEMPLATE_PATH.read_bytes()
@@ -80,6 +81,22 @@ def test_valid_base_matches_render():
     # the renderer makes of that front matter, so the plain substitution was a re-render.
     assert render_generated(POLICY, CATALOG) == generated_of(BASE_TEXT)
     assert rewrite(BASE, POLICY, CATALOG) == BASE
+
+
+def test_filling_in_the_two_values_of_the_template_and_rendering_gives_a_policy_with_three_warnings():
+    # Spec section 9: "fill in the two values in the front matter, run render. After that only the
+    # three warnings remain." The sections still hold the placeholders until they are rendered.
+    end = TEMPLATE_TEXT.index("\n---\n", 4) + len("\n---\n")
+    front = TEMPLATE_TEXT[:end]
+    front = front.replace("REPLACE_ME_AGENTS_PROJECT", AGENTS_PROJECT)
+    front = front.replace("REPLACE_ME_FOLDER_ID", FOLDER_ID)
+    data = (front + TEMPLATE_TEXT[end:]).encode("utf-8")
+    assert b"REPLACE_ME" in data
+    filled = rewrite(data, policy_of(data), CATALOG)
+    assert filled == BASE
+    assert [f.code for f in validate_file(BASE_PATH, filled, CFG, CATALOG)] == [
+        "W-TOOL-NOT-LIVE"
+    ] * 3
 
 
 def test_the_two_sections_are_the_text_from_each_heading_to_the_next():

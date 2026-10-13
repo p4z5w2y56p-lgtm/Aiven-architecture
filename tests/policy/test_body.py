@@ -360,7 +360,6 @@ def test_a_section_that_is_not_there_is_not_empty():
 
 
 WHY_LINE = at(WHY)
-NAME = "`gmail.draft`"
 
 
 def tools_of(body: str, **kw) -> list[tuple[str, int, str]]:
