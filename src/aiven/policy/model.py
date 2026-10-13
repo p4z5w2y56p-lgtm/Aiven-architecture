@@ -17,7 +17,10 @@ Each list is kept without its repeats (ruling R26): an entry stays the first tim
 
 `Policy.sha256` is the hash of the exact bytes of the file (section 2).
 
-The text of the file is in the policy, so the text fields are not in its repr.
+Nothing from the file is in the repr of a `Policy`, a `Limits` or a `Scope`, numbers included:
+a number can be a card number or a BSN, and a `Policy` is built even when E-RANGE says the number is
+out of range. A `Finding` hides such a value in its params, so the repr must not print it in a log,
+a traceback or a failed assertion (ruling R52). Only `sha256` is shown.
 """
 
 import hashlib
@@ -39,18 +42,21 @@ UntrustedInput = Literal["strict", "taint"]
 
 @dataclass(frozen=True)
 class Limits:
-    """The `limits` of a policy (section 3.3)."""
+    """The `limits` of a policy (section 3.3). No value is in the repr."""
 
-    emails_per_day: int
-    records_per_run: int
-    spend_eur_per_run: int
-    max_runtime_s: int
-    runs_per_day: int
+    emails_per_day: int = field(repr=False)
+    records_per_run: int = field(repr=False)
+    spend_eur_per_run: int = field(repr=False)
+    max_runtime_s: int = field(repr=False)
+    runs_per_day: int = field(repr=False)
 
 
 @dataclass(frozen=True)
 class Scope:
-    """The `scope` of a policy. A field that the file does not have is None, or empty."""
+    """The `scope` of a policy. A field that the file does not have is None, or empty.
+
+    No value is in the repr.
+    """
 
     drive_folder_id: str | None = field(repr=False)
     drive_folder_path: str | None = field(repr=False)
@@ -59,18 +65,21 @@ class Scope:
 
 @dataclass(frozen=True)
 class Policy:
-    """The front matter of a policy file as the gateway enforces it. See the module docstring."""
+    """The front matter of a policy file as the gateway enforces it. See the module docstring.
+
+    Only `sha256` is in the repr.
+    """
 
     agent: str = field(repr=False)
-    version: int
+    version: int = field(repr=False)
     principal: str = field(repr=False)
     max_class: MaxClass = field(repr=False)
     tools: tuple[str, ...] = field(repr=False)
     forbidden: tuple[str, ...] = field(repr=False)
     untrusted_input: UntrustedInput = field(repr=False)
-    limits: Limits
-    scope: Scope
-    shadow_min_runs: int
+    limits: Limits = field(repr=False)
+    scope: Scope = field(repr=False)
+    shadow_min_runs: int = field(repr=False)
     sha256: str
 
 

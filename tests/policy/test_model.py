@@ -13,6 +13,7 @@ import pytest
 
 from aiven.policy.frontmatter import FIELDS, FrontMatter, load, split
 from aiven.policy.model import Limits, Policy, Scope, build_policy
+from tests.support import gen
 from tests.support.frontmatter import FRONT, edited, front_without, swap
 from tests.support.policies import AGENTS_PROJECT, BASE_PATH, FOLDER_ID, TEMPLATE_PATH
 from tests.support.rules import BASE, CATALOG, CFG, check, run_front
@@ -134,6 +135,37 @@ def test_the_repr_of_a_policy_holds_no_text_of_the_file():
         assert marker not in shown
     for shown in (repr(EXPECTED), repr(EXPECTED.scope)):
         assert "invoice-reminder" not in shown and "aivenstudios" not in shown
+
+
+def test_the_repr_of_a_policy_holds_no_number_of_the_file():
+    # E-RANGE does not stop a Policy (ruling R4), so a number that is out of range is in it, and a
+    # number can be a card number or a BSN. The guard of a Finding hides such a value; so must the
+    # repr, which a log, a traceback or a failed assertion would print.
+    card, bsn, other = gen.valid_card(), gen.valid_bsn(), gen.valid_bsn()
+
+    def change(data):
+        data["version"] = int(bsn)
+        data["limits"]["records_per_run"] = int(card)
+        data["shadow"]["min_runs"] = int(other)
+
+    run = check(change)
+    policy = run.policy
+    assert run.codes().count("E-RANGE") == 3
+    assert policy.version == int(bsn)
+    assert policy.limits.records_per_run == int(card)
+    assert policy.shadow_min_runs == int(other)
+    for shown in (repr(policy), repr(policy.limits), repr(policy.scope)):
+        for number in (bsn, card, other):
+            assert number not in shown
+
+
+def test_only_the_hash_is_in_the_repr_of_a_policy():
+    # Every other field comes from the file. A field that is added later has to opt out too.
+    for cls in (Policy, Limits, Scope):
+        assert [f.name for f in fields(cls) if f.repr] == (["sha256"] if cls is Policy else [])
+    policy, _ = build(FRONT)
+    assert repr(policy) == f"Policy(sha256={policy.sha256!r})"
+    assert repr(policy.limits) == "Limits()" and repr(policy.scope) == "Scope()"
 
 
 # --- when there is a policy (ruling R4)
