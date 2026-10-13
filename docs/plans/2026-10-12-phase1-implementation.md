@@ -504,6 +504,8 @@ Locking `aiven-audit` (`locked = true`) can't be undone. **Do not apply it until
 
 ## M3. Gateway core (`docs/gateway-design.md` §4–§8, §13; validator-spec §4)
 
+> **Updated after the M2 review:** `docs/plans/2026-10-13-m3-gateway.md` adds to this section: the four M1 flags decided (#1 to #4), a fallback alert when the gateway fails closed and the audit log fails too, what M2 hands over, and two new tasks (3.0 and 3.5b). Where the two differ, that document wins.
+
 ### Task 3.1: Types and store
 
 **Files:**
@@ -663,7 +665,7 @@ Locking `aiven-audit` (`locked = true`) can't be undone. **Do not apply it until
 **Tracked from the M1 review** (issues p4z5w2y56p-lgtm/Aiven-architecture#1, #2, #3):
 
 - **Durable active version (#1).** Pass `ActiveVersion` to every `verify` call, taken from a record that survives a restart and a rebuild of the gateway's working database. Firestore `gateway` is working state today and may be rebuilt empty, so the durable record can't live only there. Decide the store in this task: for example a `policy_versions/{agent}` document in control, written when Matthijs publishes and read by the gateway. If the record can't be read, refuse and alert. Tests: an older signed version is refused after a restart, and a failed read gives a refusal.
-- **Catalog signature (#2).** This is `load_signed_catalog` above. It verifies with `ssh-keygen -Y verify`, checks the size and the signature before parsing, and the gateway won't start without a valid signature. Decision for Matthijs: does the catalog use the policy namespace, or its own namespace such as `aiven-catalog-v1`?
+- **Catalog signature (#2).** This is `load_signed_catalog` above. It verifies with `ssh-keygen -Y verify`, checks the size and the signature before parsing, and the gateway won't start without a valid signature. Decided at the M2 review: its own namespace, `aiven-catalog-v1`.
 - **Byte limit (#3).** Read at most `MAX_FILE_BYTES + 1` bytes of a policy, the catalog, `allowed_signers` or the pricing file, and at most `MAX_SIG_BYTES + 1` bytes of a signature. Use a ranged read, or check the object's size first. An object that is too large is refused with an alert, without reading the rest.
 
 **Commit:** `feat(gateway): signed policy registry`
