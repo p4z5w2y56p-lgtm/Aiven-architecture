@@ -14,10 +14,35 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.11.32"
           python-version: "3.12"
-      - run: uv sync --frozen
+      - run: uv sync --locked
       - run: uv run ruff check
+      - run: uv run ruff format --check
       - run: uv run pytest -q
+      - run: uv run pytest tests/policy --cov=aiven.policy --cov-branch --cov-fail-under=95
+      - name: Template self-test (validator-spec section 9)
+        run: |
+          # The template has errors of its own, so the validator must exit 1. Exit 0 would mean
+          # that it no longer sees them, and 2 that it crashed. The tests compare the output.
+          status=0
+          uv run aiven-policy validate templates/policy-template.md || status=$?
+          test "$status" -eq 1
+      - name: Policies against the base of the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # A push is checked as the pull request that holds it. The platform values come from
+          # AIVEN_POLICY_CONFIG or config/platform.yaml, as for anyone: the example config would
+          # fail every real policy (E-PRINCIPAL).
+          shopt -s nullglob
+          policies=(policies/*.md)
+          if [ "${#policies[@]}" -eq 0 ]; then
+            echo "No policies yet."
+            exit 0
+          fi
+          uv run aiven-policy validate --previous-ref "$BASE_SHA" "${policies[@]}"
