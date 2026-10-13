@@ -28,7 +28,7 @@ R1 and R2: R3 and R4 are E-MAX-CLASS-R3 and E-MAX-CLASS-R4 of their own file, an
 E-PLACEHOLDER, so such a class is not ranked here. The other fields are compared whatever their
 values are.
 
-The strings are plain ASCII (`->`), and `check_set` joins them with `; ` for W-WIDENS. They hold
+The strings are plain ASCII (`->`), and `check_history` joins them with `; ` for W-WIDENS. They hold
 text from the file: tools, addresses and the numbers of limits. Each such value goes through
 `content.safe_text` before it is grouped (ruling R77), so one that the guard would hide, a
 credential, a bank detail or an ID number, shows as `[hidden]` in its own place. Without that the

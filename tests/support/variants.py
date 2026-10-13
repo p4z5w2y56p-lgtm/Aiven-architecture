@@ -12,7 +12,8 @@ A version is not a whole valid file as it stands. The generated sections still s
 `validate_file` reports E-BODY-DRIFT for a version whose front matter shows other values. These
 tests read the policy that the file gives, and some of them set a field to a value that the
 renderer refuses, so by default the sections are left alone. (A set of versions is "valid" when
-`check_set` has no finding for it, and that is all that the word means in these tests.)
+`check_duplicates` and `check_history` have no finding for it, and that is all that the word means
+in these tests.)
 
 With `render=True` the generated sections are rendered again from the new front matter
 (`rerendered`). That makes a whole valid file of a change that only touches values which the

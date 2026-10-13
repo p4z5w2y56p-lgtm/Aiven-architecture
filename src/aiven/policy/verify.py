@@ -44,7 +44,7 @@ no policy and one E-INTERNAL, with the name of the exception class as its `detai
 exception can hold text of the file, so it is never used.
 
 `verify` handles one file. The checks across all policies (3.9) are done by the loader that loads
-them, with `check_set`.
+them: `check_duplicates` over the whole set, and `check_history` for each file.
 """
 
 import inspect
@@ -223,7 +223,7 @@ def _version_order(where: str, policy: Policy, active: ActiveVersion | None) -> 
     """E-VERSION-ORDER: older than the active version, or the same version in other bytes.
 
     Old versions can never come back. A newer version is allowed whatever the gap: that it is the
-    previous one + 1 is held in CI (`check_set`), not at load.
+    previous one + 1 is held in CI (`check_history`), not at load.
     """
     if active is None:
         return []

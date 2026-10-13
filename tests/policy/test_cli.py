@@ -22,7 +22,7 @@ import re
 import stat
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -31,6 +31,7 @@ from aiven.policy import cli
 from aiven.policy.catalog import load_catalog
 from aiven.policy.cli import FILE_AND_BODY_CODES, main
 from aiven.policy.findings import Finding, format_line, message
+from aiven.policy.model import Policy
 from aiven.policy.validate import Validated, validate_file
 from tests.support import REPO_ROOT, gen
 from tests.support.bodies import policy_of, rerendered
@@ -363,37 +364,53 @@ def test_a_finding_across_files_reaches_a_file_whose_name_has_an_unprintable_cha
     assert "invoice\\u000acopy.md" in done.out
 
 
-def spy_on_check_set(monkeypatch) -> list[list[str]]:
-    """The paths that `check_set` was given, for each call."""
-    seen: list[list[str]] = []
-    real = cli.check_set
+@dataclass
+class Across:
+    """What the command line gave to the checks across the files, for each call in order.
 
-    def check_set(items, previous):
-        seen.append([str(path) for path, _ in items])
-        return real(items, previous)
+    `duplicates` holds the paths of each set that `check_duplicates` was given, and `history` the
+    path and the previous policy (None for a new agent) of each call of `check_history`.
+    """
 
-    monkeypatch.setattr(cli, "check_set", check_set)
+    duplicates: list[list[str]] = field(default_factory=list)
+    history: list[tuple[str, Policy | None]] = field(default_factory=list)
+
+
+def spy_on_the_checks_across(monkeypatch) -> Across:
+    seen = Across()
+    real_duplicates, real_history = cli.check_duplicates, cli.check_history
+
+    def check_duplicates(items):
+        seen.duplicates.append([str(path) for path, _ in items])
+        return real_duplicates(items)
+
+    def check_history(path, policy, previous):
+        seen.history.append((str(path), previous))
+        return real_history(path, policy, previous)
+
+    monkeypatch.setattr(cli, "check_duplicates", check_duplicates)
+    monkeypatch.setattr(cli, "check_history", check_history)
     return seen
 
 
 def test_a_file_that_gives_no_policy_is_left_out_of_the_set(run, monkeypatch):
-    seen = spy_on_check_set(monkeypatch)
+    seen = spy_on_the_checks_across(monkeypatch)
     write(INVOICE, VALID)
     write(NUDGE, swap(VALID, b"max_class: R2", b"max_class: ["))
     done = run("validate", NUDGE, INVOICE)
-    assert seen == [[INVOICE]]
+    assert seen.duplicates == [[INVOICE]]
     assert [m for m in by_file(done.lines)[NUDGE] if " E-YAML " in m]  # reported all the same
     assert done.status == 1
 
 
 def test_the_set_is_sorted_by_path_whatever_the_order_of_the_arguments(run, monkeypatch):
-    seen = spy_on_check_set(monkeypatch)
+    seen = spy_on_the_checks_across(monkeypatch)
     names = ["policies/zeta-agent.md", "policies/alpha-agent.md", "policies/mid-agent.md"]
     for name in names:
         write(name, agent_file(Path(name).stem))
     run("validate", *names)
     run("validate", *reversed(names))
-    assert seen == [sorted(names)] * 2
+    assert seen.duplicates == [sorted(names)] * 2
 
 
 def test_a_file_named_twice_is_checked_once(run):
@@ -635,6 +652,35 @@ def test_the_previous_version_is_never_reported_on(repo):
     assert "E-RANGE" not in done.out
 
 
+def test_without_a_ref_the_history_is_not_asked_for_and_the_set_still_is(run, monkeypatch):
+    # The history of a file is not known (ruling R86), so check_history is not called for it, and
+    # its findings are not filtered out afterwards (ruling R91). The duplicates need no history.
+    seen = spy_on_the_checks_across(monkeypatch)
+    write(INVOICE, VALID)
+    write(NUDGE, agent_file("payment-nudge"))
+    run("validate", INVOICE, NUDGE)
+    assert seen.history == []
+    assert seen.duplicates == [[INVOICE, NUDGE]]
+
+
+def test_the_history_is_asked_for_each_file_whose_history_is_known_and_for_no_other(
+    repo, monkeypatch
+):
+    # INVOICE is at the ref and builds a policy: that policy is its previous version. NUDGE is not
+    # at the ref, a new agent: it has no previous version, and must be version 1. THIRD is at the
+    # ref and gives no policy there: its history is not known (ruling R88), and nothing is asked.
+    third = "policies/third-agent.md"
+    write(INVOICE, VALID)
+    write(third, swap(agent_file("third-agent"), b"max_class: R2", b"max_class: ["))
+    commit()
+    write(NUDGE, agent_file("payment-nudge"))
+    write(third, agent_file("third-agent"))
+    seen = spy_on_the_checks_across(monkeypatch)
+    repo("validate", "--previous-ref", "HEAD", INVOICE, NUDGE, third)
+    assert seen.duplicates == [[INVOICE, NUDGE, third]]
+    assert seen.history == [(INVOICE, policy_of(VALID)), (NUDGE, None)]
+
+
 NO_POLICY_NOTE = (
     "note: the previous version of {path} gives no policy, "
     "so its version order and widening are not checked"
@@ -671,8 +717,8 @@ def test_unknown_history_is_for_that_file_only(repo):
 
 def test_a_widening_is_not_reported_for_a_file_of_unknown_history_either(repo):
     # Two files of one agent. The previous version of the first is known. That of the copy gives no
-    # policy, but check_set compares the copy with the previous version of the agent all the same,
-    # and would find that it widens: for a file of unknown history that is left out as well.
+    # policy, so its history is not asked for at all, though the agent is the one of a file whose
+    # history is known: the copy is not compared with the previous version of that file.
     copy = "policies/invoice-copy.md"
     write(INVOICE, VALID)
     write(copy, swap(VALID, b"max_class: R2", b"max_class: ["))
@@ -1005,10 +1051,18 @@ def test_a_catalog_that_is_not_valid_is_a_crash(run, tmp_path):
     assert (done.status, done.lines) == (2, [internal(INVOICE, "CatalogError")])
 
 
-def test_a_crash_in_the_checks_across_the_files_is_a_crash(run, monkeypatch):
-    monkeypatch.setattr(cli, "check_set", crashing(ValueError(LEAK)))
+def test_a_crash_in_the_check_of_the_duplicates_is_a_crash(run, monkeypatch):
+    monkeypatch.setattr(cli, "check_duplicates", crashing(ValueError(LEAK)))
     write(INVOICE, VALID)
     done = run("validate", INVOICE)
+    assert (done.status, done.lines) == (2, [internal(INVOICE, "ValueError")])
+
+
+def test_a_crash_in_the_check_of_the_history_is_a_crash(repo, monkeypatch):
+    monkeypatch.setattr(cli, "check_history", crashing(ValueError(LEAK)))
+    write(INVOICE, VALID)
+    commit()
+    done = repo("validate", "--previous-ref", "HEAD", INVOICE)
     assert (done.status, done.lines) == (2, [internal(INVOICE, "ValueError")])
 
 

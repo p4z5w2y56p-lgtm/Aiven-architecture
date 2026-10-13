@@ -28,8 +28,8 @@ Rules for a mutation:
 - Use no URLs, links or HTML, except in the cases of E-BODY-HTML and E-BODY-LINK.
 - Find the target line by content (`line_of`), not by number.
 - E-FILENAME changes the path that the validator is given, not the bytes (see its own test).
-- The set cases (Task 1.6, `SET_CASES`) are about several files at once, so they are not a
-  mutation of one file: see the comment at the table.
+- The set cases (Task 1.6, `SET_CASES`) are about several files at once, or about one file and
+  the version before it, so they are not a mutation of one file: see the comment at the table.
 """
 
 import codecs
@@ -47,8 +47,7 @@ from aiven.policy.catalog import load_catalog
 from aiven.policy.constants import SECTIONS
 from aiven.policy.fileformat import decode_text
 from aiven.policy.findings import Finding, format_line, message
-from aiven.policy.model import Policy
-from aiven.policy.policyset import check_set
+from aiven.policy.policyset import check_duplicates, check_history
 from aiven.policy.validate import validate_file
 from tests.support import REPO_ROOT, gen
 from tests.support.bodies import policy_of, rerendered
@@ -910,12 +909,14 @@ CASES = [
 
 
 # Task 1.6: the checks across all policies (validator-spec 3.6 and 3.9). A set case is
-# (code, build, findings). `build()` makes the set: the (path, policy) pairs of its files, and the
-# previous signed policies by agent. `check_set` must give exactly `findings`, in order, as
-# (path, params), and all of that code: a valid set has no finding, so nothing else may come with
-# it. A finding is about a whole file, as a policy carries no line map.
+# (code, check, findings). `check()` makes the policies of the case and runs one of the two
+# functions on them: `check_duplicates` over the files of a set (the duplicate codes), or
+# `check_history` for one file and the policy before it (E-VERSION-ORDER and W-WIDENS), see ruling
+# R91. It must give exactly `findings`, in order, as (path, params), and all of that code: a valid
+# set has no finding, so nothing else may come with it. A finding is about a whole file, as a
+# policy carries no line map.
 #
-# "Valid" means that `check_set` has no finding for the set. The files are versions of the base
+# "Valid" means that the check has no finding for the files. The files are versions of the base
 # (tests/support/variants.py), made through the real pipeline, and as they stand they are not whole
 # valid files: the generated sections still show the base, which `validate_file` reports as
 # E-BODY-DRIFT. A case that changes only values that those sections show renders them again
@@ -923,7 +924,7 @@ CASES = [
 # raised limit; `RENDERED_CHANGES` is tested). The others cannot be: a copy of a file with another
 # agent or principal has the defects of that (E-FILENAME, E-PRINCIPAL), which is what the codes
 # of the duplicates are about, and a new tool needs its bullet in Why each tool.
-SetBuild = Callable[[], tuple[list[tuple[Path, Policy]], dict[str, Policy]]]
+SetCheck = Callable[[], list[Finding]]
 
 COPY_PATH = Path("policies/invoice-copy.md")
 NUDGE_PATH = Path("policies/payment-nudge.md")
@@ -931,29 +932,43 @@ AGENT = "invoice-reminder"
 FILES_OF_AGENT = "invoice-copy.md, invoice-reminder.md"
 
 
-def a_set(
-    *files: tuple[Path, tuple[Change, ...]],
+def duplicates_of(*files: tuple[Path, tuple[Change, ...]]) -> SetCheck:
+    """`check_duplicates` over a set of files.
+
+    Each file is a path and the changes to the base that make its policy.
+    """
+
+    def check():
+        return check_duplicates([(path, variant(*changes)) for path, changes in files])
+
+    return check
+
+
+def history_of(
+    path: Path,
+    changes: tuple[Change, ...],
+    *,
     before: tuple[Change, ...] | None = None,
     render: bool = False,
-) -> SetBuild:
-    """The set of these files, each a path and the changes to the base that make its policy.
+) -> SetCheck:
+    """`check_history` for the file at `path`, whose policy is the base with these changes.
 
-    `before` are the changes that make the previous signed policy of invoice-reminder, `()` for
-    the base itself. Without it, the set has no previous policy. With `render` the generated
-    sections of every file are rendered again, which makes whole valid files of the changes that
+    `before` are the changes that make the previous signed policy of invoice-reminder, `()` for the
+    base itself. Without it the agent is new: there is no previous policy. With `render` the
+    generated sections of both are rendered again, which makes whole valid files of the changes that
     only touch values that those sections show.
     """
 
-    def build():
-        items = [(path, variant(*changes, render=render)) for path, changes in files]
-        return items, ({} if before is None else {AGENT: variant(*before, render=render)})
+    def check():
+        previous = None if before is None else variant(*before, render=render)
+        return check_history(path, variant(*changes, render=render), previous)
 
-    return build
+    return check
 
 
-def set_case(code: str, label: str, build: SetBuild, findings: list[tuple[Path, dict[str, str]]]):
+def set_case(code: str, label: str, check: SetCheck, findings: list[tuple[Path, dict[str, str]]]):
     return pytest.param(
-        code, build, [(str(p), params) for p, params in findings], id=f"{code} {label}"
+        code, check, [(str(p), params) for p, params in findings], id=f"{code} {label}"
     )
 
 
@@ -974,7 +989,7 @@ SET_CASES = [
     set_case(
         "E-AGENT-DUPLICATE",
         "a copy that has a principal of its own",
-        a_set(
+        duplicates_of(
             (BASE_PATH, ()),
             (COPY_PATH, (setting("principal", principal_of("invoice-copy")),)),
         ),
@@ -986,7 +1001,7 @@ SET_CASES = [
     set_case(
         "E-PRINCIPAL-DUPLICATE",
         "another agent with the principal of the first",
-        a_set((BASE_PATH, ()), (NUDGE_PATH, (setting("agent", "payment-nudge"),))),
+        duplicates_of((BASE_PATH, ()), (NUDGE_PATH, (setting("agent", "payment-nudge"),))),
         [
             (BASE_PATH, {"principal": principal_of(AGENT), "other": "payment-nudge.md"}),
             (NUDGE_PATH, {"principal": principal_of(AGENT), "other": "invoice-reminder.md"}),
@@ -995,31 +1010,31 @@ SET_CASES = [
     set_case(
         "E-VERSION-ORDER",
         "a version that skips one",
-        a_set((BASE_PATH, SKIPS_A_VERSION), before=(), render=True),
+        history_of(BASE_PATH, SKIPS_A_VERSION, before=(), render=True),
         [(BASE_PATH, {"value": "3", "next": "2"})],
     ),
     set_case(
         "E-VERSION-ORDER",
         "the same version, with other content",
-        a_set((BASE_PATH, OTHER_CONTENT), before=(), render=True),
+        history_of(BASE_PATH, OTHER_CONTENT, before=(), render=True),
         [(BASE_PATH, {"value": "1", "next": "2"})],
     ),
     set_case(
         "E-VERSION-ORDER",
         "a new agent that does not start at 1",
-        a_set((BASE_PATH, THE_NEXT_VERSION), render=True),
+        history_of(BASE_PATH, THE_NEXT_VERSION, render=True),
         [(BASE_PATH, {"value": "2", "next": "1"})],
     ),
     set_case(
         "W-WIDENS",
         "a tool is added, so shadow mode starts again",
-        a_set((BASE_PATH, (NEXT_VERSION, ONE_TOOL_MORE)), before=()),
+        history_of(BASE_PATH, (NEXT_VERSION, ONE_TOOL_MORE), before=()),
         [(BASE_PATH, {"changes": "tools: +drive.read", "restart_runs": "10"})],
     ),
     set_case(
         "W-WIDENS",
         "a limit is raised, with no restart",
-        a_set((BASE_PATH, MORE_RUNS_A_DAY), before=(), render=True),
+        history_of(BASE_PATH, MORE_RUNS_A_DAY, before=(), render=True),
         [(BASE_PATH, {"changes": "limits.runs_per_day: 1 -> 2"})],
     ),
 ]
@@ -1063,13 +1078,15 @@ def test_mutation_yields_exactly_one_new_finding(code, mutation, expected_line, 
 def test_a_valid_set_has_no_finding():
     # What the set cases start from: a new agent at version 1, and the next version of a known one.
     # Its files are whole valid files (rendered again): validate_file has no error, here only the
-    # warnings of the base, and check_set has nothing.
+    # warnings of the base, and the checks across the files have nothing.
     first = variant_file(render=True)
     second = variant_file(NEXT_VERSION, render=True)
     for data in (first, second):
         assert {f.code for f in findings_of(data)} == {"W-TOOL-NOT-LIVE"}
-    assert check_set([(BASE_PATH, policy_of(first))], {}) == []
-    assert check_set([(BASE_PATH, policy_of(second))], {AGENT: policy_of(first)}) == []
+    for data in (first, second):
+        assert check_duplicates([(BASE_PATH, policy_of(data))]) == []
+    assert check_history(BASE_PATH, policy_of(first), None) == []
+    assert check_history(BASE_PATH, policy_of(second), policy_of(first)) == []
 
 
 @pytest.mark.parametrize("changes", RENDERED_CHANGES.values(), ids=RENDERED_CHANGES)
@@ -1104,15 +1121,14 @@ def test_a_rendered_variant_is_the_policy_of_its_rendered_file():
 
 def test_a_variant_that_is_not_rendered_is_not_a_whole_valid_file():
     # Only its front matter is new, and the generated sections still show the base. This is why a
-    # set that has no finding of `check_set` is called valid, and not its files.
+    # set that has no finding of the checks across the files is called valid, and not its files.
     codes = {f.code for f in findings_of(variant_file(NEXT_VERSION))}
     assert "E-BODY-DRIFT" in codes
 
 
-@pytest.mark.parametrize(("code", "build", "findings"), SET_CASES)
-def test_set_case_yields_exactly_its_findings(code, build, findings):
-    items, previous = build()
-    found = check_set(items, previous)
+@pytest.mark.parametrize(("code", "check", "findings"), SET_CASES)
+def test_set_case_yields_exactly_its_findings(code, check, findings):
+    found = check()
     assert [(f.code, f.path, f.params) for f in found] == [
         (code, path, params) for path, params in findings
     ]

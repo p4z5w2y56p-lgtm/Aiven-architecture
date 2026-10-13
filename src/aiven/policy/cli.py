@@ -4,19 +4,21 @@ This is where the checks meet a person, a script or CI. It reads the files, the 
 the catalog, runs what the other modules give, and decides what is printed and what the exit code
 is. Every command takes `--config`, `--catalog` and `--debug`.
 
-`validate <file>... [--json] [--previous-ref REF]` runs every check on each file (`validate_policy`)
-and the checks across the files that built a policy (`check_set`, given the files sorted by path).
-The output is file by file in the order of the arguments, a file named twice counting once, in
-whatever spelling (with `..`, by a link). A file's own findings come in the order of
-`validate_file`, and the findings across the files are in with those of the file they are about.
-With `--previous-ref` the previous version of a file is the file as it is at that Git ref (`git
--C FOLDER show REF:path`, run without a shell, in the folder of the file: the command can be run
-from anywhere). A file that is not there is a new agent, and must be version 1. The previous files
-are loaded and built and nothing is said of them. A file whose history is not known has no version
-order and no widening (E-VERSION-ORDER and W-WIDENS), and is no new agent: that is every file
-without a ref (one note on stderr), and a file whose previous version gives no policy (a note on
-stderr for each; the gateway still refuses a lower version at load). `--json` prints one document,
-`{"findings": [...]}`, with the column, the parameters and the text in both languages (section 1).
+`validate <file>... [--json] [--previous-ref REF]` runs every check on each file (`validate_policy`),
+the checks across the files that built a policy (`check_duplicates`, given the files sorted by
+path), and the version order and the widening of each of those files whose history is known
+(`check_history`, ruling R91). The output is file by file in the order of the arguments, a file
+named twice counting once, in whatever spelling (with `..`, by a link). A file's own findings come
+in the order of `validate_file`, and the findings across the files are in with those of the file
+they are about. With `--previous-ref` the previous version of a file is the file as it is at that
+Git ref (`git -C FOLDER show REF:path`, run without a shell, in the folder of the file: the command
+can be run from anywhere). A file that is not there is a new agent, and must be version 1. The
+previous files are loaded and built and nothing is said of them. A file whose history is not known
+has no version order and no widening, and is no new agent: `check_history` is not called for it.
+That is every file without a ref (one note on stderr), and a file whose previous version gives no
+policy (a note on stderr for each; the gateway still refuses a lower version at load). `--json`
+prints one document, `{"findings": [...]}`, with the column, the parameters and the text in both
+languages (section 1).
 
 `render <file>` rewrites the two generated sections, when the front matter loads and builds a policy
 without an error (ruling R29). A finding of the file, the body or the content does not stop it
@@ -71,7 +73,7 @@ from aiven.policy.config import PlatformConfig, load_platform_config
 from aiven.policy.content import escape_unprintable, safe_text
 from aiven.policy.findings import LANGUAGES, Finding, format_line, message
 from aiven.policy.model import Policy
-from aiven.policy.policyset import check_set
+from aiven.policy.policyset import check_duplicates, check_history
 from aiven.policy.render import rewrite
 from aiven.policy.validate import report_order, validate_policy
 from aiven.policy.verify import ActiveVersion, verify
@@ -92,10 +94,6 @@ NO_POLICY_NOTE = (
     "so its version order and widening are not checked"
 )
 GIT_TIMEOUT_S = 60
-
-# The findings of `check_set` that need the previous version of a file (validator-spec 3.9 and
-# 3.6). For a file whose history is not known they are left out.
-HISTORY_CODES = frozenset({"E-VERSION-ORDER", "W-WIDENS"})
 
 # The codes of the checks of the whole file, of the body and of the content: validator-spec 3.1, 3.7
 # and 3.8. A render does not stop for them. Every other code that `validate_policy` gives belongs to
@@ -297,17 +295,20 @@ def _validate(
     )
     # A file whose history is not known has no version order and no widening, and is no new agent
     # either (rulings R86 and R88): without a ref that is every file, with one it is a file whose
-    # previous version gives no policy.
+    # previous version gives no policy. The history is not asked for it (ruling R91).
     previous: dict[str, Policy] = {}
     unknown, notes = paths, [NO_REF_NOTE]
     if args.previous_ref is not None:
         previous, unknown = _previous_policies(args.previous_ref, paths, cfg, catalog)
         notes = [NO_POLICY_NOTE.format(path=_shown(path)) for path in unknown]
-    left_out = {_shown(path) for path in unknown}
+    left_out = set(unknown)
     across = defaultdict(list)
-    for finding in check_set(built, previous):
-        if not (finding.code in HISTORY_CODES and finding.path in left_out):
-            across[finding.path].append(finding)
+    for finding in check_duplicates(built):
+        across[finding.path].append(finding)
+    for path, policy in built:
+        if path not in left_out:
+            for finding in check_history(path, policy, previous.get(policy.agent)):
+                across[finding.path].append(finding)
     findings = []
     for path, run in zip(paths, runs, strict=True):
         found = [*run.findings, *across[_shown(path)]]
