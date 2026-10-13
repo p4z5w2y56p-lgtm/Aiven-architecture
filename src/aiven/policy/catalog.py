@@ -67,6 +67,15 @@ def matches(pattern: str, action_id: str) -> bool:
     return pattern == action_id
 
 
+def is_pattern(entry: str) -> bool:
+    """Whether `entry` is an exact name (`drive.delete`) or a namespace wildcard (`payments.*`).
+
+    That is the shape of an entry of the reserved list, and of an item in a policy's `forbidden`
+    list. It says nothing about whether the catalog has anything that the entry matches.
+    """
+    return _RESERVED_ENTRY.fullmatch(entry) is not None
+
+
 def load_catalog(path: Path) -> Catalog:
     """Read a catalog file. Raises CatalogError for unknown keys, classes or wrappers and for
     anything else that is not valid catalog v1."""

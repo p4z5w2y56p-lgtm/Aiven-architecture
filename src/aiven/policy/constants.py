@@ -108,6 +108,32 @@ LIST_SIZES: dict[str, tuple[int, int]] = {
     "scope.email_to": (1, 50),
 }
 
+# The shape of an agent id (validator-spec 3.3, E-AGENT-ID): 3 to 24 characters, and this pattern.
+# Reserved ids (RESERVED_AGENT_IDS) are not valid either. Patterns are matched with fullmatch.
+AGENT_ID_LENGTH = (3, 24)
+AGENT_ID_PATTERN = "[a-z][a-z0-9]*(-[a-z0-9]+)*"
+
+# The shape of a Drive folder ID (validator-spec 3.3, scope.drive_folder_id), for fullmatch.
+DRIVE_FOLDER_ID_PATTERN = "[A-Za-z0-9_-]{10,100}"
+
+# The tools that need a scope field (validator-spec 3.3, E-SCOPE-MISSING): exact action ids, or
+# `namespace.*`. The folder path is needed with the folder ID. A field that no listed tool needs
+# is unused (W-SCOPE-UNUSED).
+SCOPE_TOOLS: dict[str, tuple[str, ...]] = {
+    "drive_folder_id": ("drive.*", "sheets.*"),
+    "drive_folder_path": ("drive.*", "sheets.*"),
+    "email_to": ("gmail.draft", "gmail.send"),
+}
+
+# The tools that use `emails_per_day` (validator-spec 3.5, E-LIMIT-CONFLICT, W-LIMIT-UNUSED).
+EMAIL_LIMIT_TOOLS = ("gmail.send",)
+
+# The classes that "an R1+ tool" has in a policy: the tools that use `records_per_run`.
+R1_PLUS = ("R1", "R2")
+
+# How the catalog's wrapper ids are written in messages (validator-spec 5 and 9).
+WRAPPER_NAMES = {"drive": "Drive", "email": "Email", "agentbuilder": "Agent Builder"}
+
 # A policy file is at most 64 KiB (validator-spec 3.1, E-FILE-SIZE).
 MAX_FILE_BYTES = 64 * 1024
 

@@ -5,6 +5,8 @@ import re
 import pytest
 
 from aiven.policy import constants
+from aiven.policy.catalog import load_catalog
+from tests.support import REPO_ROOT
 from tests.support.spec_tables import code_spans, line_starting_with, table_after
 
 
@@ -105,3 +107,46 @@ def test_deploy_specific_values_are_not_constants():
     # They live in PlatformConfig (set at deploy), never in code.
     for name in ("AGENTS_PROJECT", "TRUSTED_AUTHORS", "GATEWAY_PRINCIPAL", "SANDBOX_DRIVE_ID"):
         assert not hasattr(constants, name), name
+
+
+# --- the values that the field, tool, limit and scope rules use (Task 1.4)
+
+
+def test_agent_id_rule_equals_the_spec(spec_field_rules):
+    rule = spec_field_rules["agent"]
+    assert code_spans(rule)[0] == f"^{constants.AGENT_ID_PATTERN}$"
+    assert _range(rule) == constants.AGENT_ID_LENGTH
+
+
+def test_drive_folder_id_rule_equals_the_spec(spec_field_rules):
+    rule = spec_field_rules["scope.drive_folder_id"]
+    assert code_spans(rule)[-1] == f"^{constants.DRIVE_FOLDER_ID_PATTERN}$"
+
+
+def test_the_tools_that_need_a_scope_field_equal_the_spec(spec_field_rules):
+    folder = tuple(code_spans(spec_field_rules["scope.drive_folder_id"])[:2])
+    email = tuple(code_spans(spec_field_rules["scope.email_to"])[:2])
+    assert constants.SCOPE_TOOLS == {
+        "drive_folder_id": folder,
+        "drive_folder_path": folder,  # "Required with the folder ID"
+        "email_to": email,
+    }
+
+
+def test_the_tools_that_use_a_limit_equal_the_spec():
+    header, *rows = table_after("3.5 Limits, scope and untrusted input")
+    assert header == ["Code", "Fails when"]
+    (conflict,) = [fails for code, fails in rows if code == "E-LIMIT-CONFLICT"]
+    assert tuple(code_spans(conflict)[:1]) == constants.EMAIL_LIMIT_TOOLS
+    assert "an R1+ tool" in conflict
+    assert constants.R1_PLUS == constants.POLICY_CLASSES[1:]
+
+
+def test_wrapper_names_are_the_ones_in_section_5():
+    header, *rows = table_after("5. Action catalog v1")
+    assert header[2] == "Wrapper"
+    catalog = load_catalog(REPO_ROOT / "catalog" / "catalog-v1.yaml")
+    assert set(constants.WRAPPER_NAMES) == set(catalog.wrapper_status)
+    for action_cell, _, wrapper_cell, _, _ in rows:
+        action = catalog.actions[code_spans(action_cell)[0]]
+        assert constants.WRAPPER_NAMES[action.wrapper] == wrapper_cell

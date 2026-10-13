@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from aiven.policy import constants
-from aiven.policy.catalog import CatalogError, load_catalog, matches
+from aiven.policy.catalog import CatalogError, is_pattern, load_catalog, matches
 from tests.support import REPO_ROOT
 from tests.support.spec_tables import code_spans, line_starting_with, table_after
 
@@ -118,6 +118,41 @@ def test_matches_namespace_pattern():
 )
 def test_matches_edge_cases(pattern, action_id, expected):
     assert matches(pattern, action_id) is expected
+
+
+# --- is_pattern: the shape of a reserved entry, and of an item in a policy's `forbidden` list
+
+
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        ("drive.delete", True),
+        ("drive.*", True),
+        ("agentbuilder.permissions", True),
+        ("a1.b_2", True),
+        ("drive", False),
+        ("drive.", False),
+        (".*", False),
+        ("*", False),
+        ("drive.*.x", False),
+        ("drive.d*", False),
+        ("Drive.delete", False),
+        ("drive.Delete", False),
+        ("1drive.read", False),
+        ("drive.1read", False),
+        ("drive.delete\n", False),
+        ("drive.*\n", False),
+        ("drive .delete", False),
+        ("", False),
+    ],
+)
+def test_is_pattern_accepts_an_exact_name_or_a_namespace_wildcard_and_nothing_else(entry, expected):
+    assert is_pattern(entry) is expected
+
+
+def test_every_action_and_every_reserved_entry_is_a_pattern():
+    catalog = load_catalog(CATALOG_PATH)
+    assert all(is_pattern(name) for name in (*catalog.actions, *catalog.reserved))
 
 
 # --- the loader rejects a malformed catalog ------------------------------------------------------
