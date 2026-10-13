@@ -5,11 +5,13 @@
 and the file to `verify`. Every key lives in the `tmp_path` of one test, so no key is stored
 anywhere. Nothing here skips when ssh-keygen is missing: `make_signer` fails, loudly.
 
-`work_in_a_temporary_folder` is the autouse fixture for the test modules that run ssh-keygen, or run
-the code that does. ssh-keygen that is called wrongly (with a shell, say, and no arguments) reads
-its answers from its input, which is a policy file, and makes a key in the current folder named
-after the first line of it. That must not be the repository, so such a test module imports the
-fixture: importing it, under its own name, is what makes pytest use it there.
+`work_in_a_temporary_folder` is the autouse fixture for the test modules that run ssh-keygen (the
+tests of `verify` now, and later those of the `aiven-policy verify` command), and for the module
+that used to be a part of one (the tests of the seam in validate.py). ssh-keygen that is called
+wrongly (with a shell, say, and no arguments) reads its answers from its input, which is a policy
+file, and makes a key in the current folder named after the first line of it. That must not be the
+repository, so such a test module imports the fixture: importing it, under its own name, is what
+makes pytest use it there.
 """
 
 import shutil

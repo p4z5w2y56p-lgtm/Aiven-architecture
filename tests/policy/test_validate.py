@@ -20,6 +20,9 @@ from tests.support.bodies import policy_of
 from tests.support.frontmatter import BASE_TEXT, tool_line, tool_lines
 from tests.support.policies import BASE_PATH, TEMPLATE_NAME, TEMPLATE_PATH, padded, valid_base
 from tests.support.rules import CATALOG, CFG, with_tools
+
+# The fixture of tests/support/signing.py: every test here runs in a folder of its own, as they did
+# when they were a part of test_verify.py.
 from tests.support.signing import work_in_a_temporary_folder as work_in_a_temporary_folder
 from tests.support.spies import CHECKS, spy_on
 from tests.support.variants import variant_file
@@ -27,9 +30,6 @@ from tests.support.variants import variant_file
 BASE = valid_base()
 TEMPLATE = TEMPLATE_PATH.read_bytes()
 BASE_TOOLS = ("sheets.read", "gmail.draft", "gmail.send")
-
-# These tests ran in a folder of their own when they were a part of test_verify.py, and they still
-# do (the fixture above, tests/support/signing.py).
 
 SEAM_INPUTS = {
     "the valid base": BASE,

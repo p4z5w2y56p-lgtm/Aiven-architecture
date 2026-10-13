@@ -84,7 +84,7 @@ class ActiveVersion:
     """The version of an agent that is loaded now: its number and the hash of its file.
 
     `sha256` is written as `Policy.sha256` is: `sha256:` and 64 lowercase hex digits. Any other
-    form raises ValueError when this is made (review M4). A hash in another form would never equal
+    form raises ValueError when this is made. A hash in another form would never equal
     the hash of the file, so the active file itself would be "the same version in other bytes" at
     every reload, and nothing would load. That is a bug of the caller, and it should show at once.
     """
@@ -146,7 +146,7 @@ def verify(
             findings.sort(key=report_order)
         failed = any(found.severity == "error" for found in findings)
         if policy is None and not failed:
-            raise NoPolicy  # a file gives no policy only for an error (review M5)
+            raise NoPolicy  # a file gives no policy only for an error
     except Exception as error:
         params = {"detail": type(error).__name__}
         return None, [Finding("E-INTERNAL", "error", where, params=params)]

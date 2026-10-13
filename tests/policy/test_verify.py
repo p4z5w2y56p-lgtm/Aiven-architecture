@@ -183,6 +183,9 @@ def stub_run(monkeypatch, *, returncode=0, stdout=b"", stderr=b"", error=None) -
     return calls
 
 
+# --- the working folder
+
+
 def test_the_tests_of_this_module_run_in_a_folder_of_their_own(tmp_path):
     # The fixture of tests/support/signing.py, imported above: it looks unused, and it is not.
     assert tmp_path in Path.cwd().parents
@@ -629,7 +632,7 @@ def test_with_no_active_version_any_version_loads(signer):
     assert (policy == policy_of(data), findings) == (True, [])
 
 
-# --- ActiveVersion takes the hash the way a Policy writes it (review M4)
+# --- ActiveVersion takes the hash the way a Policy writes it
 #
 # A hash in another form would make "the same version in other bytes" true of every reload of the
 # active file, and nothing would load. That is a bug of the caller, so it fails where it is made.
@@ -903,7 +906,7 @@ def test_an_interrupt_is_not_swallowed(signer, which):
         load(signer, BASE, **{which: raises(KeyboardInterrupt())})
 
 
-# --- no policy and no error cannot be (review M5)
+# --- no policy and no error cannot be
 #
 # validate_policy gives a policy unless something is wrong, and what is wrong is an error. If it
 # ever gave neither, `(None, [])` or `(None, [a warning])` would read as "nothing to load, and
