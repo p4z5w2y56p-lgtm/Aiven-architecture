@@ -12,7 +12,15 @@ import pytest
 from aiven.policy import constants
 from aiven.policy.catalog import Action
 from tests.support.frontmatter import front_without
-from tests.support.rules import CATALOG, check, run_front, setting, with_tools
+from tests.support.rules import (
+    CATALOG,
+    UNSETTLED_TOOLS,
+    catalog_with,
+    check,
+    run_front,
+    setting,
+    with_tools,
+)
 
 ALL_BUILT = {"drive": "built", "email": "built", "agentbuilder": "built"}
 WRAPPER_WARNINGS_OF_THE_BASE = 3
@@ -36,15 +44,6 @@ def tool_line(run, tool: str) -> int:
 
 def forbidden_line(run, entry: str) -> int:
     return run.entry("forbidden", entry)
-
-
-def catalog_with(*actions: Action, **status: str):
-    """The catalog with more actions, and with the status of some wrappers changed."""
-    return replace(
-        CATALOG,
-        actions={**CATALOG.actions, **{action.id: action for action in actions}},
-        wrapper_status={**CATALOG.wrapper_status, **status},
-    )
 
 
 def numbered(count: int) -> list[str]:
@@ -528,12 +527,37 @@ def test_a_max_class_that_the_highest_tool_reaches_is_not_slack(tools, max_class
     assert "W-MAX-CLASS-SLACK" not in check(with_tools(*tools, max_class=max_class)).codes()
 
 
-def test_the_highest_class_leaves_out_the_tools_that_failed_their_rules():
-    # Ruling R33: gmail.sned is no tool, so the highest class is the one of sheets.read.
-    run = check(with_tools("sheets.read", "gmail.sned", max_class="R2"))
-    assert run.params("W-MAX-CLASS-SLACK") == {"max": "R2", "highest": "R0"}
+@pytest.mark.parametrize("tools", UNSETTLED_TOOLS.values(), ids=UNSETTLED_TOOLS)
+def test_there_is_no_slack_while_the_tool_list_is_unsettled(tools):
+    # Which tools there will be is not known yet, so a max_class above the highest of them would be
+    # a guess (rulings R49 and R53). The error of the odd entry is the one to fix first.
+    assert "W-MAX-CLASS-SLACK" not in check(with_tools(*tools, max_class="R2")).codes()
 
 
-def test_there_is_no_slack_when_no_tool_is_left_to_compare():
-    run = check(with_tools("gmail.sned", "drive.move", max_class="R2"))
-    assert "W-MAX-CLASS-SLACK" not in run.codes()
+def test_what_is_said_about_the_tools_that_passed_does_not_wait_for_the_rest_of_the_list():
+    # Only the guesses wait (ruling R53): the errors and the warning about the wrapper are about
+    # a tool that is there, whatever the placeholder turns out to be.
+    def change(data):
+        data["tools"] = ["gmail.send", "TODO"]
+        data["max_class"] = "R1"
+        data["forbidden"].append("gmail.send")
+
+    run = check(change)
+    line = run.entry("tools", "gmail.send")
+    assert run.places(wrappers=True) == [
+        ("E-TOOL-ABOVE-MAX-CLASS", line),
+        ("E-TOOL-FORBIDDEN", line),
+        ("W-TOOL-NOT-LIVE", line),
+    ]
+
+
+def test_a_list_that_is_too_long_is_unsettled_though_every_entry_passes():
+    # Only the size is wrong here, so it is not an entry that unsettles the list. The catalog has
+    # too few actions to make 21 distinct tools, so it gets 21 more (ruling R53).
+    extra = [Action(f"drive.extra{n}", "R0", "drive") for n in range(21)]
+    catalog = catalog_with(*extra)
+    names = [action.id for action in extra]
+    guesses = {"W-LIMIT-UNUSED", "W-SCOPE-UNUSED", "W-MAX-CLASS-SLACK"}
+    assert guesses <= set(check(with_tools(*names[:20]), catalog=catalog).codes())
+    too_long = check(with_tools(*names), catalog=catalog)
+    assert too_long.codes() == ["E-RANGE"]

@@ -7,9 +7,9 @@ W-LIMIT-UNUSED when a limit is above 0 and no tool uses it. One finding for each
 conflict the tool is the first, in the order of the file, that needs the limit.
 
 Scope: `drive_folder_id` must have the shape of a Drive ID (E-FIELD-TYPE) and `drive_folder_path`
-must be the Sandbox drive or a folder in it, each name on one line (E-SCOPE-SANDBOX). Each entry of `email_to` is judged
-alone: malformed, upper case or wild is E-SCOPE-EMAIL; a domain of a public mail service is
-E-SCOPE-EMAIL-PUBLIC; anything else that is not `aivenstudios.com` itself is
+must be the Sandbox drive or a folder in it, each name on one line (E-SCOPE-SANDBOX). Each entry of
+`email_to` is judged alone: malformed, upper case or wild is E-SCOPE-EMAIL; a domain of a public
+mail service is E-SCOPE-EMAIL-PUBLIC; anything else that is not `aivenstudios.com` itself is
 E-SCOPE-EMAIL-EXTERNAL (a subdomain is another domain). The list has 1 to 50 entries (E-RANGE).
 
 A tool needs a scope field (`constants.SCOPE_TOOLS`), and the field is E-SCOPE-MISSING when it is
@@ -18,9 +18,11 @@ field, with the first tool that needs it. A field that is in the file but has no
 placeholder, or a wrong type) is not missing: `load` has reported it. A field that no tool needs is
 W-SCOPE-UNUSED.
 
-Only the tools that passed their own rules count (ruling R33), and a value that fails E-RANGE gets
-no warning for its field (ruling R45). When there is no tool list to judge, the rules that need
-one are skipped and the others are not.
+Only the tools that passed their own rules count for the errors (ruling R33). The two warnings that
+a limit or a scope field is unused are made only when the list of tools is settled (see tools.py:
+rulings R49 and R53), because until then the tool that uses it may be the one that fails or the
+placeholder. A value that fails E-RANGE gets no warning for its field (ruling R45). When there is no
+tool list to judge, the rules that need one are skipped and the others are not.
 """
 
 import re
@@ -41,6 +43,7 @@ from aiven.policy.constants import (
 from aiven.policy.fields import Fields, range_finding, size_finding
 from aiven.policy.findings import Finding
 from aiven.policy.frontmatter import FIELDS
+from aiven.policy.tools import Tools
 
 SPEND = "spend_eur_per_run"
 
@@ -61,7 +64,7 @@ _USED_BY: dict[str, Callable[[Action], bool]] = {
 }
 
 
-def check_limits(fields: Fields, tools: list[Action] | None) -> list[Finding]:
+def check_limits(fields: Fields, tools: Tools | None) -> list[Finding]:
     """The findings about `limits`. `tools` are what `check_tools` made of the tools (or None)."""
     findings: list[Finding] = []
     for limit in FIELDS["limits"]:
@@ -83,21 +86,21 @@ def _spend(fields: Fields, path: str) -> list[Finding]:
     return [fields.report("E-LIMIT-SPEND", path)]
 
 
-def _use(fields: Fields, limit: str, tools: list[Action]) -> list[Finding]:
-    """E-LIMIT-CONFLICT or W-LIMIT-UNUSED for one limit that is in range."""
+def _use(fields: Fields, limit: str, tools: Tools) -> list[Finding]:
+    """E-LIMIT-CONFLICT, or W-LIMIT-UNUSED (a settled list), for one limit that is in range."""
     path = f"limits.{limit}"
     value = fields.checked(path)
-    user = next((tool.id for tool in tools if _USED_BY[limit](tool)), None)
+    user = next((tool.id for tool in tools.actions if _USED_BY[limit](tool)), None)
     if value is None:
         return []
     if value == 0 and user is not None:
         return [fields.report("E-LIMIT-CONFLICT", path, {"limit": limit, "tool": user})]
-    if value > 0 and user is None:
+    if value > 0 and user is None and tools.settled:
         return [fields.report("W-LIMIT-UNUSED", path, {"limit": limit, "value": str(value)})]
     return []
 
 
-def check_scope(fields: Fields, tools: list[Action] | None) -> list[Finding]:
+def check_scope(fields: Fields, tools: Tools | None) -> list[Finding]:
     """The findings about `scope`. `tools` are what `check_tools` made of the tools (or None)."""
     if fields.unreadable("scope"):
         return []  # a placeholder or a wrong type, reported: the fields in it are not known
@@ -155,18 +158,18 @@ def _email_problem(entry: str) -> str | None:
     return None
 
 
-def _needed(fields: Fields, tools: list[Action]) -> list[Finding]:
-    """E-SCOPE-MISSING and W-SCOPE-UNUSED: which scope fields the tools need, and the file has."""
+def _needed(fields: Fields, tools: Tools) -> list[Finding]:
+    """E-SCOPE-MISSING, and W-SCOPE-UNUSED (a settled list): the scope the tools need or leave."""
     findings = []
     scope_line = fields.line("scope") if fields.written("scope") else 1
     for name, patterns in SCOPE_TOOLS.items():
         path = f"scope.{name}"
-        user = next((t.id for t in tools if any(matches(p, t.id) for p in patterns)), None)
+        user = next((a.id for a in tools.actions if any(matches(p, a.id) for p in patterns)), None)
         if user is not None:
             if not fields.written(path):
                 params = {"field": name, "tool": user}
                 findings.append(fields.report("E-SCOPE-MISSING", scope_line, params))
-        elif _is_set(fields, path):
+        elif tools.settled and _is_set(fields, path):
             findings.append(fields.report("W-SCOPE-UNUSED", path, {"field": name}))
     return findings
 

@@ -9,8 +9,13 @@ things are judged independently: its class against `max_class` (E-TOOL-ABOVE-MAX
 and its wrapper (W-TOOL-NOT-LIVE, when the catalog says the wrapper is planned).
 
 An entry that failed a rule is not a tool. `check_tools` returns the ones that are, in the order of
-the file, and the limit and scope rules look only at those (ruling R33), as does the highest class
-of W-MAX-CLASS-SLACK. An entry that holds a placeholder skips its checks and is not a tool either.
+the file, and the errors that depend on the tools (E-LIMIT-CONFLICT, E-SCOPE-MISSING) look only at
+those (ruling R33). An entry that holds a placeholder skips its checks and is not a tool either.
+
+The list is settled when every entry passed, none is a placeholder, and the number of entries is in
+range. Until then it is not known which tools there will be, and a warning that guesses at them
+would be wrong or would come from the error to fix first: W-LIMIT-UNUSED, W-SCOPE-UNUSED and
+W-MAX-CLASS-SLACK are made only for a settled list (rulings R49 and R53).
 
 An item of `forbidden` is an exact action name or `namespace.*` (E-FORBIDDEN-PATTERN), and it must
 match something in the catalog or in the reserved list, or a typo would protect nothing
@@ -19,10 +24,24 @@ match something in the catalog or in the reserved list, or a typo would protect 
 there literally (E-FORBIDDEN-BASELINE, one finding for each that is missing).
 """
 
+from dataclasses import dataclass
+
 from aiven.policy.catalog import Action, Catalog, is_pattern, matches
 from aiven.policy.constants import FORBIDDEN_BASELINE, POLICY_CLASSES, WRAPPER_NAMES
 from aiven.policy.fields import Entry, Fields, size_finding
 from aiven.policy.findings import Finding
+
+
+@dataclass(frozen=True)
+class Tools:
+    """What the rules after `check_tools` need to know about the tools of a policy.
+
+    `actions` are the entries that passed their rules, in the order of the file. The list is
+    `settled` when nothing about it is left to guess (see the module docstring).
+    """
+
+    actions: tuple[Action, ...]
+    settled: bool
 
 
 def check_forbidden(fields: Fields, catalog: Catalog) -> tuple[list[Finding], list[str]]:
@@ -69,8 +88,8 @@ def _matches_anything(entry: str, catalog: Catalog) -> bool:
 
 def check_tools(
     fields: Fields, catalog: Catalog, max_class: str | None, forbidden: list[str]
-) -> tuple[list[Finding], list[Action] | None]:
-    """The findings about `tools`, and the actions that the tools are (None: the list has no value).
+) -> tuple[list[Finding], Tools | None]:
+    """The findings about `tools`, and the tools themselves (None: the list has no value).
 
     `max_class` is the class that can be relied on (see `check_fields`), None to skip the rules
     that compare with it. `forbidden` are the items that forbid something (`check_forbidden`).
@@ -78,20 +97,25 @@ def check_tools(
     entries = fields.entries("tools")
     if entries is None:
         return [], None
-    findings = [found] if (found := size_finding(fields, "tools")) is not None else []
+    size = size_finding(fields, "tools")
+    findings = [] if size is None else [size]
+    settled = size is None
     actions: list[Action] = []
     for entry in entries:
         if entry.placeholder:
+            settled = False
             continue
         problem = _problem(entry.text, catalog)
         if problem is not None:
+            settled = False
             findings.append(fields.report(problem, entry.line, {"tool": entry.text}))
             continue
         action = catalog.actions[entry.text]
         actions.append(action)
         findings += _about_a_tool(fields, entry, action, catalog, max_class, forbidden)
-    findings += _slack(fields, max_class, actions)
-    return findings, actions
+    if settled:
+        findings += _slack(fields, max_class, actions)
+    return findings, Tools(tuple(actions), settled)
 
 
 def _problem(tool: str, catalog: Catalog) -> str | None:
@@ -133,14 +157,12 @@ def _about_a_tool(
 
 
 def _slack(fields: Fields, max_class: str | None, actions: list[Action]) -> list[Finding]:
-    """W-MAX-CLASS-SLACK: `max_class` is higher than the highest of the tools.
+    """W-MAX-CLASS-SLACK: `max_class` is higher than the highest of the tools (a settled list).
 
     Not judged without a class that can be relied on, or without a tool to compare it with.
     """
-    if max_class is None or not actions:
-        return []
-    highest = max((action.cls for action in actions), key=_rank)
-    if _rank(max_class) <= _rank(highest):
+    highest = max((action.cls for action in actions), key=_rank, default=None)
+    if max_class is None or highest is None or _rank(max_class) <= _rank(highest):
         return []
     return [fields.report("W-MAX-CLASS-SLACK", "max_class", {"max": max_class, "highest": highest})]
 

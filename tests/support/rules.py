@@ -7,10 +7,10 @@ else), and the text, so that a test can find the line of a field by its content.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
-from aiven.policy.catalog import Catalog, load_catalog
+from aiven.policy.catalog import Action, Catalog, load_catalog
 from aiven.policy.config import PlatformConfig
 from aiven.policy.findings import Finding
 from aiven.policy.frontmatter import FIRST_LINE, load
@@ -24,6 +24,28 @@ WRAPPER_WARNING = "W-TOOL-NOT-LIVE"
 CFG = platform_config()
 CATALOG = load_catalog(REPO_ROOT / "catalog" / "catalog-v1.yaml")
 BASE = valid_base()
+
+# Lists of tools that are not settled (rulings R49 and R53): an entry that fails its own rules, an
+# entry that is a placeholder, and no tool at all (a size that fails E-RANGE). Each has the tool
+# sheets.read next to the odd one, or nothing.
+UNSETTLED_TOOLS = {
+    "a name that is not in the catalog": ["sheets.read", "gmail.sned"],
+    "a wildcard": ["sheets.read", "drive.*"],
+    "a reserved name": ["sheets.read", "payments.pay"],
+    "an R3 action": ["sheets.read", "drive.move"],
+    "a placeholder": ["sheets.read", "TODO"],
+    "only entries that fail": ["gmail.sned", "drive.move"],
+    "no tool": [],
+}
+
+
+def catalog_with(*actions: Action, **status: str) -> Catalog:
+    """The catalog with more actions, and with the status of some wrappers changed."""
+    return replace(
+        CATALOG,
+        actions={**CATALOG.actions, **{action.id: action for action in actions}},
+        wrapper_status={**CATALOG.wrapper_status, **status},
+    )
 
 
 @dataclass

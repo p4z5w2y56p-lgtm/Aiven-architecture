@@ -10,7 +10,7 @@ import pytest
 from aiven.policy import constants
 from tests.support.frontmatter import DATA, front_without, swap
 from tests.support.policies import FOLDER_ID
-from tests.support.rules import CATALOG, check, run_front, setting, with_tools
+from tests.support.rules import CATALOG, UNSETTLED_TOOLS, check, run_front, setting, with_tools
 
 ROOT = constants.DRIVE_ROOT
 LIMITS = dict(DATA["limits"])
@@ -164,12 +164,24 @@ def test_a_limit_out_of_range_is_e_range_and_not_also_unused(limit, value):
     assert limit not in [f.params["limit"] for f in run.findings if f.code == "W-LIMIT-UNUSED"]
 
 
-def test_a_tool_that_failed_its_own_rules_uses_no_limit():
-    # Ruling R33: gmail.sned is no tool, so emails_per_day is unused (and E-TOOL-UNKNOWN is the
-    # error to fix first).
-    run = check(with_tools("sheets.read", "gmail.sned", max_class="R0"))
-    assert ("W-LIMIT-UNUSED", run.line("emails_per_day:")) in run.places()
-    assert "E-TOOL-UNKNOWN" in run.codes()
+@pytest.mark.parametrize("tools", UNSETTLED_TOOLS.values(), ids=UNSETTLED_TOOLS)
+def test_no_limit_is_called_unused_while_the_tool_list_is_unsettled(tools):
+    # Rulings R49 and R53: the entry that fails, or the placeholder, may be the tool that uses the
+    # limit, and with no tool at all it is E-RANGE that is to be fixed. R0 tools use no limit.
+    run = check(with_tools(*tools, max_class="R0"))
+    assert "W-LIMIT-UNUSED" not in run.codes()
+
+
+def test_the_errors_that_need_the_tools_still_use_the_tools_that_passed():
+    # Ruling R53 skips the guesses, not the errors. gmail.send passed, so no email a day is a
+    # conflict whatever the placeholder turns out to be.
+    def no_emails(data):
+        data["tools"] = ["gmail.send", "TODO"]
+        data["limits"]["emails_per_day"] = 0
+
+    run = check(no_emails)
+    assert run.places() == [("E-LIMIT-CONFLICT", run.line("emails_per_day:"))]
+    assert run.params("E-LIMIT-CONFLICT") == {"limit": "emails_per_day", "tool": "gmail.send"}
 
 
 def test_no_limit_is_judged_against_a_tool_list_that_is_not_there():
@@ -307,14 +319,19 @@ def test_the_drive_scope_is_unused_without_a_drive_or_sheets_tool():
     ]
 
 
-def test_a_tool_that_failed_its_own_rules_uses_no_scope_field():
-    # Ruling R33: drive.move is R3 and so no tool, and nothing is left that needs the folder.
-    run = check(with_tools("gmail.draft", "drive.move", max_class="R1"))
-    assert run.lines_of("W-SCOPE-UNUSED") == [
-        run.line("drive_folder_id:"),
-        run.line("drive_folder_path:"),
+@pytest.mark.parametrize("tools", UNSETTLED_TOOLS.values(), ids=UNSETTLED_TOOLS)
+def test_no_scope_field_is_called_unused_while_the_tool_list_is_unsettled(tools):
+    # Rulings R49 and R53. Settled, each of these lists leaves at least the email addresses unused.
+    run = check(with_tools(*tools, max_class="R0"))
+    assert "W-SCOPE-UNUSED" not in run.codes()
+
+
+def test_the_scope_is_still_missing_for_the_tools_that_passed_while_the_list_is_unsettled():
+    run = check(tools_without_scope("sheets.read", "gmail.sned"))
+    assert missing(run) == [
+        ("drive_folder_id", "sheets.read"),
+        ("drive_folder_path", "sheets.read"),
     ]
-    assert "E-TOOL-R3" in run.codes()
 
 
 def test_a_scope_field_that_is_a_placeholder_is_not_called_unused():
