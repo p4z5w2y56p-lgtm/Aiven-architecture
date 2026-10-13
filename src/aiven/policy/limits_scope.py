@@ -29,6 +29,7 @@ tool list to judge, the rules that need one are skipped and the others are not.
 import re
 from collections.abc import Callable
 
+from aiven.policy.addresses import split_address
 from aiven.policy.catalog import Action, matches
 from aiven.policy.constants import (
     CEILINGS,
@@ -57,9 +58,6 @@ _FOLDER_ID = re.compile(DRIVE_FOLDER_ID_PATTERN)
 # close that span and leave the rest as prose in the signed text (ruling R67).
 _FOLDER_NAME = r"[^/\s`](?:[^/\r\n`]*[^/\s`])?"
 _FOLDER_PATH = re.compile(rf"{re.escape(DRIVE_ROOT)}(?: / {_FOLDER_NAME})*")
-# An address is `local@domain` or `@domain`, in lower case.
-_LOCAL_PART = re.compile(r"[a-z0-9._%+-]+")
-_DOMAIN_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?")  # inner hyphens: punycode passes
 
 # The limits that tools use, and which tools.
 _USED_BY: dict[str, Callable[[Action], bool]] = {
@@ -145,16 +143,14 @@ def _email_to(fields: Fields) -> list[Finding]:
 
 
 def _email_problem(entry: str) -> str | None:
-    """The code that an `email_to` entry gets, None if it is fine in Phase 1."""
-    local, at, domain = entry.partition("@")
-    labels = domain.split(".")
-    if (
-        not at
-        or (local and not _LOCAL_PART.fullmatch(local))
-        or len(labels) < 2
-        or not all(_DOMAIN_LABEL.fullmatch(label) for label in labels)
-    ):
+    """The code that an `email_to` entry gets, None if it is fine in Phase 1.
+
+    An entry is `local@domain` or `@domain`, in lower case (`addresses.split_address`).
+    """
+    parts = split_address(entry)
+    if parts is None:
         return "E-SCOPE-EMAIL"
+    local, domain = parts
     if not local and domain in PUBLIC_MAIL_DOMAINS:
         return "E-SCOPE-EMAIL-PUBLIC"
     if domain != PHASE1_EMAIL_DOMAIN:

@@ -1,11 +1,17 @@
 """Platform configuration: deploy-time values (validator-spec section 6, "set at deploy")."""
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, fields
 from pathlib import Path
 
 import pytest
 
-from aiven.policy.config import ConfigError, PlatformConfig, load_platform_config
+from aiven.policy.config import (
+    _CHECKS,
+    ConfigError,
+    PlatformConfig,
+    load_platform_config,
+    platform_problems,
+)
 from tests.support import REPO_ROOT
 
 EXAMPLE_PATH = REPO_ROOT / "config" / "platform.example.yaml"
@@ -67,7 +73,7 @@ def _replace(old: str, new: str) -> str:
 
 
 BROKEN = {
-    "unknown-key": (VALID + "extra: 1\n", "unknown key 'extra'"),
+    "unknown-key": (VALID + "extra: 1\n", "unknown key"),
     "missing-agents-project": (
         _replace("agents_project: aiven-agents-test\n", ""),
         "missing key 'agents_project'",
@@ -112,6 +118,16 @@ BROKEN = {
         _replace("author@aivenstudios.com", "not-an-address"),
         "trusted_authors",
     ),
+    "author-has-capitals": (
+        _replace("author@aivenstudios.com", "Author@aivenstudios.com"),
+        "not an email address",
+    ),
+    "author-has-no-local-part": (
+        _replace("author@aivenstudios.com", "'@aivenstudios.com'"),
+        "not an email address",
+    ),
+    "author-is-not-a-string": (_replace("author@aivenstudios.com", "2718281"), "must be a string"),
+    "project-is-null": (_replace(" aiven-agents-test", ""), "agents_project must be a string"),
     "author-has-a-space": (
         _replace("author@aivenstudios.com", "'a b@aivenstudios.com'"),
         "trusted_authors",
@@ -148,6 +164,7 @@ BROKEN = {
     "not-a-mapping": ("- a\n", "must be a mapping"),
     "empty-file": ("", "must be a mapping"),
     "invalid-yaml": ("agents_project: [\n", "not valid"),
+    "python-tag": (_replace("aiven-agents-test", "!!python/object:os.system x"), "not valid"),
 }
 
 
@@ -167,3 +184,62 @@ def test_load_platform_config_rejects_bytes_that_are_not_utf8(tmp_path):
 def test_config_errors_name_the_file(tmp_path):
     with pytest.raises(ConfigError, match=r"^platform\.yaml: "):
         load_platform_config(_write(tmp_path, VALID + "extra: 1\n"))
+
+
+def test_every_field_has_a_check():
+    assert set(_CHECKS) == {field.name for field in fields(PlatformConfig)}
+
+
+# What the file holds in the wrong place can be a secret, so no error repeats it; the key and the
+# line are enough to find it (ruling R113).
+VALUES = {
+    "project": (_replace("aiven-agents-test", "Aiven-Agents-Test"), "Aiven-Agents-Test"),
+    "project-number": (_replace("aiven-agents-test", "87654321"), "87654321"),
+    "author": (_replace("author@aivenstudios.com", "Author@Elsewhere.example"), "Elsewhere"),
+    "principal": (
+        _replace("gateway@aiven-gateway-test.iam.gserviceaccount.com", "gw@example.com"),
+        "gw@example.com",
+    ),
+    "drive-id": (VALID + "sandbox_drive_id: 'abc def ghi jkl'\n", "abc def ghi jkl"),
+    "drive-id-number": (VALID + "sandbox_drive_id: 1234567890123\n", "1234567890123"),
+    "unknown-key": (VALID + "zq7f_setting: 1\n", "zq7f"),
+    "duplicate-key": (VALID + "agents_project: aiven-other-test\n", "aiven-other-test"),
+    "not-yaml": (VALID + "sandbox_drive_id: 0AbCd: EfGhIjKlMnOpQ\n", "EfGhIjKlMnOpQ"),
+    "unterminated": (_replace("aiven-agents-test", "'aiven-agents-zq7f"), "zq7f"),
+}
+
+
+@pytest.mark.parametrize(("text", "value"), VALUES.values(), ids=VALUES.keys())
+def test_config_errors_never_repeat_a_value(tmp_path, text, value):
+    with pytest.raises(ConfigError) as caught:
+        load_platform_config(_write(tmp_path, text))
+    assert value not in str(caught.value)
+    # A traceback (`aiven-policy --debug`) shows a chained error, and a YAML error quotes the file.
+    error = caught.value
+    assert error.__cause__ is None
+    assert error.__context__ is None or error.__suppress_context__
+
+
+def test_a_yaml_error_gives_its_line(tmp_path):
+    with pytest.raises(ConfigError, match=r"\(line 5\)$") as caught:
+        load_platform_config(_write(tmp_path, VALID + "agents_project: aiven-other-test\n"))
+    assert caught.value.line == 5
+
+
+@pytest.mark.parametrize(
+    ("doc", "problems"),
+    [
+        (None, [("not a mapping", None)]),
+        (["a"], [("not a mapping", None)]),
+        (
+            {1: "x", "agents_project": "aiven-agents-test"},
+            [
+                ("unknown key", 1),
+                ("missing key", "trusted_authors"),
+                ("missing key", "gateway_principal"),
+            ],
+        ),
+    ],
+)
+def test_platform_problems_of_odd_documents(doc, problems):
+    assert [(problem.kind, problem.key) for problem in platform_problems(doc)] == problems
