@@ -51,7 +51,7 @@ from aiven.policy.model import Policy
 from aiven.policy.policyset import check_set
 from aiven.policy.validate import validate_file
 from tests.support import REPO_ROOT, gen
-from tests.support.bodies import rerendered
+from tests.support.bodies import policy_of, rerendered
 from tests.support.gen import grouped
 from tests.support.policies import (
     AGENTS_PROJECT,
@@ -64,7 +64,7 @@ from tests.support.policies import (
 )
 from tests.support.rules import setting, with_tools
 from tests.support.spec_tables import code_spans, table_after
-from tests.support.variants import Change, principal_of, variant
+from tests.support.variants import Change, principal_of, variant, variant_file
 
 CFG = platform_config()
 CATALOG = load_catalog(REPO_ROOT / "catalog" / "catalog-v1.yaml")
@@ -896,10 +896,18 @@ CASES = [
 
 # Task 1.6: the checks across all policies (validator-spec 3.6 and 3.9). A set case is
 # (code, build, findings). `build()` makes the set: the (path, policy) pairs of its files, and the
-# previous signed policies by agent. The policies are versions of the valid base, made as files
-# through the real pipeline (tests/support/variants.py). `check_set` must give exactly `findings`,
-# in order, as (path, params), and all of that code: the valid set has no finding, so nothing else
-# may come with it. A finding is about a whole file, as a policy carries no line map.
+# previous signed policies by agent. `check_set` must give exactly `findings`, in order, as
+# (path, params), and all of that code: a valid set has no finding, so nothing else may come with
+# it. A finding is about a whole file, as a policy carries no line map.
+#
+# "Valid" means that `check_set` has no finding for the set. The files are versions of the base
+# (tests/support/variants.py), made through the real pipeline, and as they stand they are not whole
+# valid files: the generated sections still show the base, which `validate_file` reports as
+# E-BODY-DRIFT. A case that changes only values that those sections show renders them again
+# (`render=True`), and its files are then whole valid files (the cases of E-VERSION-ORDER and of a
+# raised limit; `RENDERED_CHANGES` is tested). The others cannot be: a copy of a file with another
+# agent or principal has the defects of that (E-FILENAME, E-PRINCIPAL), which is what the codes
+# of the duplicates are about, and a new tool needs its bullet in Why each tool.
 SetBuild = Callable[[], tuple[list[tuple[Path, Policy]], dict[str, Policy]]]
 
 COPY_PATH = Path("policies/invoice-copy.md")
@@ -909,17 +917,21 @@ FILES_OF_AGENT = "invoice-copy.md, invoice-reminder.md"
 
 
 def a_set(
-    *files: tuple[Path, tuple[Change, ...]], before: tuple[Change, ...] | None = None
+    *files: tuple[Path, tuple[Change, ...]],
+    before: tuple[Change, ...] | None = None,
+    render: bool = False,
 ) -> SetBuild:
     """The set of these files, each a path and the changes to the base that make its policy.
 
     `before` are the changes that make the previous signed policy of invoice-reminder, `()` for
-    the base itself. Without it, the set has no previous policy.
+    the base itself. Without it, the set has no previous policy. With `render` the generated
+    sections of every file are rendered again, which makes whole valid files of the changes that
+    only touch values that those sections show.
     """
 
     def build():
-        items = [(path, variant(*changes)) for path, changes in files]
-        return items, ({} if before is None else {AGENT: variant(*before)})
+        items = [(path, variant(*changes, render=render)) for path, changes in files]
+        return items, ({} if before is None else {AGENT: variant(*before, render=render)})
 
     return build
 
@@ -932,6 +944,17 @@ def set_case(code: str, label: str, build: SetBuild, findings: list[tuple[Path, 
 
 NEXT_VERSION = setting("version", 2)
 ONE_TOOL_MORE = with_tools("sheets.read", "gmail.draft", "gmail.send", "drive.read")
+# Changes of values that the generated sections show: these cases render them again.
+SKIPS_A_VERSION = (setting("version", 3),)
+OTHER_CONTENT = (setting("shadow.min_runs", 20),)
+THE_NEXT_VERSION = (NEXT_VERSION,)
+MORE_RUNS_A_DAY = (NEXT_VERSION, setting("limits.runs_per_day", 2))
+RENDERED_CHANGES = {
+    "a version that skips one": SKIPS_A_VERSION,
+    "other content": OTHER_CONTENT,
+    "the next version": THE_NEXT_VERSION,
+    "a raised limit": MORE_RUNS_A_DAY,
+}
 SET_CASES = [
     set_case(
         "E-AGENT-DUPLICATE",
@@ -957,19 +980,19 @@ SET_CASES = [
     set_case(
         "E-VERSION-ORDER",
         "a version that skips one",
-        a_set((BASE_PATH, (setting("version", 3),)), before=()),
+        a_set((BASE_PATH, SKIPS_A_VERSION), before=(), render=True),
         [(BASE_PATH, {"value": "3", "next": "2"})],
     ),
     set_case(
         "E-VERSION-ORDER",
         "the same version, with other content",
-        a_set((BASE_PATH, (setting("shadow.min_runs", 20),)), before=()),
+        a_set((BASE_PATH, OTHER_CONTENT), before=(), render=True),
         [(BASE_PATH, {"value": "1", "next": "2"})],
     ),
     set_case(
         "E-VERSION-ORDER",
         "a new agent that does not start at 1",
-        a_set((BASE_PATH, (NEXT_VERSION,))),
+        a_set((BASE_PATH, THE_NEXT_VERSION), render=True),
         [(BASE_PATH, {"value": "2", "next": "1"})],
     ),
     set_case(
@@ -981,7 +1004,7 @@ SET_CASES = [
     set_case(
         "W-WIDENS",
         "a limit is raised, with no restart",
-        a_set((BASE_PATH, (NEXT_VERSION, setting("limits.runs_per_day", 2))), before=()),
+        a_set((BASE_PATH, MORE_RUNS_A_DAY), before=(), render=True),
         [(BASE_PATH, {"changes": "limits.runs_per_day: 1 -> 2"})],
     ),
 ]
@@ -1021,8 +1044,35 @@ def test_mutation_yields_exactly_one_new_finding(code, mutation, expected_line, 
 
 def test_a_valid_set_has_no_finding():
     # What the set cases start from: a new agent at version 1, and the next version of a known one.
-    assert check_set([(BASE_PATH, variant())], {}) == []
-    assert check_set([(BASE_PATH, variant(NEXT_VERSION))], {AGENT: variant()}) == []
+    # Its files are whole valid files (rendered again): validate_file has only the warnings of the
+    # base, and check_set has nothing.
+    first = variant_file(render=True)
+    second = variant_file(NEXT_VERSION, render=True)
+    for data in (first, second):
+        assert {f.code for f in findings_of(data)} == {"W-TOOL-NOT-LIVE"}
+    assert check_set([(BASE_PATH, policy_of(first))], {}) == []
+    assert check_set([(BASE_PATH, policy_of(second))], {AGENT: policy_of(first)}) == []
+
+
+@pytest.mark.parametrize("changes", RENDERED_CHANGES.values(), ids=RENDERED_CHANGES)
+def test_the_rendered_files_of_the_set_cases_are_whole_valid_files(changes):
+    # The cases that render say that their files are valid ones: no error, as for the base.
+    found = findings_of(variant_file(*changes, render=True))
+    assert {f.code for f in found} == {"W-TOOL-NOT-LIVE"}
+
+
+def test_a_rendered_variant_is_the_policy_of_its_rendered_file():
+    # The hash is that of the bytes that were rendered, so a case that renders has those files.
+    rendered_file = variant_file(NEXT_VERSION, render=True)
+    assert variant(NEXT_VERSION, render=True).sha256 == policy_of(rendered_file).sha256
+    assert variant(NEXT_VERSION, render=True).sha256 != variant(NEXT_VERSION).sha256
+
+
+def test_a_variant_that_is_not_rendered_is_not_a_whole_valid_file():
+    # Only its front matter is new, and the generated sections still show the base. This is why a
+    # set that has no finding of `check_set` is called valid, and not its files.
+    codes = {f.code for f in findings_of(variant_file(NEXT_VERSION))}
+    assert "E-BODY-DRIFT" in codes
 
 
 @pytest.mark.parametrize(("code", "build", "findings"), SET_CASES)
