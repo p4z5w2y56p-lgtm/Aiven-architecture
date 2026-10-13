@@ -259,9 +259,9 @@ ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 
 
 def test_a_widening_of_every_kind_is_shown_whole_in_the_line_and_in_both_languages():
-    # 20 tools and 10 addresses are added, and every other field is widened: the list is some 700
-    # characters, which the cut at 200 used to shorten. The strings are written out here, not made
-    # by `widening`, so that the test is about what is shown.
+    # 20 tools and 10 addresses are added, and every other field is widened: the list is about
+    # 1,000 characters, which the cut at 200 used to shorten. The strings are written out here, not
+    # made by `widening`, so that the test is about what is shown.
     tools = [f"agentbuilder.tool{number:02d}" for number in range(20)]
     addresses = [f"person{number}@aivenstudios.com" for number in range(10)]
     before = variant(
@@ -299,7 +299,7 @@ def test_a_widening_of_every_kind_is_shown_whole_in_the_line_and_in_both_languag
             "shadow.min_runs: 10 -> 5",
         ]
     )
-    assert 600 < len(changes) < 2000
+    assert 900 < len(changes) < 2000
     (found,) = check_set(files(("invoice-reminder.md", new)), {AGENT: before})
     assert found.params == {"changes": changes, "restart_runs": "5"}
     for text in (format_line(found), message(found, "en"), message(found, "nl")):
