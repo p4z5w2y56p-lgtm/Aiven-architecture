@@ -346,11 +346,10 @@ def test_an_entry_that_is_neither_a_name_nor_a_namespace_star_is_e_forbidden_pat
 
 UNKNOWN_ENTRIES = {
     "the typo of the brief": "paymnets.*",
+    "a typo in the namespace of a name": "paymnets.pay",
     "a name that is not in the catalog": "drive.reed",
     "a namespace that is not in it": "driv.*",
     "a typo in a name": "gmail.sendbulk",
-    "a name inside a reserved namespace": "payments.pay",
-    "another one": "policy.sign",
     "almost the reserved name": "agentbuilder.permission",
     "no namespace like it": "sheet.read",
 }
@@ -363,6 +362,18 @@ def test_an_entry_that_matches_nothing_is_e_forbidden_unknown(entry):
     assert run.params("E-FORBIDDEN-UNKNOWN") == {"entry": entry}
 
 
+# A name inside a reserved namespace is covered by the reserved entry (ruling R50), also when no
+# action of the catalog has that name: the entry matches the reserved list, so it is no typo.
+RESERVED_NAMES = {
+    "payments": "payments.pay",
+    "policy": "policy.sign",
+    "audit": "audit.read",
+    "killswitch": "killswitch.stop",
+    "iam": "iam.grant",
+    "secrets": "secrets.get",
+    "the one reserved name": "agentbuilder.permissions",
+}
+
 KNOWN_ENTRIES = [
     "sheets.read",
     "sheets.*",
@@ -371,7 +382,7 @@ KNOWN_ENTRIES = [
     "drive.move",
     "agentbuilder.*",
     "agentbuilder.publish",
-    "agentbuilder.permissions",
+    *RESERVED_NAMES.values(),
     *constants.RESERVED_NAMESPACES,
 ]
 
@@ -380,6 +391,18 @@ KNOWN_ENTRIES = [
 def test_an_entry_that_matches_a_catalog_action_or_a_reserved_entry_is_known(entry):
     codes = check(only_forbidden(entry)).codes()
     assert "E-FORBIDDEN-UNKNOWN" not in codes and "E-FORBIDDEN-PATTERN" not in codes
+
+
+def test_the_reserved_names_cover_every_reserved_namespace():
+    for pattern in constants.RESERVED_NAMESPACES:
+        namespace = pattern.split(".")[0] + "."
+        assert any(name.startswith(namespace) for name in RESERVED_NAMES.values()), pattern
+
+
+@pytest.mark.parametrize("name", RESERVED_NAMES.values(), ids=RESERVED_NAMES)
+def test_forbidding_a_name_inside_a_reserved_namespace_is_fine(name):
+    # It forbids nothing that the reserved list does not, and it protects: a typo would not.
+    assert check(add_forbidden(name)).places() == []
 
 
 def test_the_catalog_in_use_decides_what_is_known():

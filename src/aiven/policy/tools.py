@@ -14,7 +14,8 @@ of W-MAX-CLASS-SLACK. An entry that holds a placeholder skips its checks and is 
 
 An item of `forbidden` is an exact action name or `namespace.*` (E-FORBIDDEN-PATTERN), and it must
 match something in the catalog or in the reserved list, or a typo would protect nothing
-(E-FORBIDDEN-UNKNOWN); a bad pattern is not also unknown. The four items of the baseline must be
+(E-FORBIDDEN-UNKNOWN); a bad pattern is not also unknown. A name inside a reserved namespace
+(`payments.pay`) matches the reserved list (ruling R50). The four items of the baseline must be
 there literally (E-FORBIDDEN-BASELINE, one finding for each that is missing).
 """
 
@@ -56,9 +57,14 @@ def check_forbidden(fields: Fields, catalog: Catalog) -> tuple[list[Finding], li
 def _matches_anything(entry: str, catalog: Catalog) -> bool:
     """Whether the item matches an action of the catalog or an entry of the reserved list.
 
-    A namespace item matches when any action or reserved entry lies in that namespace.
+    A namespace item matches when any action or reserved entry lies in that namespace. An exact
+    name matches an action, or a reserved entry that covers it (`payments.pay` lies under
+    `payments.*`): the reserved list holds it, so it is no typo (ruling R50).
     """
-    return any(matches(entry, name) for name in (*catalog.actions, *catalog.reserved))
+    names = (*catalog.actions, *catalog.reserved)
+    return any(matches(entry, name) for name in names) or any(
+        matches(pattern, entry) for pattern in catalog.reserved
+    )
 
 
 def check_tools(
