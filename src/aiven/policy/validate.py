@@ -8,8 +8,9 @@ from pathlib import Path
 
 from aiven.policy.catalog import Catalog
 from aiven.policy.config import PlatformConfig
+from aiven.policy.constants import MAX_SCANNED_BYTES
 from aiven.policy.content import KIND_CODES, ContentHit, scan
-from aiven.policy.fileformat import check_file, decode_text
+from aiven.policy.fileformat import check_bytes, check_file, decode_text
 from aiven.policy.findings import Finding
 from aiven.policy.frontmatter import check_filename, load, split
 
@@ -20,7 +21,12 @@ def validate_file(path: Path, data: bytes, cfg: PlatformConfig, catalog: Catalog
     The file checks, the content checks and the front matter checks need neither `cfg` nor
     `catalog`; the checks that follow do. The result is in report order: findings about the whole
     file first, then by line, then by column, then by code.
+
+    A file over `MAX_SCANNED_BYTES` is invalid by its size, and is not read through: it gets the
+    checks of its bytes and nothing else, so that a huge file cannot cost minutes and gigabytes.
     """
+    if len(data) > MAX_SCANNED_BYTES:
+        return sorted(check_bytes(path, data), key=_report_order)
     text = decode_text(data)
     findings = check_file(path, data, text)
     findings.extend(_content_finding(str(path), hit) for hit in scan(text))

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from aiven.policy import constants
-from aiven.policy.fileformat import check_file, decode_text, has_placeholder
+from aiven.policy.fileformat import check_bytes, check_file, decode_text, has_placeholder
 from aiven.policy.findings import Finding, load_messages, message
 from tests.support import gen
 from tests.support.characters import HIDDEN_CHARACTERS, VISIBLE_CHARACTERS
@@ -197,6 +197,46 @@ def test_the_size_limit_equals_the_spec():
     assert constants.MAX_FILE_BYTES == 64 * 1024
     assert f"the maximum is {constants.MAX_FILE_BYTES}." in load_messages("en")["E-FILE-SIZE"]
     assert f"het maximum is {constants.MAX_FILE_BYTES}." in load_messages("nl")["E-FILE-SIZE"]
+
+
+# --- check_bytes: the checks that report once per file and need no text (ruling R40)
+
+BYTE_CODES = {"E-ENCODING", "E-LINE-ENDINGS", "E-FINAL-NEWLINE", "E-FILE-SIZE"}
+BYTE_CASES = {
+    "clean": b"one\ntwo\n",
+    "empty": b"",
+    "byte-order mark": codecs.BOM_UTF8 + b"one\n",
+    "invalid byte": b"one\ntwo\n\xff\n",
+    "crlf": b"a\r\nb\r\n",
+    "lone cr after multi-byte characters": "\N{EURO SIGN}\N{LATIN SMALL LETTER E WITH ACUTE}\rx\n".encode(),
+    "cr after a byte-order mark": codecs.BOM_UTF8 + b"x\ny\rz\n",
+    "cr after an invalid byte": b"a\n\xff\rb\n",
+    "no final newline": b"a",
+    "two final newlines": b"a\n\n",
+    "too large": b"x" * 70_000 + b"\n",
+    "all of it": codecs.BOM_UTF8 + b"a\r\n\xff" + b"x" * 70_000,
+}
+
+
+@pytest.mark.parametrize("data", BYTE_CASES.values(), ids=BYTE_CASES)
+def test_check_bytes_gives_the_once_per_file_findings_of_check_file(data):
+    assert check_bytes(PATH, data) == [f for f in check_file(PATH, data) if f.code in BYTE_CODES]
+    assert {f.code for f in check_bytes(PATH, data)} <= BYTE_CODES
+
+
+def test_check_bytes_neither_decodes_nor_looks_at_lines(monkeypatch):
+    monkeypatch.setattr("aiven.policy.fileformat.decode_text", lambda _: pytest.fail("decoded"))
+    data = b"TODO \t \xff\r\n" * 2000 + b"x" * 70_000
+    assert sorted(f.code for f in check_bytes(PATH, data)) == [
+        "E-ENCODING",
+        "E-FILE-SIZE",
+        "E-FINAL-NEWLINE",
+        "E-LINE-ENDINGS",
+    ]
+
+
+def test_the_scan_limit_is_sixteen_times_the_size_limit_and_a_mebibyte():
+    assert constants.MAX_SCANNED_BYTES == 16 * constants.MAX_FILE_BYTES == 1_048_576
 
 
 # --- E-HIDDEN-CHAR

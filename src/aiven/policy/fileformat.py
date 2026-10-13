@@ -49,6 +49,33 @@ def decode_text(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def check_bytes(path: Path, data: bytes) -> list[Finding]:
+    """The findings of section 3.1 that are reported once per file and need only the bytes.
+
+    These are E-ENCODING, E-LINE-ENDINGS, E-FINAL-NEWLINE and E-FILE-SIZE. Nothing is decoded
+    into text and no line is looked at, so this is all that is done for a file too large to be read
+    through (`constants.MAX_SCANNED_BYTES`). The findings come in no particular order.
+    """
+    where = str(path)
+    findings: list[Finding] = []
+
+    encoding_line = _encoding_line(data)
+    if encoding_line is not None:
+        findings.append(Finding("E-ENCODING", "error", where, encoding_line))
+
+    # The bytes of a CR and of an LF are the same in the text, so the line is found in the bytes.
+    first_cr = data.find(b"\r")
+    if first_cr != -1:
+        findings.append(Finding("E-LINE-ENDINGS", "error", where, _line_at(data, first_cr)))
+
+    if not data.endswith(b"\n") or data.endswith(b"\n\n"):
+        findings.append(Finding("E-FINAL-NEWLINE", "error", where))
+
+    if len(data) > MAX_FILE_BYTES:
+        findings.append(Finding("E-FILE-SIZE", "error", where, params={"size": str(len(data))}))
+    return findings
+
+
 def check_file(path: Path, data: bytes, text: str | None = None) -> list[Finding]:
     """Every finding of section 3.1 for `data`, the content of the file called `path`.
 
@@ -56,28 +83,14 @@ def check_file(path: Path, data: bytes, text: str | None = None) -> list[Finding
     `decode_text(data)`: pass it when you have decoded the bytes already, and they are not decoded
     twice.
 
-    E-ENCODING, E-LINE-ENDINGS, E-FINAL-NEWLINE and E-FILE-SIZE are reported once per file, and
-    E-HIDDEN-CHAR and E-PLACEHOLDER once per occurrence. The findings come in no particular
-    order: `validate_file` sorts them.
+    E-ENCODING, E-LINE-ENDINGS, E-FINAL-NEWLINE and E-FILE-SIZE are reported once per file (they
+    are `check_bytes`), and E-HIDDEN-CHAR and E-PLACEHOLDER once per occurrence. The findings come
+    in no particular order: `validate_file` sorts them.
     """
     where = str(path)
     if text is None:
         text = decode_text(data)
-    findings: list[Finding] = []
-
-    encoding_line = _encoding_line(data)
-    if encoding_line is not None:
-        findings.append(Finding("E-ENCODING", "error", where, encoding_line))
-
-    first_cr = text.find("\r")
-    if first_cr != -1:
-        findings.append(Finding("E-LINE-ENDINGS", "error", where, _line_at(text, first_cr)))
-
-    if not data.endswith(b"\n") or data.endswith(b"\n\n"):
-        findings.append(Finding("E-FINAL-NEWLINE", "error", where))
-
-    if len(data) > MAX_FILE_BYTES:
-        findings.append(Finding("E-FILE-SIZE", "error", where, params={"size": str(len(data))}))
+    findings = check_bytes(path, data)
 
     for number, line in enumerate(text.split("\n"), start=1):
         for found in _NOT_PRINTABLE_ASCII.finditer(line):
@@ -140,5 +153,6 @@ def _encoding_line(data: bytes) -> int | None:
     return None
 
 
-def _line_at(text: str, index: int) -> int:
-    return text.count("\n", 0, index) + 1
+def _line_at(data: bytes, index: int) -> int:
+    """The line (1-based) of the byte at `index`: LF separates lines."""
+    return data.count(b"\n", 0, index) + 1

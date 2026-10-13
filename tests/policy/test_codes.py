@@ -486,3 +486,40 @@ def test_the_template_is_reported_under_its_own_name():
     )
     assert (findings[0].code, findings[0].line) == ("E-FILENAME", None)
     assert findings[0].params == {"name": "policy-template.md", "agent": "invoice-reminder"}
+
+
+# --- a file too large to read through (ruling R40)
+
+
+def test_a_file_over_a_mebibyte_is_not_read_through(monkeypatch):
+    # Read through, 2 MiB of tabs is one hidden-character finding per byte: minutes, and gigabytes.
+    monkeypatch.setattr("aiven.policy.validate.decode_text", lambda _: pytest.fail("decoded"))
+    data = b"\t" * (2 * 1024 * 1024 - 1) + b"\n"
+    started = time.perf_counter()
+    findings = findings_of(data)
+    assert time.perf_counter() - started < 1
+    assert [(f.code, f.line, f.params) for f in findings] == [
+        ("E-FILE-SIZE", None, {"size": str(len(data))})
+    ]
+
+
+def test_a_file_over_a_mebibyte_still_gets_the_checks_of_its_bytes_and_no_others():
+    data = b"ok TODO\n\xff\na\rb \t\n" + b"[" * 1_048_576  # a bad byte, a CR, no final newline
+    findings = findings_of(data)
+    assert [(f.code, f.line) for f in findings] == [
+        ("E-FILE-SIZE", None),
+        ("E-FINAL-NEWLINE", None),
+        ("E-ENCODING", 2),
+        ("E-LINE-ENDINGS", 3),
+    ]  # no E-PLACEHOLDER, no E-HIDDEN-CHAR, no E-FM-MISSING: the text is not looked at
+
+
+def test_a_file_up_to_the_limit_gets_every_check_and_one_byte_more_does_not(monkeypatch):
+    monkeypatch.setattr("aiven.policy.validate.MAX_SCANNED_BYTES", 5000)
+
+    def file_of(size: int) -> bytes:
+        return b"TODO\n" + b"x" * (size - 6) + b"\n"
+
+    at_limit = {f.code for f in findings_of(file_of(5000))}
+    assert {"E-PLACEHOLDER", "E-FM-MISSING"} <= at_limit
+    assert findings_of(file_of(5001)) == []  # its bytes are fine, and its text is not looked at

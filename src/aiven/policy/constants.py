@@ -111,6 +111,13 @@ LIST_SIZES: dict[str, tuple[int, int]] = {
 # A policy file is at most 64 KiB (validator-spec 3.1, E-FILE-SIZE).
 MAX_FILE_BYTES = 64 * 1024
 
+# A file beyond this (1 MiB, 16 times the limit) is not read through. It is invalid by its size
+# alone, and checking it line by line would only cost time and memory: every hidden character,
+# placeholder or secret in it is a finding of its own, so a file of tabs is a million findings. Up
+# to this size a file is still checked in full, so that its author sees everything at once. Only
+# the checks of the bytes (E-FILE-SIZE, E-ENCODING, E-LINE-ENDINGS, E-FINAL-NEWLINE) still run.
+MAX_SCANNED_BYTES = 16 * MAX_FILE_BYTES
+
 # Hidden characters (validator-spec 3.1, E-HIDDEN-CHAR): every character in these Unicode
 # categories, and in these code point ranges (inclusive, in the order of the spec), except LF and
 # the normal space (see `chars.is_hidden`). The ranges are needed because those characters are
