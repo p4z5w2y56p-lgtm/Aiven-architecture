@@ -437,6 +437,12 @@ BAD_PATHS = {
     "something behind": f"{ROOT}x",
     "a part of the name": "Sandbox",
     "a tab behind a folder": f"{ROOT} / a\t",
+    # Ruling R67: the path is written in a code span of the generated sections, so no backtick.
+    "a backtick in a name": f"{ROOT} / Invoices` (read only)",
+    "a backtick in front of a name": f"{ROOT} / `Invoices",
+    "a backtick behind a name": f"{ROOT} / Invoices`",
+    "only a backtick as a name": f"{ROOT} / `",
+    "prose with two code spans": f"{ROOT} / Invoices` (read only). Nothing is ever written to `Drive",
 }
 
 

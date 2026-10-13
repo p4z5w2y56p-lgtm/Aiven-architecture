@@ -22,6 +22,7 @@ from aiven.policy.catalog import Action
 from aiven.policy.constants import POLICY_CLASSES
 from aiven.policy.fileformat import decode_text
 from aiven.policy.frontmatter import split
+from aiven.policy.markdown import parse
 from aiven.policy.model import Limits, Scope
 from aiven.policy.render import render_generated, rewrite
 from aiven.policy.validate import validate_file
@@ -198,6 +199,62 @@ def test_forbidden_items_are_in_backticks_in_the_order_of_the_file():
     assert paragraph(enforced_of(replace(POLICY, forbidden=forbidden)), "Forbidden (") == (
         wanted + "."
     )
+
+
+# --- a value with a backtick in it stays in its code span (ruling R67)
+
+
+def code_spans_in(section: str) -> list[str]:
+    """The content of every code span of a text, as the parser of the body reads it."""
+    return [
+        child.content
+        for token in parse(section)
+        if token.type == "inline"
+        for child in token.children or []
+        if child.type == "code_inline"
+    ]
+
+
+TRICKY = ["a`b", "`start", "end`", "a``b", "``", "`", "a ` b", "```x```", "` `", "x ` y ``` z"]
+
+
+@pytest.mark.parametrize("value", TRICKY)
+def test_a_value_with_backticks_is_one_code_span_that_holds_all_of_it(value):
+    policy = replace(
+        POLICY,
+        principal=value,
+        agent=value,
+        forbidden=(value,),
+        scope=Scope(value, value, (value,)),
+    )
+    enforced, signoff = render_generated(policy, CATALOG)
+    # the principal, the item of forbidden, the folder (path and ID) and the address
+    assert code_spans_in(enforced).count(value) == 5
+    assert code_spans_in(signoff) == [value, f"{value}.md.sig", "aiven-policy-v1"]
+
+
+def test_a_path_that_closes_a_code_span_and_opens_another_stays_a_path():
+    path = "AIVEN Architecture Sandbox / Invoices` (read only). Nothing is ever written to `Drive"
+    policy = replace(POLICY, scope=replace(POLICY.scope, drive_folder_path=path, email_to=()))
+    bullet = scope_of(policy)
+    (token,) = [t for t in parse(bullet) if t.type == "inline"]
+    assert [child.type for child in token.children] == [
+        "text",
+        "code_inline",
+        "text",
+        "code_inline",
+        "text",
+    ]
+    assert [child.content for child in token.children if child.type == "code_inline"] == [
+        path,
+        FOLDER_ID,
+    ]
+    assert token.children[-1].content == ") and its subfolders."
+
+
+def test_a_value_without_a_backtick_is_in_a_code_span_of_one_backtick_with_no_padding():
+    assert "`@aivenstudios.com`" in enforced_of()
+    assert "Agent `invoice-reminder`," in signoff_of()
 
 
 # --- limits, scope, shadow mode

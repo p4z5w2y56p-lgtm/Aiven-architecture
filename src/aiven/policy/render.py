@@ -19,6 +19,8 @@ mode. That is a ValueError, and its message holds nothing from the file.
 `rewrite` is `aiven-policy render`: it replaces the sections that are there, and nothing else.
 """
 
+import re
+
 from aiven.policy.catalog import Action, Catalog
 from aiven.policy.constants import GENERATED_SECTIONS, NAMESPACE, SIGNER_NAME, TIMEZONE
 from aiven.policy.fileformat import decode_text
@@ -53,6 +55,7 @@ _MODE_RULES = {
         "preview lists the untrusted content the run read; R1 actions still run at once."
     ),
 }
+_BACKTICKS = re.compile(r"`+")
 _NO_SCOPE = "- None: this agent has no Drive or email tools."
 _STOP = (
     "Stop: the agent kill switch stops this agent; the global kill switch stops every agent. "
@@ -65,7 +68,7 @@ _PLATFORM = (
     "SHA-256 hash. Snapshots are kept 30 days; the audit log is append-only and kept 1 year."
 )
 _SIGNATURE = (
-    "The signature is the separate file `{agent}.md.sig` (SSH signature, namespace `{namespace}`) "
+    "The signature is the separate file {file} (SSH signature, namespace {namespace}) "
     "over this exact file. The file's SHA-256 hash is shown in the policy view and on every log "
     "line; a file cannot contain its own hash."
 )
@@ -111,12 +114,12 @@ def _action(tool: str, catalog: Catalog) -> Action:
 
 
 def _enforced(p: Policy, actions: list[Action]) -> str:
-    tools = [(f"`{action.id}`", *_CLASS_AND_GATE[action.cls]) for action in actions]
-    undo = [f"- `{action.id}`: {action.undo}" for action in actions]
+    tools = [(_code(action.id), *_CLASS_AND_GATE[action.cls]) for action in actions]
+    undo = [f"- {_code(action.id)}: {action.undo}" for action in actions]
     blocks = [
         f"## {GENERATED_SECTIONS[0]}",
         _INTRO,
-        f"Identity: runs as `{p.principal}`. "
+        f"Identity: runs as {_code(p.principal)}. "
         "Calls from any other identity get nothing from this policy.",
         "Tools (default deny: nothing else exists for this agent):",
         _table(("Tool", "Class", "Gate"), tools),
@@ -139,9 +142,9 @@ def _enforced(p: Policy, actions: list[Action]) -> str:
 def _signoff(p: Policy) -> str:
     blocks = [
         f"## {GENERATED_SECTIONS[1]}",
-        f"Agent `{p.agent}`, version {p.version}. Signer: {SIGNER_NAME}, the only signer in v1. "
-        "There is no second approver, so R3 stays disabled.",
-        _SIGNATURE.format(agent=p.agent, namespace=NAMESPACE),
+        f"Agent {_code(p.agent)}, version {p.version}. Signer: {SIGNER_NAME}, the only signer in "
+        "v1. There is no second approver, so R3 stays disabled.",
+        _SIGNATURE.format(file=_code(f"{p.agent}.md.sig"), namespace=_code(NAMESPACE)),
         _SIGNING,
     ]
     return "\n\n".join(blocks) + "\n"
@@ -156,8 +159,20 @@ def _row(cells: tuple[str, ...]) -> str:
     return "| " + " | ".join(cells) + " |"
 
 
+def _code(text: str) -> str:
+    """A code span that holds all of `text`, whatever backticks are in it (ruling R67).
+
+    CommonMark: the span is closed by the first run of backticks that is as long as the one that
+    opened it, so the fence is one longer than the longest run in the text. A text that starts or
+    ends with a backtick gets a space on each side, which the reader of the span drops again.
+    """
+    fence = "`" * (max(map(len, _BACKTICKS.findall(text)), default=0) + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
 def _codes(items: tuple[str, ...]) -> str:
-    return ", ".join(f"`{item}`" for item in items)
+    return ", ".join(map(_code, items))
 
 
 def _untrusted(mode: str) -> str:
@@ -181,9 +196,9 @@ def _scope(scope: Scope) -> str:
     bullets = []
     if scope.drive_folder_id is not None:
         # Without a path (a warning only) the text names the ID and no folder it does not know.
-        where = f"the folder with ID `{scope.drive_folder_id}`"
+        where = f"the folder with ID {_code(scope.drive_folder_id)}"
         if scope.drive_folder_path is not None:
-            where = f"`{scope.drive_folder_path}` (ID `{scope.drive_folder_id}`)"
+            where = f"{_code(scope.drive_folder_path)} (ID {_code(scope.drive_folder_id)})"
         bullets.append(f"- Drive: only {where} and its subfolders.")
     if scope.email_to:
         bullets.append(f"- Email: only to {_codes(scope.email_to)}.")
