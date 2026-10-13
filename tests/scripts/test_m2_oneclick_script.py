@@ -486,7 +486,8 @@ def test_a_drill_that_does_not_stop_fails_and_still_puts_everything_back(
     )
     assert done.returncode == 0, done.stdout + done.stderr
     assert lines(done, "FAIL ") == [
-        "FAIL bd1-unlink: billing of aiven-scratch-mock still on 5 minutes after publishing",
+        "FAIL bd1-unlink: billing of aiven-scratch-mock still on 10 minutes after publishing; "
+        "the copy logged: nothing: the notification did not reach it",
         "FAIL drills: stopped at bd1-unlink; scratch linked again, drill copy removed",
     ]
     terraform = [call.split()[2] for call in calls if call.startswith("terraform ")]
@@ -708,3 +709,17 @@ def test_a_run_that_stopped_at_a_full_billing_quota_resumes_with_the_same_ids(
     assert len({project.rsplit("-", 1)[1] for project in ids}) == 1
     assert f"billing projects link {first[0]} --billing-account=01F2A3-B4C5D6-E7F809" in calls
     reset(repo)
+
+
+def test_a_drill_whose_unlink_fails_says_what_the_copy_logged(copy_of_the_repository, tmp_path):
+    done, calls, state = after_apply(
+        copy_of_the_repository, tmp_path, "drills", MOCK_DRILL_FAILS="1"
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    (bd1,) = lines(done, "FAIL bd1-unlink")
+    assert "still on 10 minutes after publishing" in bd1
+    assert "the copy logged: ERROR failed PermissionDenied" in bd1
+    # Put back in the safe order: the copy removed first, then billing on scratch checked.
+    terraform = [call.split()[2] for call in calls if call.startswith("terraform ")]
+    assert terraform == ["plan", "show", "apply", "plan", "show", "apply"]
+    assert not [call for call in calls if call.startswith("billing projects link")]  # never off

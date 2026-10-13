@@ -53,7 +53,10 @@ PERMISSIONS = (
     "&fields=nextPageToken,permissions(type,role,emailAddress,domain)"
 )
 SERVICES = f"https://serviceusage.googleapis.com/v1/projects/{AGENTS}/services?filter=state:ENABLED&pageSize=200"
-GATEWAY_SERVICE = f"https://run.googleapis.com/v2/projects/{GATEWAY}/locations/europe-west4/services/gateway:getIamPolicy"
+SERVICE = (
+    f"https://run.googleapis.com/v2/projects/{GATEWAY}/locations/europe-west4/services/gateway"
+)
+GATEWAY_SERVICE = f"{SERVICE}:getIamPolicy"
 
 
 def accounts(project: str, *names: str) -> dict:
@@ -115,7 +118,8 @@ def planned() -> dict:
             {"role": "roles/logging.logWriter", "members": [f"serviceAccount:{GATEWAY_SA}"]},
         ]
     }
-    table[GATEWAY_SERVICE] = None  # the gateway service comes with M3
+    table[SERVICE] = None  # the gateway service comes with M3
+    table[GATEWAY_SERVICE] = {}  # and Cloud Run answers its getIamPolicy with an empty policy
     iam_config = {
         "uniformBucketLevelAccess": {"enabled": True},
         "publicAccessPrevention": "enforced",
@@ -333,6 +337,7 @@ def test_an_agent_account_that_terraform_does_not_know_is_still_an_agent(capsys,
 
 def test_the_gateway_service_once_it_exists(capsys, monkeypatch):
     table = planned()
+    table[SERVICE] = {"name": "gateway"}
     table[GATEWAY_SERVICE] = {
         "bindings": [{"role": "roles/run.invoker", "members": [f"serviceAccount:{AGENT}"]}]
     }
@@ -712,3 +717,18 @@ def test_the_script_of_the_plan_runs_the_same_command():
     assert done.returncode == 0
     assert "aiven-deploy-check" in done.stdout
     assert Path(REPO_ROOT / "scripts" / "deploy_check.py").read_text().count("main") >= 1
+
+
+def test_a_gateway_service_that_does_not_exist_is_a_note_whatever_its_policy_says(
+    capsys, monkeypatch
+):
+    # At the real apply, Cloud Run answered getIamPolicy of the missing service with an empty
+    # policy, and the check said PASS. The service itself is what is asked now.
+    table = planned()
+    status, lines, _ = run(capsys, monkeypatch, table, "iam")
+    assert status == 0
+    assert (
+        "NOTE iam gateway service: it does not exist yet (M3); then agents may only invoke it"
+        in lines
+    )
+    assert not [line for line in lines if line.startswith("PASS iam gateway service")]

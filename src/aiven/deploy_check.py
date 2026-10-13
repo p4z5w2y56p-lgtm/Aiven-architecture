@@ -21,6 +21,7 @@ which the lines name freely.
 
 import argparse
 import sys
+import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -75,6 +76,11 @@ class RestGoogle:
             import google.auth
             from google.auth.transport.requests import AuthorizedSession
 
+            # A user login has no quota project of its own; every call names one (x-goog-user-project),
+            # so google.auth's warning about it says nothing here.
+            warnings.filterwarnings(
+                "ignore", message="Your application has authenticated using end user"
+            )
             credentials, _ = google.auth.default(scopes=SCOPES)
             session = AuthorizedSession(credentials)
         self._session = session
@@ -284,9 +290,14 @@ def _iam(google: Google, d: Deployment) -> list[Result]:
             "no agent holds another role on the agents, gateway or control project",
         ),
     ]
-    url = f"{RUN}/projects/{d.gateway_project}/locations/{d.region}/services/gateway:getIamPolicy"
-    service = google.get(url, d.control_project)
-    if service is None:
+    # Whether the service exists, asked of the service itself: Cloud Run answers getIamPolicy of a
+    # service that does not exist with an empty policy, which reads as a PASS (seen at the apply).
+    service_url = f"{RUN}/projects/{d.gateway_project}/locations/{d.region}/services/gateway"
+    exists = google.get(service_url, d.control_project)
+    service = (
+        None if exists is None else google.get(f"{service_url}:getIamPolicy", d.control_project)
+    )
+    if exists is None or service is None:
         results.append(
             Result(
                 "NOTE",

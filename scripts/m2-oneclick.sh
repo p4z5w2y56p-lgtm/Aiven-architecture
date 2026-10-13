@@ -740,6 +740,19 @@ billing_off() { ! billing_on "$1"; }
 has_audit() { [[ -n "$(audit_entries "$1" "$2")" ]]; }      # has_audit FILTER SINCE
 has_drill_log() { [[ -n "$(drill_log "$1" "$2")" ]]; }     # has_drill_log OUTCOME SINCE
 
+# What the drill's copy logged since SINCE: its outcomes, the classes of its errors, and its error
+# lines. When a drill item fails, this says why (IDs and outcomes only; the function logs no more).
+drill_said() {
+  local lines
+  lines="$(gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"budget-stop-drill\" AND timestamp>=\"$1\" AND (jsonPayload.outcome:* OR severity>=ERROR)" \
+    --project="$V_control_project" --limit=5 --format='value(severity,jsonPayload.outcome,jsonPayload.errors)' 2>>"$LOG" || true)"
+  if [[ -n $lines ]]; then
+    printf '%s' "$lines" | tr '\t\n' ' ;'
+  else
+    printf 'nothing: the notification did not reach it'
+  fi
+}
+
 # wait_until SECONDS INTERVAL command...: 0 when the command succeeds in time
 wait_until() {
   local limit="$1" every="$2" start
@@ -832,17 +845,25 @@ drills() {
   fi
   say "   Switching on the drill's copy of the budget stop (it stops $V_scratch_project only)..."
   drill_switch on
+  # A new trigger takes a moment before it delivers (Eventarc).
+  say "   Giving the copy's trigger 90 seconds to be ready..."
+  sleep 90
 
   # BD-1: a notification at the stop amount unlinks the scratch project within 5 minutes.
   since="$(now)"
   start="$(date +%s)"
   publish "$over"
-  say "   BD-1: published $over $V_budget_currency; waiting for the unlink (up to 5 minutes)..."
-  if wait_until 300 10 billing_off "$V_scratch_project"; then
+  say "   BD-1: published $over $V_budget_currency; waiting for the unlink (it must come within 5 minutes; it waits 10)..."
+  if wait_until 600 10 billing_off "$V_scratch_project"; then
     seconds="$(($(date +%s) - start))"
-    record PASS bd1-unlink "billing of $V_scratch_project unlinked ${seconds}s after publishing"
+    if ((seconds <= 300)); then
+      record PASS bd1-unlink "billing of $V_scratch_project unlinked ${seconds}s after publishing"
+    else
+      record FAIL bd1-unlink "billing of $V_scratch_project unlinked only ${seconds}s after publishing (5 minutes at most)"
+      DRILL_FAILED="bd1-unlink"
+    fi
   else
-    record FAIL bd1-unlink "billing of $V_scratch_project still on 5 minutes after publishing"
+    record FAIL bd1-unlink "billing of $V_scratch_project still on 10 minutes after publishing; the copy logged: $(drill_said "$since")"
     DRILL_FAILED="bd1-unlink"
   fi
   drill_check bd1-audit "a budget_stop audit entry" \
@@ -883,11 +904,12 @@ drills() {
     fi
   fi
 
-  say "   Putting it back: billing on $V_scratch_project, and the drill's copy removed..."
+  say "   Putting it back: the drill's copy removed, and billing on $V_scratch_project..."
+  # The copy goes first: a notification that arrives late cannot unlink scratch after this.
+  drill_switch off
   if ! relink_scratch; then
     record FAIL scratch-billing "not linked again; run: gcloud billing projects link $V_scratch_project --billing-account=$V_billing_account"
   fi
-  drill_switch off
   if [[ -z $DRILL_FAILED ]]; then
     state_set drills "PASS $(now)"
     record PASS drills "BD-1 and BD-2 passed; scratch linked again, drill copy removed"

@@ -49,7 +49,8 @@ esac
 # drill's copy of the budget stop (it unlinks aiven-scratch-mock at the stop amount, as
 # src/aiven/functions/budget_stop.py does), the credit reminder, and the logs that both write, on a
 # clock of their own that ticks once per event. MOCK_DRILL_BROKEN=1 makes the copy do nothing, and
-# MOCK_DOUBLE_AUDIT=1 makes it write an audit entry for a project that is stopped already.
+# MOCK_DOUBLE_AUDIT=1 makes it write an audit entry for a project that is stopped already, and
+# MOCK_DRILL_FAILS=1 makes its unlink fail (as when its account may not unlink billing).
 if [[ -n ${MOCK_STATE:-} ]]; then
   tick() {
     local n
@@ -76,6 +77,10 @@ if [[ -n ${MOCK_STATE:-} ]]; then
       exit 0 ;;
     " pubsub topics publish budget-stop-drill "*)
       [[ ${MOCK_DRILL_BROKEN:-0} == 1 ]] && exit 0
+      if [[ ${MOCK_DRILL_FAILS:-0} == 1 ]]; then
+        echo "$(tick) failed" >>"$MOCK_STATE/drill"
+        exit 0
+      fi
       cost=$(sed -E 's/.*"costAmount":([0-9.]+).*/\1/' <<<"$args")
       budget=$(sed -E 's/.*"budgetAmount":([0-9.]+).*/\1/' <<<"$args")
       if [[ $(cat "$MOCK_STATE/stop-enabled" 2>/dev/null || echo true) != true ]]; then
@@ -98,6 +103,10 @@ if [[ -n ${MOCK_STATE:-} ]]; then
     " logging read "*)
       since=$(sed -E 's/.*timestamp>="([^"]+)".*/\1/' <<<"$args")
       case "$args" in
+        *'jsonPayload.outcome:*'*)
+          # What the copy logged: severity, outcome and error classes, as drill_said asks.
+          awk -v since="$since" '$1 >= since { if ($2 == "failed") print "ERROR\tfailed\tPermissionDenied"; else print "INFO\t" $2 "\t" }' "$MOCK_STATE/drill" 2>/dev/null
+          exit 0 ;;
         *'jsonPayload.reason="CREDIT_EXPIRY"'*) file=audit want=CREDIT_EXPIRY ;;
         *'jsonPayload.event="budget_stop"'*) file=audit want=budget_stop ;;
         *'jsonPayload.outcome="'*) file=drill want=$(sed -E 's/.*jsonPayload.outcome="([a-z_]+)".*/\1/' <<<"$args") ;;
