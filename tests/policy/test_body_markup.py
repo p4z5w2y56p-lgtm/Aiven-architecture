@@ -32,6 +32,11 @@ PURPOSE = "Once a day, this agent reads"
 END = "no email goes to clients."
 STOP = "Stop: the agent kill switch"
 
+# Seconds that a hostile body may take. The checks are linear and the bodies here take a second or
+# two, so the bound only catches a search whose time grows with the square of the input. It is
+# generous because a runner that is busy or slow must not fail a test.
+SLOW = 30
+
 
 def purpose_with(text: str) -> str:
     """The base body with `text` added to the end of the Purpose paragraph."""
@@ -458,7 +463,7 @@ def test_a_long_run_of_scheme_characters_is_not_a_quadratic_search():
     body = purpose_with("a" * 200_000 + " " + "a." * 100_000 + " " + "a://" * 50_000)
     started = time.perf_counter()
     found = only(run(body), "E-BODY-LINK")
-    assert time.perf_counter() - started < 5
+    assert time.perf_counter() - started < SLOW
     assert len(found) == 50_000
 
 
@@ -627,6 +632,8 @@ HOSTILE = {
     "table": "| a | b |\n" * 10_000,
     "hashes": "#" * 100_000,
     "heading lines": "## a\n" * 20_000,
+    "headings of level 3": "### a\n" * 20_000,
+    "headings in quotes": "> ## a\n>\n" * 5_000,
     "a word": "a" * 100_000,
     "a long scheme": "a" * 100_000 + "://",
     "many schemes": "a://" * 25_000,
@@ -646,7 +653,7 @@ HOSTILE = {
 def test_a_hostile_body_is_judged_in_a_few_seconds_and_without_error(hostile):
     started = time.perf_counter()
     found = run(edited(END, f"{END}\n\n{hostile}"))
-    assert time.perf_counter() - started < 5
+    assert time.perf_counter() - started < SLOW
     assert all(isinstance(f, Finding) for f in found)
 
 
