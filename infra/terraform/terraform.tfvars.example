@@ -1,0 +1,11 @@
+# The Terraform values of the deployment: IDs and addresses only, never a credential, a key or a
+# token. CI refuses anything else here and in terraform.tfvars (aiven-check-config). Copy this file
+# to terraform.tfvars, fill in the IDs of the projects made in setup step S1, and commit it.
+
+agents_project  = "aiven-agents-example"
+gateway_project = "aiven-gateway-example"
+control_project = "aiven-control-example"
+region          = "europe-west4"
+
+# The agents, by agent ID (validator-spec 3.3). Each gets the service account agent-<id>.
+agents = ["invoice-reminder"]

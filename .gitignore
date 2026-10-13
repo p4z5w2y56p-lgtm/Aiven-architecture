@@ -15,3 +15,11 @@ coverage.xml
 build/
 dist/
 *.egg-info/
+
+# Terraform: the providers it downloads, and state and plans, never go into Git. The state lives in
+# its bucket in the control project; .terraform.lock.hcl is committed.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
