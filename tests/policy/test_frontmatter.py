@@ -20,15 +20,14 @@ from pathlib import Path
 import pytest
 
 from aiven.policy.catalog import load_catalog
-from aiven.policy.config import load_platform_config
 from aiven.policy.findings import Finding, format_line, message
 from aiven.policy.frontmatter import FIRST_LINE, MAX_DEPTH, check_filename, load, split
 from aiven.policy.validate import validate_file
 from tests.support import REPO_ROOT, gen
 from tests.support.frontmatter import BASE_TEXT, DATA, FRONT, at, only, places, swap, unexplained
-from tests.support.policies import BASE_PATH, valid_base
+from tests.support.policies import BASE_PATH, platform_config, valid_base
 
-CFG = load_platform_config(REPO_ROOT / "config" / "platform.example.yaml")
+CFG = platform_config()
 CATALOG = load_catalog(REPO_ROOT / "catalog" / "catalog-v1.yaml")
 
 PATH = BASE_PATH

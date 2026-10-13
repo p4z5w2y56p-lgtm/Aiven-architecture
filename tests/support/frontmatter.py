@@ -123,10 +123,13 @@ def unexplained(front: str, result) -> list[str]:
     of its list entries (a list with a wrong entry is dropped whole). The findings are those of
     `load` and those of the file checks, because E-PLACEHOLDER comes from the latter: they are
     run on a file that holds `front` behind its opening delimiter, so the lines are the same.
+
+    Only an error reports a field. A warning can stand on the line of a field or of a list entry
+    (W-TOOL-NOT-LIVE does), and it must not hide that a list was dropped.
     """
     file = ("---\n" + front + "---\n").encode("utf-8", "replace")
     findings = [*result.findings, *check_file(Path("policies/x.md"), file)]
-    reported = {f.line for f in findings if f.line is not None}
+    reported = {f.line for f in findings if f.line is not None and f.severity == "error"}
     dropped = []
     for path in result.lines:
         parent = path.rpartition(".")[0]

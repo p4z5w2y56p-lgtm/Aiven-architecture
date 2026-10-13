@@ -5,6 +5,7 @@ Reading the YAML itself is tested in test_frontmatter.py. Values and ranges are 
 """
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -587,6 +588,15 @@ ALL_CASES = all_cases()
 @pytest.mark.parametrize("text", ALL_CASES.values(), ids=ALL_CASES)
 def test_no_case_of_this_module_makes_a_field_vanish_without_a_finding(text):
     assert unexplained(text, load(text, PATH)) == []
+
+
+def test_a_warning_does_not_explain_a_field_that_left_the_data():
+    # W-TOOL-NOT-LIVE stands on the lines of tool entries. It must not hide a dropped list.
+    text = swap("- gmail.draft", "- 5")
+    result = load(text, PATH)
+    assert unexplained(text, result) == []
+    warning = Finding("W-TOOL-NOT-LIVE", "warning", str(PATH), at("- gmail.draft"))
+    assert unexplained(text, replace(result, findings=[warning])) == ["tools"]
 
 
 # --- E-FILENAME

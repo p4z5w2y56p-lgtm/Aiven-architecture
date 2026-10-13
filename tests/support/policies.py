@@ -7,6 +7,7 @@ equals re-rendering. Task 1.5 adds a test that proves this.
 
 from pathlib import Path
 
+from aiven.policy.config import PlatformConfig
 from tests.support import REPO_ROOT
 
 TEMPLATE_PATH = REPO_ROOT / "templates" / "policy-template.md"
@@ -16,6 +17,20 @@ BASE_PATH = Path("policies/invoice-reminder.md")
 
 AGENTS_PROJECT = "aiven-agents-test"
 FOLDER_ID = "1aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"
+
+
+def platform_config() -> PlatformConfig:
+    """The deploy values that the tests use. `AGENTS_PROJECT` is the project in the base's `principal`.
+
+    `config/platform.example.yaml` names another project (`aiven-agents-example`) and is tested on
+    its own in test_config.py. The name is not `test_config`: pytest would collect that function
+    from every test module that imports it.
+    """
+    return PlatformConfig(
+        agents_project=AGENTS_PROJECT,
+        trusted_authors=("trusted-author@aivenstudios.com",),
+        gateway_principal="gateway@aiven-gateway-test.iam.gserviceaccount.com",
+    )
 
 
 def valid_base() -> bytes:
