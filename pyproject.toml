@@ -9,6 +9,9 @@ dependencies = [
     "ruamel.yaml",
 ]
 
+[project.scripts]
+aiven-policy = "aiven.policy.cli:main"
+
 [dependency-groups]
 dev = [
     "pytest",
