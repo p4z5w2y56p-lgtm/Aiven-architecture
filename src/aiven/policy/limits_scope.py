@@ -51,9 +51,10 @@ SPEND = "spend_eur_per_run"
 # Every pattern is used with fullmatch: `$` would accept a trailing newline.
 _FOLDER_ID = re.compile(DRIVE_FOLDER_ID_PATTERN)
 # A folder name has no `/`, no line break, no backtick, and no whitespace at either end. Parts are
-# joined by " / ". A line break could only come from a block scalar, and the signer reads a path on
-# one line. The path is written in a code span of "Enforced rules (generated)", and a backtick in
-# it could close that span and leave the rest as prose in the signed text (ruling R67).
+# joined by " / ". A line break can come from a block scalar, and also from a plain or a quoted
+# scalar with an empty line in it, which YAML folds into one; the signer reads a path on one line.
+# The path is written in a code span of "Enforced rules (generated)", and a backtick in it could
+# close that span and leave the rest as prose in the signed text (ruling R67).
 _FOLDER_NAME = r"[^/\s`](?:[^/\r\n`]*[^/\s`])?"
 _FOLDER_PATH = re.compile(rf"{re.escape(DRIVE_ROOT)}(?: / {_FOLDER_NAME})*")
 # An address is `local@domain` or `@domain`, in lower case.
