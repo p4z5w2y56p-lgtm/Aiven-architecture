@@ -112,10 +112,14 @@ def test_every_field_of_the_field_table_is_in_the_policy():
     assert list(FIELDS["shadow"]) == ["min_runs"]
 
 
-def test_the_lists_of_a_policy_are_tuples():
-    assert isinstance(EXPECTED.tools, tuple)
-    assert isinstance(EXPECTED.forbidden, tuple)
-    assert isinstance(EXPECTED.scope.email_to, tuple)
+def test_the_lists_of_a_built_policy_are_tuples():
+    # On what build_policy makes: the expected policy above is made of tuples by hand.
+    policy, _ = build(FRONT)
+    assert type(policy.tools) is tuple
+    assert type(policy.forbidden) is tuple
+    assert type(policy.scope.email_to) is tuple
+    nothing, _ = build(front_without("scope"))
+    assert type(nothing.scope.email_to) is tuple
 
 
 def test_the_repr_of_a_policy_holds_no_text_of_the_file():
