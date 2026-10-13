@@ -9,6 +9,7 @@ import pytest
 from aiven.policy import constants
 from aiven.policy.fileformat import check_file, decode_text
 from aiven.policy.findings import Finding, load_messages, message
+from tests.support.characters import HIDDEN_CHARACTERS, VISIBLE_CHARACTERS
 from tests.support.policies import BASE_PATH, TEMPLATE_PATH, valid_base
 from tests.support.spec_tables import code_spans, line_starting_with, table_after
 
@@ -196,83 +197,15 @@ def test_the_size_limit_equals_the_spec():
 
 # --- E-HIDDEN-CHAR
 
-HIDDEN = {
-    "null": "\x00",
-    "tab": "\t",
-    "vertical tab": "\x0b",
-    "form feed": "\x0c",
-    "escape": "\x1b",
-    "delete": "\x7f",
-    "padding": "\x80",
-    "next line": "\x85",
-    "application program command": "\x9f",
-    "no-break space": "\u00a0",
-    "soft hyphen": "\u00ad",
-    "combining grapheme joiner": "\u034f",
-    "hangul choseong filler": "\u115f",
-    "hangul jungseong filler": "\u1160",
-    "mongolian vowel separator": "\u180e",
-    "en quad": "\u2000",
-    "em space": "\u2003",
-    "zero width space": "\u200b",
-    "zero width non-joiner": "\u200c",
-    "zero width joiner": "\u200d",
-    "left-to-right mark": "\u200e",
-    "right-to-left mark": "\u200f",
-    "line separator": "\u2028",
-    "paragraph separator": "\u2029",
-    "left-to-right embedding": "\u202a",
-    "right-to-left override": "\u202e",
-    "narrow no-break space": "\u202f",
-    "word joiner": "\u2060",
-    "left-to-right isolate": "\u2066",
-    "pop directional isolate": "\u2069",
-    "ideographic space": "\u3000",
-    "hangul filler": "\u3164",
-    "variation selector 1": "\ufe00",
-    "variation selector 16": "\ufe0f",
-    "byte-order mark inside the file": "\ufeff",
-    "halfwidth hangul filler": "\uffa0",
-    "tag 0": "\U000e0000",
-    "language tag": "\U000e0001",
-    "tag letter A": "\U000e0041",
-    "cancel tag": "\U000e007f",
-    "variation selector 17": "\U000e0100",
-    "variation selector 256": "\U000e01ef",
-}
 
-VISIBLE = {
-    "space": " ",
-    "tilde": "~",
-    "euro sign": "\u20ac",
-    "e acute": "\u00e9",
-    "inverted exclamation mark": "\u00a1",
-    "en dash": "\u2013",
-    "ellipsis": "\u2026",
-    "emoji": "\U0001f600",
-    "han character": "\u4e2d",
-    "replacement character": "\ufffd",
-    "combining mark before the grapheme joiner": "\u034e",
-    "combining mark after the grapheme joiner": "\u0350",
-    "hangul letter before the fillers": "\u115e",
-    "hangul letter after the fillers": "\u1161",
-    "hangul letter before the filler": "\u3163",
-    "hangul letter after the filler": "\u3165",
-    "halfwidth hangul letter": "\uffa1",
-    "after variation selector 16": "\ufe10",
-    "unassigned after the tags": "\U000e0080",
-    "unassigned after the variation selectors": "\U000e01f0",
-}
-
-
-@pytest.mark.parametrize("char", HIDDEN.values(), ids=HIDDEN)
+@pytest.mark.parametrize("char", HIDDEN_CHARACTERS.values(), ids=HIDDEN_CHARACTERS)
 def test_a_hidden_character_is_reported_with_line_column_and_code_point(char):
     (finding,) = check(f"a{char}b\n")
     assert (finding.code, finding.line, finding.column) == ("E-HIDDEN-CHAR", 1, 2)
     assert finding.params == {"codepoint": f"U+{ord(char):04X}", "col": "2"}
 
 
-@pytest.mark.parametrize("char", VISIBLE.values(), ids=VISIBLE)
+@pytest.mark.parametrize("char", VISIBLE_CHARACTERS.values(), ids=VISIBLE_CHARACTERS)
 def test_a_visible_character_is_not_hidden(char):
     assert check(f"a{char}b\n") == []
 

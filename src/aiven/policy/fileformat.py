@@ -7,10 +7,10 @@ front matter, so it is checked together with the front matter and not here.
 
 import codecs
 import re
-import unicodedata
 from pathlib import Path
 
-from aiven.policy.constants import HIDDEN_CATEGORIES, HIDDEN_RANGES, MAX_FILE_BYTES
+from aiven.policy.chars import is_hidden
+from aiven.policy.constants import MAX_FILE_BYTES
 from aiven.policy.findings import Finding
 
 # Whole words only and case-sensitive, so a random Drive ID that happens to hold "TBD" is no hit.
@@ -64,9 +64,13 @@ def check_file(path: Path, data: bytes, text: str | None = None) -> list[Finding
 
     for number, line in enumerate(text.split("\n"), start=1):
         for found in _NOT_PRINTABLE_ASCII.finditer(line):
-            if _is_hidden(found.group()):
+            char = found.group()
+            # A CR is hidden by the definition, but E-LINE-ENDINGS owns it: one defect, one code.
+            # A byte-order mark at the start never gets here: `decode_text` drops it, and
+            # E-ENCODING reports it.
+            if char != "\r" and is_hidden(char):
                 column = found.start() + 1
-                params = {"codepoint": f"U+{ord(found.group()):04X}", "col": str(column)}
+                params = {"codepoint": f"U+{ord(char):04X}", "col": str(column)}
                 findings.append(Finding("E-HIDDEN-CHAR", "error", where, number, column, params))
         for found in _PLACEHOLDER.finditer(line):
             params = {"token": found.group()}
@@ -89,18 +93,3 @@ def _encoding_line(data: bytes) -> int | None:
 
 def _line_at(text: str, index: int) -> int:
     return text.count("\n", 0, index) + 1
-
-
-def _is_hidden(char: str) -> bool:
-    """Whether `char` can hide text from the signer (the categories and ranges in constants).
-
-    LF is the line separator, CR belongs to E-LINE-ENDINGS (one defect, one code), and the normal
-    space is plainly visible. A byte-order mark at the start never gets here: `decode_text` drops
-    it, and E-ENCODING reports it.
-    """
-    if char in "\n\r ":
-        return False
-    if unicodedata.category(char) in HIDDEN_CATEGORIES:
-        return True
-    code = ord(char)
-    return any(low <= code <= high for low, high in HIDDEN_RANGES)

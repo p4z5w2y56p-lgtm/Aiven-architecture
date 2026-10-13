@@ -168,7 +168,9 @@ def test_content_findings_never_contain_value(code, kind, label, value):
         assert squeezed not in text
 
 
-# A value glued to a placeholder word: the placeholder's own text would carry it into a finding.
+# A value joined to a placeholder word: the placeholder's own text would carry it into a finding.
+# `scan` sees the value only where no letter or digit stands in front of it, which is after the
+# underscore of `REPLACE_ME_`. The guard hides it whichever way it is glued.
 GLUED_VALUES = {
     "BSN": ("E-ID-NUMBER", gen.valid_bsn()),
     "IBAN": ("E-BANK-DETAILS", gen.valid_iban()),
@@ -176,13 +178,24 @@ GLUED_VALUES = {
     "AWS access key": ("E-SECRET", gen.secret_values()["AWS access key"][0]),
     "GitHub token": ("E-SECRET", gen.secret_values()["GitHub token"][0]),
 }
+GLUE = {  # the text in front of the value, and whether the content check must report it too
+    "REPLACE_ME_": True,
+    "REPLACE_ME": False,
+    "REPLACE_ME_X": False,
+}
 
 
+@pytest.mark.parametrize(("glue", "must_be_reported"), GLUE.items(), ids=GLUE)
 @pytest.mark.parametrize(("code", "value"), GLUED_VALUES.values(), ids=GLUED_VALUES)
-def test_a_placeholder_glued_to_a_value_does_not_echo_it(code, value):
-    new = new_findings(insert_after(WHY_DRAFT, f" REPLACE_ME_{value}")(BASE))
-    # Both are reported, on the same line, and neither output contains the value.
-    assert sorted(f.code for f in new) == sorted(["E-PLACEHOLDER", code])
+def test_a_placeholder_glued_to_a_value_does_not_echo_it(glue, must_be_reported, code, value):
+    new = new_findings(insert_after(WHY_DRAFT, f" {glue}{value}")(BASE))
+    # The placeholder is always reported, and the value where `scan` can see it. Other findings
+    # on the line are allowed: `ME`, two digits and the words behind a number can read as an IBAN
+    # by chance (about once in 97 candidates), and this test is not about that. Neither output
+    # holds the value. That `scan` misses a value glued to a letter is tested in test_content.
+    codes = {f.code for f in new}
+    assert "E-PLACEHOLDER" in codes
+    assert code in codes or not must_be_reported
     assert {f.line for f in new} == {WHY_LINE}
     for finding in new:
         shown = [

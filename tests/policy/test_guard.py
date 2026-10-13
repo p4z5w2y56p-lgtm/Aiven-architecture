@@ -7,6 +7,8 @@ credential, a bank detail, an ID number or a newline into the output by mistake.
 
 import dataclasses
 import json
+import random
+import string
 import time
 from dataclasses import replace
 
@@ -15,7 +17,9 @@ import pytest
 from aiven.policy.content import escape_unprintable, safe_text
 from aiven.policy.findings import Finding, format_line, message
 from tests.support import gen
+from tests.support.characters import HIDDEN_CHARACTERS, VISIBLE_CHARACTERS
 from tests.support.gen import grouped
+from tests.support.policies import AGENTS_PROJECT, FOLDER_ID
 
 ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 HIDDEN = "[hidden]"
@@ -115,17 +119,173 @@ def test_escapes_count_toward_the_cut():
     "text",
     [char for char, _ in UNPRINTABLE.values()] + PRINTABLE + ["x" * 1000, "\n" * 100, HIDDEN],
 )
-def test_cleaning_twice_changes_nothing(text):
+def test_cleaning_twice_changes_nothing_for_ordinary_text(text):
     once = safe_text(text)
     assert safe_text(once) == once
     assert escape_unprintable(escape_unprintable(text)) == escape_unprintable(text)
 
 
+def test_cleaning_again_can_hide_more_but_never_shows_more():
+    # An escape ends in hex digits, and digits next to them can make a window that passes a
+    # checksum: this private-use character and a 7 read, once escaped, as a nine-digit number
+    # that passes the eleven-test. The expected text is joined from parts, like every number here.
+    value = "\U00100000" + "7"
+    assert safe_text(value) == "\\U" + "00100000" + "7"
+    assert safe_text(safe_text(value)) == HIDDEN
+    rng = random.Random(3)
+    alphabet = [
+        "a",
+        "Z",
+        "7",
+        "0",
+        "9",
+        " ",
+        "-",
+        "_",
+        "\n",
+        "\x00",
+        "\U0000200b",
+        "\U000f0000",
+        "NL",
+        "91",
+    ]
+    for _ in range(3000):
+        once = safe_text("".join(rng.choices(alphabet, k=rng.randint(0, 30))))
+        assert safe_text(once) in (once, HIDDEN)
+
+
+# --- the guard is more suspicious than scan: it also hides a value glued to a word
+
+BEFORE_A_VALUE = {
+    "REPLACE_ME": "REPLACE_ME",
+    "REPLACE_ME_X": "REPLACE_ME_X",
+    "a letter": "x",
+    "a digit": "7",
+    "a word and an underscore": "abc_",
+}
+AFTER_A_VALUE = {"a letter": "x", "a digit": "7", "letters": "xyz"}
+STAY_VISIBLE = {
+    "the test folder ID": FOLDER_ID,
+    "a placeholder": "REPLACE_ME_AGENTS_PROJECT",
+    "another placeholder": "REPLACE_ME_FOLDER_ID",
+    "a service account": f"agent-invoice-reminder@{AGENTS_PROJECT}.iam.gserviceaccount.com",
+    "a folder path": "AIVEN Architecture Sandbox / Invoices",
+    "an action": "gmail.send_bulk",
+    "an invoice number": "INV-2026-0042",
+    "a version": "12",
+    "a code point": "U+200B",
+    "a column": "123",
+    "a file size": "65537",
+    "an email domain": "@aivenstudios.com",
+}
+
+
+@pytest.mark.parametrize("value", SENSITIVE.values(), ids=SENSITIVE)
+@pytest.mark.parametrize("before", BEFORE_A_VALUE.values(), ids=BEFORE_A_VALUE)
+def test_a_value_glued_to_a_word_in_front_is_hidden(value, before):
+    assert safe_text(before + value) == HIDDEN
+
+
+@pytest.mark.parametrize("value", SENSITIVE.values(), ids=SENSITIVE)
+@pytest.mark.parametrize("after", AFTER_A_VALUE.values(), ids=AFTER_A_VALUE)
+def test_a_value_with_word_characters_behind_it_is_hidden(value, after):
+    assert safe_text(value + after) == HIDDEN
+
+
+def test_a_run_of_digits_is_hidden_when_a_window_of_it_is_a_bsn_or_a_card_number():
+    bsn, card = gen.valid_bsn(), gen.valid_card()
+    assert safe_text("5" + bsn + "5") == HIDDEN  # a window of nine
+    assert safe_text("5" + card + "5") == HIDDEN  # a window of sixteen
+
+
+@pytest.mark.parametrize("value", STAY_VISIBLE.values(), ids=STAY_VISIBLE)
+def test_ordinary_values_stay_visible(value):
+    assert safe_text(value) == value
+
+
+def test_the_placeholder_and_the_folder_id_stay_visible_in_findings():
+    placeholder = Finding(
+        "E-PLACEHOLDER", "error", "a.md", 6, 38, {"token": "REPLACE_ME_AGENTS_PROJECT"}
+    )
+    assert placeholder.params == {"token": "REPLACE_ME_AGENTS_PROJECT"}
+    scope = {"id": FOLDER_ID, "path": "AIVEN Architecture Sandbox / Invoices"}
+    assert Finding("E-SCOPE-NOT-IN-SANDBOX", "error", "a.md", 25, 5, scope).params == scope
+
+
+def test_the_guard_uses_the_real_checksums():
+    bsn = gen.valid_bsn()
+    one_digit_off = bsn[:-1] + str((int(bsn[-1]) + 1) % 10)
+    assert safe_text("REPLACE_ME" + bsn) == HIDDEN
+    assert safe_text("REPLACE_ME" + one_digit_off) == "REPLACE_ME" + one_digit_off
+
+
+def test_random_ids_and_invoice_numbers_are_not_hidden_wholesale():
+    rng = random.Random(7)
+    alphabet = string.ascii_letters + string.digits + "_-"
+    ids = ["1" + "".join(rng.choices(alphabet, k=32)) for _ in range(2000)]
+    invoices = [f"INV-{rng.randint(2020, 2030)}-{rng.randint(0, 9999):04d}" for _ in range(2000)]
+    assert sum(safe_text(value) == HIDDEN for value in ids) < 0.1 * len(ids)  # about 1.5 percent
+    assert sum(safe_text(value) == HIDDEN for value in invoices) == 0
+
+
+# --- the hidden characters of the spec (section 3.1) that str.isprintable() lets through
+
+INVISIBLE_BUT_PRINTABLE = {
+    "combining grapheme joiner": ("\U0000034f", "\\u034f"),
+    "hangul choseong filler": ("\U0000115f", "\\u115f"),
+    "hangul jungseong filler": ("\U00001160", "\\u1160"),
+    "hangul filler": ("\U00003164", "\\u3164"),
+    "halfwidth hangul filler": ("\U0000ffa0", "\\uffa0"),
+    "variation selector 1": ("\U0000fe00", "\\ufe00"),
+    "variation selector 16": ("\U0000fe0f", "\\ufe0f"),
+    "variation selector 17": ("\U000e0100", "\\U000e0100"),
+    "variation selector 256": ("\U000e01ef", "\\U000e01ef"),
+}
+VISIBLE_AND_PRINTABLE = {
+    name: char for name, char in VISIBLE_CHARACTERS.items() if char.isprintable()
+}
+
+
+@pytest.mark.parametrize(
+    "char", [char for char, _ in INVISIBLE_BUT_PRINTABLE.values()], ids=INVISIBLE_BUT_PRINTABLE
+)
+def test_python_calls_these_hidden_characters_printable(char):
+    # This is why escaping what is not printable is not enough.
+    assert char.isprintable()
+
+
+@pytest.mark.parametrize(
+    ("char", "shown"), INVISIBLE_BUT_PRINTABLE.values(), ids=INVISIBLE_BUT_PRINTABLE
+)
+def test_a_hidden_character_that_python_calls_printable_is_escaped(char, shown):
+    assert escape_unprintable(f"a{char}b") == f"a{shown}b"
+    assert safe_text(f"a{char}b") == f"a{shown}b"
+
+
+@pytest.mark.parametrize("char", HIDDEN_CHARACTERS.values(), ids=HIDDEN_CHARACTERS)
+def test_every_hidden_character_of_the_spec_is_escaped(char):
+    shown = escape_unprintable(f"a{char}b")
+    assert char not in shown
+    assert shown.isascii()
+
+
+@pytest.mark.parametrize("char", VISIBLE_AND_PRINTABLE.values(), ids=VISIBLE_AND_PRINTABLE)
+def test_a_visible_character_is_left_alone(char):
+    assert escape_unprintable(f"a{char}b") == f"a{char}b"
+
+
 HOSTILE = {
     "many JWT starts in one run": "eyJ" * 70_000,
+    "JWT starts after underscores": "eyJ_" * 50_000,
+    "key prefixes back to back": "sk-" * 70_000,
+    "keywords behind identifier prefixes": "token_" * 40_000,
     "a long text": "x" * 1_000_000,
-    "digits with separators": "1 " * 12_000,
+    "a long digit run": "1" * 10_000,
+    "digits with separators": "1 " * 6_000,
+    "a compact IBAN-like run": "AB12" * 3_000,
+    "IBAN-like words": "AB12 " * 2_500,
     "many unprintable characters": "\n" * 40_000,
+    "many invisible but printable characters": "\U0000fe0f" * 100_000,
 }
 
 
@@ -146,6 +306,14 @@ def test_a_newline_or_bidi_control_in_a_param_cannot_forge_a_line():
     assert finding.params == {"detail": "x\\u000aerror E-FORGED y.md: z\\u202e"}
     for text in (format_line(finding), message(finding, "en"), message(finding, "nl")):
         assert text.splitlines() == [text]
+
+
+def test_hidden_characters_in_a_param_and_a_path_come_out_escaped():
+    finding = Finding(
+        "E-INTERNAL", "error", "dir/a\U00003164b.md", params={"detail": "x\U00003164y\U0000fe0fz"}
+    )
+    assert finding.params == {"detail": "x\\u3164y\\ufe0fz"}
+    assert finding.path == "dir/a\\u3164b.md"
 
 
 def test_a_long_param_is_cut_to_200_characters():

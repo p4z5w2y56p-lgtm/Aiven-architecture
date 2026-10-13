@@ -112,10 +112,10 @@ LIST_SIZES: dict[str, tuple[int, int]] = {
 MAX_FILE_BYTES = 64 * 1024
 
 # Hidden characters (validator-spec 3.1, E-HIDDEN-CHAR): every character in these Unicode
-# categories, and in these code point ranges (inclusive, in the order of the spec). The check
-# itself leaves out LF, CR and the normal space. The ranges are needed because those characters
-# are not in the categories: the tag characters are mostly unassigned, and the others are
-# marks and letters that draw nothing.
+# categories, and in these code point ranges (inclusive, in the order of the spec), except LF and
+# the normal space (see `chars.is_hidden`). The ranges are needed because those characters are
+# not in the categories: the tag characters are mostly unassigned, and the others are marks and
+# letters that draw nothing.
 HIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp", "Zs"})
 HIDDEN_RANGES = (
     (0xE0000, 0xE007F),  # tag characters

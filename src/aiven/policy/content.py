@@ -12,6 +12,8 @@ gateway scans text that an agent may have been tricked into writing.
 
 `safe_text` and `escape_unprintable` are the single place where text from a file may enter a
 message. `Finding` runs every param and its path through them, so no check has to remember to.
+`safe_text` is more suspicious than `scan`: it also hides a value in which a kind matches with no
+word boundary at all, because hiding a value costs nothing and showing one costs a leak.
 """
 
 import re
@@ -19,6 +21,9 @@ import string
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import NamedTuple
+
+from aiven.policy.chars import is_hidden
 
 # A match as (start, end) in the line, end exclusive.
 Span = tuple[int, int]
@@ -80,6 +85,11 @@ def _is_bsn(digits: str) -> bool:
 
 # --- bank details and ID numbers: finding the candidates
 
+# A token, an IBAN, a card number or a BSN starts where no letter or digit stands in front of it.
+# Without this, any word that ends in a prefix is a token: `risk-adjusted-return-calculation`
+# holds an `sk-` key.
+_LEFT = r"(?<![A-Za-z0-9])"
+
 
 def _first_valid_end(
     line: str,
@@ -88,12 +98,15 @@ def _first_valid_end(
     separators: str,
     lengths: range,
     is_valid: Callable[[str], bool],
+    *,
+    needs_end_boundary: bool,
 ) -> int | None:
     """Where the shortest valid candidate that starts at `begin` ends, or None.
 
     A candidate is made of `body` characters, with a single separator allowed between two of
-    them. It has a number of body characters in `lengths`, and no letter or digit follows it. The
-    walk covers at most `lengths[-1]` characters and their separators, so it takes constant time.
+    them. It has a number of body characters in `lengths`, and no letter or digit follows it,
+    unless `needs_end_boundary` is false. The walk covers at most `lengths[-1]` characters and
+    their separators, so it takes constant time.
     """
     kept: list[str] = []
     position, size = begin, len(line)
@@ -103,7 +116,11 @@ def _first_valid_end(
             kept.append(char)
             position += 1
             followed_by_alnum = position < size and line[position] in _ALNUM
-            if len(kept) in lengths and not followed_by_alnum and is_valid("".join(kept)):
+            if (
+                len(kept) in lengths
+                and not (needs_end_boundary and followed_by_alnum)
+                and is_valid("".join(kept))
+            ):
                 return position
             if len(kept) >= lengths[-1]:
                 return None
@@ -114,30 +131,53 @@ def _first_valid_end(
     return None
 
 
-def _grouped_finder(
-    start: str,
-    body: frozenset[str],
-    separators: str,
-    lengths: range,
-    is_valid: Callable[[str], bool],
-) -> Finder:
+class _Grouped(NamedTuple):
+    """What it takes to find a value that may be written in groups: an IBAN, or a card number."""
+
+    start: str  # a pattern for the first characters of a candidate
+    body: frozenset[str]  # the characters a candidate is made of
+    separators: str  # what may stand once between two of them
+    lengths: range  # how many of them a candidate has
+    is_valid: Callable[[str], bool]
+
+
+# An IBAN starts with two letters and two digits, and has 15 to 34 letters and digits, with
+# single spaces allowed between them.
+_IBAN = _Grouped(r"[A-Za-z]{2}[0-9]{2}", _ALNUM, " ", range(15, 35), _is_iban)
+# A card number has 13 to 19 digits, with single spaces or dashes allowed between them.
+_CARD_NUMBER = _Grouped(r"[0-9]", _DIGITS, " -", range(13, 20), _is_card_number)
+
+
+def _grouped_finder(kind: _Grouped, *, anywhere: bool = False) -> Finder:
     """A finder for values that may be written in groups: an IBAN, or a card number.
 
-    `start` matches where a candidate may begin. A hit that starts inside an earlier hit overlaps
-    it, and `_hits_in_line` drops it.
+    A candidate starts where no letter or digit stands in front of it, and no letter or digit
+    follows its end. With `anywhere` it needs neither: it may start and end inside a word. That is
+    for the guard (see `safe_text`). A hit that starts inside an earlier hit overlaps it, and
+    `_hits_in_line` drops it.
     """
-    start_pattern = re.compile(start)
+    start_pattern = re.compile(f"(?={kind.start})" if anywhere else _LEFT + kind.start)
 
     def find(line: str) -> Iterator[Span]:
         for match in start_pattern.finditer(line):
-            end = _first_valid_end(line, match.start(), body, separators, lengths, is_valid)
+            end = _first_valid_end(
+                line,
+                match.start(),
+                kind.body,
+                kind.separators,
+                kind.lengths,
+                kind.is_valid,
+                needs_end_boundary=not anywhere,
+            )
             if end is not None:
                 yield match.start(), end
 
     return find
 
 
-_BSN = re.compile(r"(?<![A-Za-z0-9])[0-9]{9}(?![A-Za-z0-9])")
+_BSN_DIGITS = r"[0-9]{9}"
+_BSN = re.compile(_LEFT + _BSN_DIGITS + r"(?![A-Za-z0-9])")
+_BSN_ANYWHERE = re.compile(f"(?=({_BSN_DIGITS}))")  # a window of nine, in a longer run too
 
 
 def _bsn_finder(line: str) -> Iterator[Span]:
@@ -146,68 +186,59 @@ def _bsn_finder(line: str) -> Iterator[Span]:
             yield found.span()
 
 
+def _bsn_finder_anywhere(line: str) -> Iterator[Span]:
+    """Nine digits that pass the eleven-test, wherever they stand: for the guard."""
+    for found in _BSN_ANYWHERE.finditer(line):
+        if _is_bsn(found.group(1)):
+            yield found.span(1)
+
+
 # --- the kinds, most specific first
 
-# A token starts where no letter or digit stands in front of it. Without this, any word that
-# ends in the prefix is a token: `risk-adjusted-return-calculation` holds an `sk-` key.
-_LEFT = r"(?<![A-Za-z0-9])"
+# The bodies of the token patterns. `scan` puts `_LEFT` in front of most of them; the guard
+# (see `safe_text`) uses them as they are, so a token in the middle of a word is found too.
 
-# The password pattern: a keyword that does not directly follow a letter or digit (so not
-# mytoken), but may follow an identifier prefix that ends in `_`, `-` or `.` (db_password,
-# x-api-key, aws.secret). Then an optional closing quote, `:` or `=` (so not max_tokens), an
-# optional opening quote and a value of at least four characters.
-_PASSWORD = (
-    _LEFT
-    + r"(?:password|secret|token|api_key|api-key|apikey|client_secret|client-secret)"
-    + r"""["']? *[:=] *["']?[^\s"']{4,}"""
+# The PGP armor header ends in `KEY BLOCK` instead of `KEY`.
+_PRIVATE_KEY = r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----"
+_SERVICE_ACCOUNT_KEY = r'"private_key"'
+_GOOGLE_API_KEY = r"AIza[0-9A-Za-z_-]{35}"
+_OAUTH_TOKEN = r"(?:ya29\.[0-9A-Za-z_-]{20,}|1//0[0-9A-Za-z_-]{20,})"
+_GITHUB_TOKEN = r"(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})"
+_SLACK_TOKEN = r"xox[abposr]-[A-Za-z0-9-]{10,}"
+_ANTHROPIC_API_KEY = r"sk-ant-[A-Za-z0-9_-]{20,}"
+_OPENAI_API_KEY = r"sk-[A-Za-z0-9_-]{20,}"
+_AWS_ACCESS_KEY = r"(?:AKIA|ASIA)[0-9A-Z]{16}"
+# The first segment of a JWT is short, so it is capped. Without the cap, `eyJ_` repeated inside
+# one long run is retried from every `eyJ`, each time to the end of the run, and the scan
+# takes quadratic time.
+_JWT = r"eyJ[A-Za-z0-9_-]{5,300}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*"
+
+# The password pattern: a keyword, then an optional closing quote, `:` or `=` (so not
+# max_tokens), an optional opening quote and a value of at least four characters. `scan` asks
+# that the keyword does not directly follow a letter or digit (so not mytoken), but it may follow
+# an identifier prefix that ends in `_`, `-` or `.` (db_password, x-api-key, aws.secret).
+_ASSIGNMENT = (
+    r"(?:password|secret|token|api_key|api-key|apikey|client_secret|client-secret)"
+    r"""["']? *[:=] *["']?[^\s"']{4,}"""
 )
 
 # Each kind with the finding code it gets. When two hits overlap on a line, the kind that comes
 # first in this list wins, so a known token keeps its own name even after `token:`, and an
 # Anthropic key is not also an OpenAI key.
 _KINDS: tuple[tuple[str, str, Finder], ...] = (
-    # The PGP armor header ends in `KEY BLOCK` instead of `KEY`.
-    ("private key", "E-SECRET", _regex(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----")),
-    ("service account key", "E-SECRET", _regex(r'"private_key"')),
-    ("Google API key", "E-SECRET", _regex(_LEFT + r"AIza[0-9A-Za-z_-]{35}")),
-    (
-        "OAuth token",
-        "E-SECRET",
-        _regex(_LEFT + r"(?:ya29\.[0-9A-Za-z_-]{20,}|1//0[0-9A-Za-z_-]{20,})"),
-    ),
-    (
-        "GitHub token",
-        "E-SECRET",
-        _regex(_LEFT + r"(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})"),
-    ),
-    ("Slack token", "E-SECRET", _regex(_LEFT + r"xox[abposr]-[A-Za-z0-9-]{10,}")),
-    ("Anthropic API key", "E-SECRET", _regex(_LEFT + r"sk-ant-[A-Za-z0-9_-]{20,}")),
-    ("OpenAI API key", "E-SECRET", _regex(_LEFT + r"sk-[A-Za-z0-9_-]{20,}")),
-    ("AWS access key", "E-SECRET", _regex(_LEFT + r"(?:AKIA|ASIA)[0-9A-Z]{16}")),
-    # The first segment of a JWT is short, so it is capped. Without the cap, `eyJ_` repeated inside
-    # one long run is retried from every `eyJ`, each time to the end of the run, and the scan
-    # takes quadratic time.
-    (
-        "JWT",
-        "E-SECRET",
-        _regex(_LEFT + r"eyJ[A-Za-z0-9_-]{5,300}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*"),
-    ),
-    ("password or secret value", "E-SECRET", _regex(_PASSWORD, re.IGNORECASE)),
-    # An IBAN starts at the start of a word with two letters and two digits, and has 15 to 34
-    # letters and digits, with single spaces allowed between them.
-    (
-        "IBAN",
-        "E-BANK-DETAILS",
-        _grouped_finder(
-            r"(?<![A-Za-z0-9])[A-Za-z]{2}[0-9]{2}", _ALNUM, " ", range(15, 35), _is_iban
-        ),
-    ),
-    # A card number has 13 to 19 digits, with single spaces or dashes allowed between them.
-    (
-        "card number",
-        "E-BANK-DETAILS",
-        _grouped_finder(r"(?<![A-Za-z0-9])[0-9]", _DIGITS, " -", range(13, 20), _is_card_number),
-    ),
+    ("private key", "E-SECRET", _regex(_PRIVATE_KEY)),
+    ("service account key", "E-SECRET", _regex(_SERVICE_ACCOUNT_KEY)),
+    ("Google API key", "E-SECRET", _regex(_LEFT + _GOOGLE_API_KEY)),
+    ("OAuth token", "E-SECRET", _regex(_LEFT + _OAUTH_TOKEN)),
+    ("GitHub token", "E-SECRET", _regex(_LEFT + _GITHUB_TOKEN)),
+    ("Slack token", "E-SECRET", _regex(_LEFT + _SLACK_TOKEN)),
+    ("Anthropic API key", "E-SECRET", _regex(_LEFT + _ANTHROPIC_API_KEY)),
+    ("OpenAI API key", "E-SECRET", _regex(_LEFT + _OPENAI_API_KEY)),
+    ("AWS access key", "E-SECRET", _regex(_LEFT + _AWS_ACCESS_KEY)),
+    ("JWT", "E-SECRET", _regex(_LEFT + _JWT)),
+    ("password or secret value", "E-SECRET", _regex(_LEFT + _ASSIGNMENT, re.IGNORECASE)),
+    ("IBAN", "E-BANK-DETAILS", _grouped_finder(_IBAN)),
+    ("card number", "E-BANK-DETAILS", _grouped_finder(_CARD_NUMBER)),
     ("BSN", "E-ID-NUMBER", _bsn_finder),
 )
 
@@ -254,30 +285,86 @@ def _escape(char: str) -> str:
     return "\\U" + format(code, "08x")
 
 
-def escape_unprintable(text: str) -> str:
-    """`text` with every character that is not printable written out as an escape.
+def _must_be_escaped(char: str) -> bool:
+    return not char.isprintable() or is_hidden(char)
 
-    The escape is a backslash and `u` with four hex digits, or a backslash and `U` with eight
-    above U+FFFF. So a newline, a bidi control or a terminal escape in text from a file cannot
-    start another line of output, reorder it or hide anything from the reader.
+
+def escape_unprintable(text: str) -> str:
+    """`text` with every character that must not be shown as it is written out as an escape.
+
+    That is each character that is not printable, and each one in the hidden set of the spec
+    (section 3.1), which Python counts as printable in part: the fillers, the variation selectors
+    and the like. The escape is a backslash and `u` with four hex digits, or a backslash and `U`
+    with eight above U+FFFF. So a newline, a bidi control, a terminal escape or an invisible
+    letter in text from a file cannot start another line of output, reorder it or hide anything
+    from the reader.
     """
-    if text.isprintable():
-        return text
-    return "".join(char if char.isprintable() else _escape(char) for char in text)
+    if text.isascii() and text.isprintable():
+        return text  # printable ASCII holds no hidden character
+    return "".join(_escape(char) if _must_be_escaped(char) else char for char in text)
+
+
+# What the guard looks for. `scan` asks for a word boundary in front of a token, an IBAN, a card
+# number or a BSN, and behind the last three. That keeps the content check quiet on prose and on
+# base64, but it also lets a credential glued to the word in front of it go by: `REPLACE_ME` and
+# a key, written without an underscore, are one word. The guard asks again with no boundary at
+# all. It uses the same patterns and the same checksums, so a random identifier is not hidden
+# just for looking like one.
+_ANYWHERE: tuple[Finder, ...] = (
+    _regex(
+        "|".join(
+            (
+                _PRIVATE_KEY,
+                _SERVICE_ACCOUNT_KEY,
+                _GOOGLE_API_KEY,
+                _OAUTH_TOKEN,
+                _GITHUB_TOKEN,
+                _SLACK_TOKEN,
+                _ANTHROPIC_API_KEY,
+                _OPENAI_API_KEY,
+                _AWS_ACCESS_KEY,
+                _JWT,
+            )
+        )
+    ),
+    _regex(_ASSIGNMENT, re.IGNORECASE),
+    _bsn_finder_anywhere,
+    _grouped_finder(_IBAN, anywhere=True),
+    _grouped_finder(_CARD_NUMBER, anywhere=True),
+)
+
+
+def _holds_sensitive_text(value: str) -> bool:
+    """Whether any kind of `scan` matches anywhere in `value`, with no boundary conditions.
+
+    A token or the JWT may start or end inside a word, and the keyword of a password assignment may
+    follow any character. An IBAN may start wherever two letters and two digits do, and end after
+    any of 15 to 34 letters and digits. A card number is any 13 to 19 digits of a run, with the
+    same single separators; a BSN is any nine digits of a run. The checksums are those of `scan`.
+
+    The time is in proportion to the length of `value`: a candidate is at most 34 characters long,
+    plus its separators, and the first segment of a JWT is capped. Every line of `value` is
+    searched at once, which makes no difference: no pattern matches across a newline.
+    """
+    return any(next(find(value), None) is not None for find in _ANYWHERE)
 
 
 def safe_text(value: str) -> str:
     """`value`, text from a file, as a finding may show it.
 
-    A value in which `scan` finds anything is replaced by `[hidden]`, whatever else it holds, so a
-    finding never repeats a credential, a bank detail or an ID number that the scan recognises.
+    A value that holds a credential, a bank detail or an ID number is replaced by `[hidden]`,
+    whatever else it holds, so a finding never repeats one. A value holds one when `scan` finds
+    anything in it, and also when any kind matches with no word boundary at all (see
+    `_holds_sensitive_text`): a credential glued to the letters or digits in front of it or behind
+    it is hidden too, and so is a run of digits in which a window passes a checksum. That hides a
+    few harmless values as well, a long hex digest or number most often; hiding costs nothing.
     Anything else is escaped with `escape_unprintable` and cut to 200 characters, ending in an
     ellipsis.
 
-    The guard sees what `scan` sees. A credential glued onto the letters or digits in front of it,
-    or disguised in some other way (spec section 8), is not recognised and would be shown.
+    A value that is split up, spelled out or otherwise disguised (spec section 8) is not
+    recognised and would be shown.
     """
-    if scan(value):
+    if scan(value) or _holds_sensitive_text(value):
         return _HIDDEN
     shown = escape_unprintable(value)
     if len(shown) > _SHOWN:
