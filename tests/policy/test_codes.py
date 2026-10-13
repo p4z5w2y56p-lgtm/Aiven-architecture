@@ -36,6 +36,7 @@ from aiven.policy.validate import validate_file
 from tests.support import REPO_ROOT, gen
 from tests.support.gen import grouped
 from tests.support.policies import BASE_PATH, TEMPLATE_PATH, line_of, valid_base
+from tests.support.spec_tables import code_spans, table_after
 
 CFG = load_platform_config(REPO_ROOT / "config" / "platform.example.yaml")
 CATALOG = load_catalog(REPO_ROOT / "catalog" / "catalog-v1.yaml")
@@ -480,12 +481,28 @@ def test_e_filename_needs_a_usable_agent(mutation):
     assert "E-FILENAME" not in {f.code for f in findings}
 
 
-def test_the_template_is_reported_under_its_own_name():
+def test_the_template_gives_the_findings_of_spec_section_9_that_exist_so_far():
+    # The rows of the self-test for the checks that are built: the file name and the placeholders.
+    # The W-TOOL-NOT-LIVE rows come with the tool checks, and then this list grows.
+    _, *rows = table_after("9. Template self-test")
+    so_far = [row for row in rows if row[1] in ("E-FILENAME", "E-PLACEHOLDER")]
     findings = validate_file(
         Path("templates/policy-template.md"), TEMPLATE_PATH.read_bytes(), CFG, CATALOG
     )
-    assert (findings[0].code, findings[0].line) == ("E-FILENAME", None)
+    assert [(f.code, f.line) for f in findings] == [
+        (code, None if line == "(file)" else int(line)) for _, code, line, _ in so_far
+    ]
+    assert [(f.code, f.line) for f in findings] == [
+        ("E-FILENAME", None),
+        ("E-PLACEHOLDER", 6),
+        ("E-PLACEHOLDER", 25),
+        ("E-PLACEHOLDER", 56),
+        ("E-PLACEHOLDER", 84),
+    ]
     assert findings[0].params == {"name": "policy-template.md", "agent": "invoice-reminder"}
+    assert [f.params["token"] for f in findings[1:]] == [
+        code_spans(about)[0] for _, _, _, about in so_far[1:]
+    ]
 
 
 # --- a file too large to read through (ruling R40)

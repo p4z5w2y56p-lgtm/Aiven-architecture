@@ -39,8 +39,8 @@ What `load` returns is a `FrontMatter`:
 - `placeholders`: the paths in `lines` whose value is written with a placeholder (`REPLACE_ME...`,
   `TODO`, `TBD`, `FIXME`). A field in it skips its other checks (section 3.1). It is judged on the
   value as it stands in the file, which is what E-PLACEHOLDER reads, and not on the value after
-  YAML has decoded it: otherwise a placeholder written with an escape would skip every check and
-  be reported by none.
+  YAML has decoded it: a placeholder that E-PLACEHOLDER does not see (it can be written so, with an
+  escape) must not make the field skip every check and be reported by none.
 - `findings`: E-FM-NON-ASCII, E-YAML, E-YAML-FEATURE, E-YAML-DUPLICATE-KEY, E-FIELD-MISSING,
   E-FIELD-UNKNOWN, E-FIELD-TYPE and E-LIST-DUPLICATE, in no particular order.
 
