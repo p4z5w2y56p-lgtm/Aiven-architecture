@@ -11,7 +11,7 @@ Status: Phase 1 (internal only). Milestone M1 is built: the policy validator `ai
 | `tests/` | The validator's tests, including the template self-test against spec section 9 |
 | `catalog/` | Action catalog v1 and the argument schema of each grantable Drive and Email action |
 | `config/platform.example.yaml` | Example platform values; the real `config/platform.yaml` (no credentials) comes with M2 |
-| `docs/decisions/m1-validator-rulings.md` | The decisions taken while building M1, where the spec was silent |
+| `docs/decisions/rulings.md` | The decisions taken while building each milestone, where the spec was silent |
 | `templates/policy-template.md` | Policy template, filled in for the example agent `invoice-reminder` |
 | `docs/validator-spec.md` | What the validator checks: action catalog v1, platform constants, error messages (EN + NL) |
 | `docs/gateway-design.md` | Projects, identities, endpoints, data model, class enforcement, kill switch, budgets, billing and credit, model layer |

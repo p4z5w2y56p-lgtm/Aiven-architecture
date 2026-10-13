@@ -1,6 +1,6 @@
-# M1 decisions: the policy validator
+# Decisions: rulings taken while building Phase 1
 
-These are the rulings taken while building the validator (milestone M1), where the spec was silent, the plan conflicted with the spec, or a review raised a choice. Each reads: what was decided — why — what it costs if wrong. The spec stays binding; the rulings that changed spec text are marked SPEC and are listed for sign-off in the M1 report.
+These are the rulings taken while building the milestones, where the spec was silent, the plan conflicted with the spec, or a review raised a choice. Each reads: what was decided — why — what it costs if wrong. The spec stays binding. Rulings that changed spec text are marked SPEC; Matthijs approved the M1 ones at the M1 review.
 
 ## Before Task 1.1 (pre-flight scan of the plan)
 
@@ -51,9 +51,9 @@ These are the rulings taken while building the validator (milestone M1), where t
 - **R37**: the placeholder skip and check_filename use the scalar's raw source slice (what E-PLACEHOLDER sees); invariant test: every path in lines but not in data has a finding on that line — closes the fail-open — cost if wrong: none.
 - **R38**: ruamel generator ValueError/OverflowError/AssertionError become E-YAML with a fixed detail; own exceptions propagate (E-INTERNAL in 1.8) — syntax errors must be E-YAML, and the verdict must not depend on python -O — cost if wrong: none.
 - **R39** (SPEC CHANGE, flag to Matthijs at the M1 review): a backslash escape in a double-quoted scalar is E-YAML-FEATURE "escape sequence"; validator-spec §3.2 row updated — the signer must read exactly what the gateway enforces; escapes allow look-alikes, RLO/zero-width characters, lone surrogates and disguised placeholders, the same "you read one value, the gateway uses another" risk as duplicate keys; no v1 value needs an escape — cost if wrong: a future non-ASCII value needs a spec change (it would anyway: E-FM-NON-ASCII).
-- **R40**: files above 1 MiB (16 × the limit) get only the once-per-file byte checks; nothing is decoded, scanned or parsed — bounded time and memory on hostile input (a big tab file made one Finding per character) — cost if wrong: an oversized file reports fewer problems, and it is invalid anyway.
+- **R40**: files above 1 MiB (16 × the limit) get only the once-per-file byte checks; nothing is decoded, scanned or parsed — bounded time and memory on hostile input (a big tab file made one Finding per character) — cost if wrong: an oversized file reports fewer problems, and it is invalid anyway. **Amended by R93: the scan window is 2 × the size limit.**
 - **R41**: M5 confirmed — "complex key" = a list or mapping in key position; an explicit "?" scalar key is accepted — cost if wrong: unusual but visible syntax passes.
-- **R42**: keep the 1 MiB cap (R40) — CI runners and the signer's machine absorb the worst case (about 49 s, 579 MiB, on a file that is invalid anyway); the gateway path is closed by R43 — cost if wrong: a slow CI run on a hostile file.
+- **R42**: keep the 1 MiB cap (R40) — CI runners and the signer's machine absorb the worst case (about 49 s, 579 MiB, on a file that is invalid anyway); the gateway path is closed by R43 — cost if wrong: a slow CI run on a hostile file. **Amended by R93.**
 - **R43** (for Task 1.7): verify() checks the byte cap and the signature BEFORE parsing; only a correctly signed file is validated (the signer validated it before signing). An unsigned or badly signed file gets E-SIG-MISSING/E-SIG-INVALID only — the gateway never parses untrusted bytes, so a hostile file in the control bucket cannot exhaust gateway memory — cost if wrong: a badly signed file's other problems are not listed in the gateway log (they are refused either way).
 - **R44**: accept the implementer's judgement calls (C1 invariant counts a finding on the field's line or an entry's line; narrow placeholder skip: first raw line, scalar starting on the key's line; a comment after a block scalar indicator counts as value; markless E-YAML at the last event's start) — all fail toward more findings — cost if wrong: an extra finding or one line off.
 
@@ -61,7 +61,7 @@ These are the rulings taken while building the validator (milestone M1), where t
 
 - **R45** (for Task 1.4): a value that fails E-RANGE skips that field's warnings (min_runs 0 → E-RANGE only, no W-SHADOW-LOW) — one defect, one code — cost if wrong: none.
 - **R46** (for Task 1.5): E-BODY-LINK covers link/image/autolink tokens plus any scheme:// or www. anywhere in the body, code spans and blocks included; E-BODY-HTML covers every html_block/html_inline token — the spec's reasons ("complete on its own", "text the reader cannot see") apply to code spans too — cost if wrong: a URL in backticks needs rewording.
-- **R47** (for Task 1.5): rewrite() replaces from the "## Enforced rules (generated)" heading (found via tokens) to EOF and ends with one LF; it appends both sections when the heading is missing; render raises ValueError for a tool outside the catalog — the generated sections are the last two by spec order — cost if wrong: one function's edge behaviour.
+- **R47** (for Task 1.5): rewrite() replaces from the "## Enforced rules (generated)" heading (found via tokens) to EOF and ends with one LF; it appends both sections when the heading is missing; render raises ValueError for a tool outside the catalog — the generated sections are the last two by spec order — cost if wrong: one function's edge behaviour. **Amended by R64 and R69: rewrite refuses rather than deletes.**
 - **R48** (for Task 1.5): E-BODY-SECTIONS also covers an extra level-1 heading and level-3+ headings outside the first three sections; E-BODY-EMPTY counts inline text (text, code_inline, softbreak as space) with whitespace collapsed; drift reports at the first differing line with diff_line = that line — the spec leaves these details open — cost if wrong: wording of one rule.
 - **R49**: when any tool entry failed its own checks, skip W-LIMIT-UNUSED, W-SCOPE-UNUSED and W-MAX-CLASS-SLACK — the tool list is not settled, so "unused"/"slack" is speculative and cascades from the tool error — cost if wrong: those warnings appear one round later.
 - **R50**: an exact forbidden entry inside a reserved namespace (payments.pay, agentbuilder.permissions) is accepted, not E-FORBIDDEN-UNKNOWN — it matches the reserved list, and the message "matches nothing in the catalog or the reserved list" would be false — cost if wrong: a redundant forbidden entry passes.
@@ -88,7 +88,7 @@ These are the rulings taken while building the validator (milestone M1), where t
 - **R68**: accept the implementer's readings (decoded scan never duplicates the raw scan; stricter rewrite refusals; nested ## never completes the section sequence) — all fail closed — cost if wrong: none.
 - **R69** (extends R64): rewrite also refuses when a top-level level-1 heading follows the Enforced heading — it would delete the author's text; such a file is already E-BODY-SECTIONS — cost if wrong: none.
 - **R70**: the decoded URL scan skips an inline token when any of its rows was reported by the raw scan — no double finding — cost if wrong: one finding per paragraph instead of per line.
-- **R71**: a fenced-code info string must be empty or one word [A-Za-z0-9_+.#-]+; anything else is E-BODY-HTML on the fence line — renderers hide the rest (R57 class) — cost if wrong: an author must drop extra info-string words.
+- **R71**: a fenced-code info string must be empty or one word [A-Za-z0-9_+.#-]+; anything else is E-BODY-HTML on the fence line — renderers hide the rest (R57 class) — cost if wrong: an author must drop extra info-string words. **Superseded at the M1 review: a code-fence label must match `^[a-z0-9+#-]{1,16}$` (Task 1.9, R96).**
 - **R72** (SPEC TEXT, flag to Matthijs at the M1 review): validator-spec §3.7 E-BODY-HTML row now also names text the reader cannot see (decoded hidden characters, cells past the header, dropped lines, words after a fence's language) — commit 973c8c1 by the controller; appendix A message unchanged (it already gives that reason) — cost if wrong: wording only.
 
 ## Task 1.6
@@ -118,10 +118,14 @@ These are the rulings taken while building the validator (milestone M1), where t
 - **R89**: file paths stay outside the content guard (escaped only) — they are the caller's own argument, not file content — cost if wrong: a credential-shaped file name prints (it is already in Git).
 - **R90**: the "--debug" note prints only for a crash caught by the CLI guard (where --debug shows a traceback), never for verify's own E-INTERNAL or when --debug is given — a hint must be true — cost if wrong: none. Accepted: fd 1 → null device after a failed write.
 
-## Milestone review
+## M1 milestone review
 
 - **R91**: replace check_set with check_duplicates(items) and check_history(path, policy, previous | None); the CLI calls history only where it is known; the HISTORY_CODES post-filter goes — M3's loader needs duplicates without history — cost if wrong: one API rename before any caller exists.
 - **R92**: the CI policies step requires config/platform.yaml (committed in M2; no credentials) and fails with a clear line instead of falling back to the example — a silent fallback fails every real policy with E-PRINCIPAL — cost if wrong: none.
 - **R93**: MAX_SCANNED_BYTES = 2 × MAX_FILE_BYTES (128 KiB) (amends R40/R42) — an oversize file can never be signed — cost if wrong: an oversize file lists fewer problems.
 - **R94**: load_catalog fails closed when the reserved list lacks any RESERVED_NAMESPACES entry — the catalog is the biggest single risk (spec §5) — cost if wrong: none.
 - **R95**: declined by the controller: E-FIELD-MISSING top-level line (cosmetic), "## Purpose ##" accepted (harmless), double CI trigger (push runs are needed: this branch has no PR), cli.py reads the whole .sig before the cap (local tool; M3 bounds its reads), E-YAML detail note.
+
+## After the M1 review
+
+- **R96**: "anything else = E-BODY-HTML" applies to a label that is present; a fence without a label (empty info string) stays allowed — it carries no hidden text, and unlabelled fences are common — cost if wrong: flagged to Matthijs at the M2 report; one-line change.

@@ -122,7 +122,7 @@ tests/{policy,gateway,control_ui,functions,agent,l3}/
 - [ ] **S4. Confirm the organisation node.** Confirm the Google Cloud organisation for aivenstudios.com exists (it comes with Workspace). Task 2.1 applies the org policies there.
 - [ ] **S5. Create the Sandbox.** Set up the Shared Drive as in drive-wrapper §1, with folders `Invoices`, `Test` and `Rollback test`. Record the drive ID and the folder IDs.
 - [ ] **S6. Create the signing key.** Run `ssh-keygen -t ed25519-sk -f ~/.ssh/aiven_policy_sk` on the hardware key, then write the one-line `allowed_signers` (validator-spec §2).
-- [ ] **S7. Pick the model for Phase 1 agents.** Gemini is the default. Claude on Vertex AI is also available, since the account is paid. In Vertex AI Model Garden, check that the chosen model is available for `aiven-agents`, and record its ID and region for `agents/*/runtime.yaml`.
+- [x] **S7. Pick the model for Phase 1 agents.** Decided at the M1 review: **Gemini on Vertex AI**, which stays on the Google Cloud credit. The choice lives in `agents/*/runtime.yaml` (`provider`, `model_id`, `region`), so a later switch to Claude on Vertex AI is a config change, not a code change. Before M7, check in Vertex AI Model Garden that the chosen Gemini model is available for `aiven-agents`, and record its ID and region there.
 - [ ] **S8. Later, before wrap 2 goes live:** set up the agent Workspace as in email-wrapper §1.
 
 ## Credit calendar
@@ -357,6 +357,26 @@ Plus:
 ---
 
 ## M2. Platform infrastructure (`docs/gateway-design.md` §2, §3, §5, §9, §10, §14)
+
+### Task 2.0: Platform config guard (added at the M1 review)
+
+`config/platform.yaml` and `infra/terraform/terraform.tfvars` hold IDs and addresses only: project IDs, the organisation ID, the billing account ID, the drive ID, account addresses. They never hold credentials, keys or tokens.
+
+**Files:**
+
+- Create: `src/aiven/common/config_guard.py`, with the console script `aiven-check-config <files...>`
+- Test: `tests/common/test_config_guard.py`
+- Modify: `.github/workflows/ci.yml` (run the guard on every push and pull request)
+
+**Rules:**
+
+- Only known keys are allowed: the `PlatformConfig` fields, and the variables declared in `infra/terraform/variables.tf`.
+- A key whose name suggests a secret is refused.
+- A value with the wrong shape for its key is refused: a project ID, an email address, a drive ID.
+- Any value or line that the validator's content scanner flags is refused.
+- The values found are never printed.
+
+**Commit:** `feat(common): config guard refuses secrets in platform config and tfvars`
 
 ### Task 2.1: Terraform foundation and IAM
 
@@ -640,6 +660,12 @@ Locking `aiven-audit` (`locked = true`) can't be undone. **Do not apply it until
 - `test_refresh_waits_60s`
 - `test_folder_path_with_slash_in_name_verifies_by_id`
 
+**Tracked from the M1 review** (issues p4z5w2y56p-lgtm/Aiven-architecture#1, #2, #3):
+
+- **Durable active version (#1).** Pass `ActiveVersion` to every `verify` call, taken from a record that survives a restart and a rebuild of the gateway's working database. Firestore `gateway` is working state today and may be rebuilt empty, so the durable record can't live only there. Decide the store in this task: for example a `policy_versions/{agent}` document in control, written when Matthijs publishes and read by the gateway. If the record can't be read, refuse and alert. Tests: an older signed version is refused after a restart, and a failed read gives a refusal.
+- **Catalog signature (#2).** This is `load_signed_catalog` above. It verifies with `ssh-keygen -Y verify`, checks the size and the signature before parsing, and the gateway won't start without a valid signature. Decision for Matthijs: does the catalog use the policy namespace, or its own namespace such as `aiven-catalog-v1`?
+- **Byte limit (#3).** Read at most `MAX_FILE_BYTES + 1` bytes of a policy, the catalog, `allowed_signers` or the pricing file, and at most `MAX_SIG_BYTES + 1` bytes of a signature. Use a ranged read, or check the object's size first. An object that is too large is refused with an alert, without reading the rest.
+
 **Commit:** `feat(gateway): signed policy registry`
 
 ### Task 3.6: Runs, limits, idempotency
@@ -754,6 +780,8 @@ Locking `aiven-audit` (`locked = true`) can't be undone. **Do not apply it until
 
 - `scripts/smoke.py` gets a 403 `NO_POLICY` for an agent with no loaded policy. No wrapper is live yet.
 - `deploy_check.py all` passes.
+
+**Tracked from the M1 review** (issue p4z5w2y56p-lgtm/Aiven-architecture#4): install OpenSSH at a fixed version in the image. The gateway calls `ssh-keygen` by its absolute path, or with a pinned `PATH` set once at startup. At startup it checks that the binary exists, is owned by root and can't be written by the service user; if any check fails, it loads no policy and alerts. It gets a private, writable temporary folder.
 
 **Commit:** `infra: deploy gateway`
 
