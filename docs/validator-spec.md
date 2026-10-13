@@ -69,7 +69,7 @@ Hidden characters are Unicode Cc except LF (so TAB is included), Cf (zero-width 
 |---|---|
 | E-FM-MISSING | Line 1 is not `---`, or the block has no closing `---` |
 | E-YAML | The front matter cannot be parsed |
-| E-YAML-FEATURE | It uses an anchor, alias, merge key (`<<`), tag (`!`), directive or complex key, or contains more than one document |
+| E-YAML-FEATURE | It uses an anchor, alias, merge key (`<<`), tag (`!`), directive, complex key or a backslash escape in a double-quoted string, or contains more than one document |
 | E-YAML-DUPLICATE-KEY | A key appears twice in one mapping. Most parsers silently keep one of the two values. |
 | E-FM-NON-ASCII | A non-ASCII character appears in the front matter, comments included (look-alike letters) |
 | E-FIELD-MISSING | A required field from 3.3 is absent |

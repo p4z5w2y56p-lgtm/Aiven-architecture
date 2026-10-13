@@ -201,6 +201,12 @@ FRONT_MATTER_CASES = [
     ),
     case("E-YAML-FEATURE", "merge key", replace_comment("<<: {}"), COMMENT_LINE),
     case("E-YAML-FEATURE", "tag", edit_line("version: 1", "1", "!!str 1"), VERSION_LINE),
+    case(
+        "E-YAML-FEATURE",
+        "escape sequence",
+        edit_line("agent: invoice-reminder", "invoice-reminder", '"invoice\\x2dreminder"'),
+        AGENT_LINE,
+    ),
     case("E-YAML-FEATURE", "complex key", replace_comment("? [a, b]"), COMMENT_LINE),
     case("E-YAML-FEATURE", "second document", replace_comment("--- # second"), COMMENT_LINE),
     case("E-YAML-DUPLICATE-KEY", "version twice", replace_comment("version: 1"), VERSION_LINE),

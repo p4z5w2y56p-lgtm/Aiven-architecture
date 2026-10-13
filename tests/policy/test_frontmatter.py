@@ -32,6 +32,7 @@ CATALOG = load_catalog(REPO_ROOT / "catalog" / "catalog-v1.yaml")
 PATH = BASE_PATH
 BASE = valid_base()
 CYRILLIC_E = "\N{CYRILLIC SMALL LETTER IE}"
+BS = "\\"  # a backslash; text with escapes is built from it, so that none is typed in this file
 _, BODY, BODY_LINE = split(BASE_TEXT)
 
 
@@ -298,6 +299,65 @@ def test_tags_never_build_python_objects(capsys):
     assert capsys.readouterr().out == ""
 
 
+# --- E-YAML-FEATURE: escape sequences in double-quoted strings
+#
+# A backslash escape lets a value differ from what the signer reads: a look-alike letter, an
+# invisible character, a disguised placeholder. No v1 field needs one, because every value is plain
+# ASCII, so any backslash in a double-quoted string is a feature (ruling R39). It is found in the
+# text as written, so none of those characters is ever in the text that the other checks read.
+
+ESCAPES = {
+    "look-alike letter": f'agent: "drive.d{BS}u0435lete"',
+    "bidi override in a path": f'drive_folder_path: "AIVEN Sandbox{BS}u202e/ Invoices"',
+    "zero width space in an id": f'agent: "invoice{BS}u200b-reminder"',
+    "lone surrogate": f'agent: "{BS}uD800"',
+    "hex escape": f'agent: "invoice{BS}x2dreminder"',
+    "disguised placeholder": f'max_runtime_s: "T{BS}x4fDO"',
+    "escaped line break": f'max_runtime_s: "TO{BS}\n    DO"',
+    "escaped quote": f'agent: "a{BS}"b"',
+    "escaped backslash": f'agent: "a{BS}{BS}b"',
+    "newline escape": f'agent: "a{BS}nb"',
+    "code point beyond the plane": f'agent: "{BS}U0001F600"',
+}
+
+
+@pytest.mark.parametrize("line", ESCAPES.values(), ids=ESCAPES)
+def test_a_backslash_escape_in_a_double_quoted_string_is_a_feature(line):
+    result = load(line + "\n", PATH)
+    assert features(result) == [("escape sequence", FIRST_LINE, line.index('"') + 1)]
+    assert {f.code for f in result.findings} == {"E-YAML-FEATURE"}  # no non-ASCII, no field check
+    assert (result.data, result.lines) == (None, {})
+    for lang in ("en", "nl"):
+        assert "escape sequence" in message(result.findings[0], lang)
+
+
+def test_an_escape_is_reported_once_per_string_at_the_line_where_the_string_starts():
+    several = load(f'agent: "{BS}x41{BS}x42{BS}x43"\n', PATH)
+    assert features(several) == [("escape sequence", FIRST_LINE, 8)]
+    later_line = load(f'agent: "abc\n    d{BS}x4fe"\n', PATH)
+    assert features(later_line) == [("escape sequence", FIRST_LINE, 8)]
+
+
+def test_an_escape_is_found_in_keys_and_list_entries_too():
+    assert features(load(f'"{BS}x61gent": x\n', PATH)) == [("escape sequence", 2, 1)]
+    assert features(load(f'tools:\n  - "a{BS}x62"\n', PATH)) == [("escape sequence", 3, 5)]
+
+
+NOT_ESCAPES = {
+    "plain": f"agent: a{BS}b",
+    "single quoted": f"agent: 'a{BS}b'",
+    "block scalar": f"agent: |\n    a{BS}b",
+    "folded scalar": f"agent: >\n    a{BS}b",
+    "comment": f'agent: "ab" # {BS}x4f',
+    "double quoted without one": 'agent: "ab"',
+}
+
+
+@pytest.mark.parametrize("line", NOT_ESCAPES.values(), ids=NOT_ESCAPES)
+def test_a_backslash_is_only_an_escape_in_a_double_quoted_string(line):
+    assert features(load(line + "\n", PATH)) == []
+
+
 # --- E-YAML-DUPLICATE-KEY
 
 DUPLICATES = {
@@ -305,7 +365,6 @@ DUPLICATES = {
     "inside a mapping": ("limits:\n  x: 1\n  x: 2\n", [("x", 4, 3)]),
     "quoted and plain": ('a: 1\n"a": 2\n', [("a", 3, 1)]),
     "single quoted": ("a: 1\n'a': 2\n", [("a", 3, 1)]),
-    "written with an escape": ('a: 1\n"\\x61": 2\n', [("a", 3, 1)]),
     "flow style": ("{a: 1, a: 2}\n", [("a", 2, 8)]),
     "three times": ("a: 1\na: 2\na: 3\n", [("a", 3, 1), ("a", 4, 1)]),
     "empty value": ("a:\na:\n", [("a", 3, 1)]),
@@ -417,16 +476,17 @@ def test_nesting_through_indentation_is_cut_off_too():
 # `load` must never raise, every finding must be one a message can be made of, and no field may
 # drop out of `data` without a finding on its line (`unexplained`).
 
-BS = "\\"  # a backslash; the pieces with escapes are built from it, so no escape is typed here
 PIECES = [
     *"ab1:-[]{}&*!%#? \n\t\"'|>,.",
     *["<<", "---", "...", BS, "\x85", "\r", "@", "~"],
+    *[f"{BS}x4f", f"{BS}n", f'{BS}"', f"{BS}u0435", f"{BS}uD800", f"{BS}U0001F600", f"{BS}\n"],
     *["TODO", "TBD", "FIXME", "REPLACE_ME_X"],
 ]
 # What a field is set to now and then: placeholders in the ways that decide what is reported.
 VALUES = [
     *["TODO", "TBD", "'FIXME'", '"REPLACE_ME_X"', "300\n    TBD", "\n    TBD", "|\n    TODO"],
     *[f'"T{BS}x4fDO"', f'"TO{BS}\n    DO"'],  # TODO, written so that E-PLACEHOLDER misses it
+    *[f'"drive.d{BS}u0435lete"', f'"a{BS}u202eb"'],  # a look-alike letter, an override
 ]
 FIELD_LINE = re.compile(r"\s*[a-z_]+:")
 
@@ -535,6 +595,25 @@ def test_field_names_are_case_sensitive():
         ("E-FIELD-UNKNOWN", at("max_class: R2")),
         ("E-FIELD-MISSING", 1),
     }
+
+
+FIELD_TEXT = {
+    "agent": "invoice-reminder",
+    "drive_folder_path": "AIVEN Architecture Sandbox / Invoices",
+    "max_runtime_s": "300",
+}
+
+
+@pytest.mark.parametrize("line", ESCAPES.values(), ids=ESCAPES)
+def test_an_escape_is_the_only_finding_of_a_whole_file(line):
+    # The invisible and look-alike characters that an escape writes never stand in the file, so
+    # E-HIDDEN-CHAR and E-FM-NON-ASCII have nothing to report, and the escape itself is reported.
+    field = line.split(":")[0]
+    old = f"{field}: {FIELD_TEXT[field]}".encode()
+    assert BASE.count(old) == 1
+    assert [(f.code, f.params) for f in validate(BASE.replace(old, line.encode()))] == [
+        ("E-YAML-FEATURE", {"feature": "escape sequence"})
+    ]
 
 
 UNUSABLE = {

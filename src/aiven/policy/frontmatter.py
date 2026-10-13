@@ -2,9 +2,12 @@
 
 The YAML block at the top of a policy is what the gateway enforces, and the signer reads it as
 text. So it is read with less YAML than YAML has: no anchor, alias, merge key, tag, directive,
-complex key or second document, no key twice in one mapping, no character outside ASCII, and only
-the types of the field table (section 3.3). Where a file used any of that, the signer would read
-one thing and some parser another.
+complex key or second document, no backslash escape in a double-quoted string, no key twice in one
+mapping, no character outside ASCII, and only the types of the field table (section 3.3). Where a
+file used any of that, the signer would read one thing and some parser another. An escape does
+that most plainly: a look-alike letter, an invisible character, a lone surrogate or a placeholder
+can be written as an escape, and then the text reads as plain ASCII and decodes to something else.
+No v1 field needs an escape, because every value is plain ASCII.
 
 `split` cuts the decoded text of a file (`fileformat.decode_text`, which has dropped a byte-order
 mark: E-ENCODING owns that) into the front matter and the body.
@@ -316,6 +319,8 @@ class _Reader:
         index = event.start_mark.index
         raw = self.text.source[index : event.end_mark.index]
         node = _Node("scalar", self.text.line(index), event.value, raw, event.style is None)
+        if event.style == '"' and "\\" in raw:
+            self._feature("escape sequence", index)
         if self._expects_key():
             if node.plain and node.text == "<<":
                 self._feature("merge key", index)

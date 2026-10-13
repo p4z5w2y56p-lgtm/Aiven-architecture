@@ -11,7 +11,14 @@ import pytest
 
 from aiven.policy import constants
 from aiven.policy.findings import Finding, message
-from aiven.policy.frontmatter import FIELDS, FIRST_LINE, OPTIONAL, check_filename, load
+from aiven.policy.frontmatter import (
+    FIELDS,
+    FIRST_LINE,
+    OPTIONAL,
+    FrontMatter,
+    check_filename,
+    load,
+)
 from tests.support.frontmatter import (
     DATA,
     FRONT,
@@ -440,12 +447,13 @@ DISGUISED = {
 
 @pytest.mark.parametrize("spelling", [TODO_HEX, TODO_FOLDED], ids=["hex escape", "line break"])
 @pytest.mark.parametrize("field", DISGUISED)
-def test_a_disguised_placeholder_does_not_make_a_field_vanish(field, spelling):
+def test_a_disguised_placeholder_is_an_escape_sequence_and_no_field_vanishes(field, spelling):
+    # The escape is a feature, so there is no data, and so no field that could leave it unreported.
     text = DISGUISED[field](spelling)
     result = load(text, PATH)
+    assert [f.params.get("feature") for f in result.findings] == ["escape sequence"]
+    assert (result.data, result.lines, result.placeholders) == (None, {}, frozenset())
     assert unexplained(text, result) == []
-    assert field not in result.placeholders  # as written, it is no placeholder
-    assert [f.code for f in result.findings if f.params.get("field") == field] == ["E-FIELD-TYPE"]
 
 
 # A value on a later line than its key is reported on its own line by E-PLACEHOLDER, and the key
@@ -565,11 +573,19 @@ def test_the_file_name_check_skips_when_there_is_no_data():
     assert check_filename(Path("policies/other.md"), load("agent: [", PATH)) == []
 
 
-def test_an_agent_that_is_a_placeholder_only_once_decoded_is_still_compared():
-    # E-PLACEHOLDER does not report "T\x4fDO", so it is not a placeholder for this check either.
+def test_an_agent_with_an_escape_has_no_data_and_is_not_compared():
     front = load(swap("agent: invoice-reminder", f"agent: {TODO_HEX}"), PATH)
+    assert [f.code for f in front.findings] == ["E-YAML-FEATURE"]
+    assert check_filename(Path("policies/other.md"), front) == []
+
+
+def test_the_file_name_check_goes_by_the_placeholders_that_load_found_not_by_the_text():
+    # What the loader did not list as a placeholder is compared, whatever the value looks like.
+    front = FrontMatter({"agent": "TODO"}, {"agent": 4}, [], frozenset())
     (finding,) = check_filename(Path("policies/other.md"), front)
     assert finding.params == {"name": "other.md", "agent": "TODO"}
+    listed = FrontMatter({"agent": "TODO"}, {"agent": 4}, [], frozenset({"agent"}))
+    assert check_filename(Path("policies/other.md"), listed) == []
 
 
 # --- the field table of the spec
