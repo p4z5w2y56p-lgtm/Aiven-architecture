@@ -1,3 +1,6 @@
+# The real file is config/platform.yaml. It holds no credentials, so it is committed to Git.
+# CI needs it as soon as the first policy is added to policies/.
+
 # Platform values that are set at deploy (docs/validator-spec.md section 6).
 # Copy this file, fill in the real values, and give the copy to the validator and the gateway.
 # Everything below is an example. None of it is a real project or account.

@@ -36,16 +36,22 @@ jobs:
         run: |
           # A pull request has a base, and the version order and the widening of a policy are
           # judged against it. A push has none: validate then leaves those two out, and says so
-          # on stderr. The platform values come from AIVEN_POLICY_CONFIG or config/platform.yaml,
-          # as for anyone; the example config would fail every real policy (E-PRINCIPAL).
+          # on stderr. The platform values are config/platform.yaml, which the deployment commits
+          # (ruling R92): project ids, the addresses of the trusted authors, the gateway principal
+          # and the drive id, and no credentials. The example values are never a stand-in for
+          # them: they name another project, and would fail every real policy (E-PRINCIPAL).
           shopt -s nullglob
           policies=(policies/*.md)
           if [ "${#policies[@]}" -eq 0 ]; then
             echo "No policies yet."
             exit 0
           fi
+          if [ ! -f config/platform.yaml ]; then
+            echo "config/platform.yaml is missing: commit the deployment's platform values (they hold no credentials)" >&2
+            exit 1
+          fi
           ref=()
           if [ -n "$BASE_SHA" ]; then
             ref=(--previous-ref "$BASE_SHA")
           fi
-          uv run aiven-policy validate "${ref[@]}" "${policies[@]}"
+          uv run aiven-policy validate --config config/platform.yaml "${ref[@]}" "${policies[@]}"
