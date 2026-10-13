@@ -602,6 +602,23 @@ def test_a_generated_heading_in_a_quote_or_a_list_is_not_the_section_so_the_sect
     assert rewrite(result, POLICY, CATALOG) == result  # and now the real heading is the section
 
 
+@pytest.mark.parametrize("mark", ["> ", "- ", "1. "])
+def test_rewrite_and_drift_agree_that_a_generated_heading_in_a_quote_or_a_list_is_content(mark):
+    # In front of the real section: it is not the section for rewrite, and not for the check.
+    decoy = f"{mark}{ENFORCED}\n\n{AUTHOR}\n\n"
+    cut = BASE_TEXT.index("## Data and risks")
+    text = BASE_TEXT[:cut] + decoy + BASE_TEXT[cut:]
+    stale = text.replace("Stop: the agent kill switch", "Stop: nothing")
+    assert rewrite(text.encode(), POLICY, CATALOG).decode("utf-8") == text
+    assert rewrite(stale.encode(), POLICY, CATALOG).decode("utf-8") == text
+    _, body, first_line = split(stale)
+    found = check_body(body, first_line, POLICY, CATALOG, BASE_PATH)
+    assert [f.line for f in only(found, "E-BODY-SECTIONS")] == [
+        first_line + body[: body.index(decoy)].count("\n")
+    ]
+    assert only(found, "E-BODY-DRIFT") == []
+
+
 @pytest.mark.parametrize("mark", ["> ", "- "])
 def test_a_generated_heading_in_a_quote_inside_the_section_goes_with_the_section(mark):
     # Inside the text that is replaced, it is replaced: the check names it, and render repairs it.

@@ -12,13 +12,17 @@ Without one (no `p`) only the checks of the shape and of what the reader sees ru
 `drift` switch two of them off, for the reasons of the callers (validate.py): an agent that is not a
 valid id is E-AGENT-ID and not also a wrong title (ruling R28), and drift is judged only when the
 front matter has no error, because a render from an invalid front matter is noise (ruling R29).
+Drift is judged only when the sections are right as well: where a section ends is not known when
+E-BODY-SECTIONS has fired, and one defect gets one code (ruling R58).
 
 E-BODY-SECTIONS is one finding for the `##` headings, and one for each other heading that is out of
 place (a second title, a heading of level 3 to 6 outside the first three sections). The finding for
-the `##` headings stands on the first one that is not one of the five names. If there is none and a
-section is missing, it stands on the first line of the body, and else on the first heading that is
-not where the five sections have it. A heading is a heading wherever it stands, in a quote or a
-list too.
+the `##` headings stands on the first one that is not a section of the five names. If there is none
+and a section is missing, it stands on the first line of the body, and else on the first heading
+that is not where the five sections have it. A heading is a heading wherever it stands, in a quote
+or a list too, but a section is a `##` at the top level of the document (ruling R64): one in a
+quote or a list is never one of the five, and it is the one that is reported. The renderer
+(`rewrite`) goes by the same headings, so the check and the renderer cannot differ about a section.
 
 E-BODY-HTML and E-BODY-LINK also cover text that the reader never sees, because a parser keeps
 it from them: a link reference definition shows nothing, and markdown-it drops what is nested 20
@@ -50,7 +54,7 @@ from aiven.policy.catalog import Catalog
 from aiven.policy.chars import is_hidden
 from aiven.policy.constants import FREE_SECTIONS, GENERATED_SECTIONS, MIN_SECTION_CHARS, SECTIONS
 from aiven.policy.findings import Finding
-from aiven.policy.markdown import Heading, find, headings, parse
+from aiven.policy.markdown import Heading, find, headings, parse, sections
 from aiven.policy.model import Policy
 from aiven.policy.render import render_generated
 from aiven.policy.tools import tool_problem
@@ -96,8 +100,9 @@ def check_body(
     lines = body.split("\n")
     tokens = parse(body)
     found = headings(tokens)
+    wrong_sections = _sections(report, lines, found)
     findings = [
-        *_sections(report, lines, found),
+        *wrong_sections,
         *_empty(report, tokens, found),
         *_markup(report, tokens, lines),
     ]
@@ -105,7 +110,7 @@ def check_body(
         if title:
             findings += _title(report, lines, p.agent)
         findings += _tools(report, tokens, found, p, catalog)
-        if drift:
+        if drift and not wrong_sections:  # where a section ends is not known otherwise (ruling R58)
             findings += _drift(report, lines, found, p, catalog)
     return findings
 
@@ -138,40 +143,46 @@ def _title(report: _Report, lines: list[str], agent: str) -> list[Finding]:
 
 def _sections(report: _Report, lines: list[str], found: list[Heading]) -> list[Finding]:
     twos = [heading for heading in found if heading.level == 2]
+    tops = sections(found)
     title_row = _first_text_row(lines)
     rows = [row] if (row := _misplaced(twos)) is not None else []
     rows += [h.row for h in found if h.level == 1 and h.row != title_row]
-    rows += [h.row for h in found if h.level >= 3 and not _in_free_sections(h, twos)]
+    rows += [h.row for h in found if h.level >= 3 and not _in_free_sections(h, tops)]
     names = ", ".join(heading.name for heading in twos)
     return [report.at("E-BODY-SECTIONS", row, found=names) for row in rows]
 
 
 def _misplaced(twos: list[Heading]) -> int | None:
-    """The row to report for the `##` headings. None if they are the five sections in order."""
-    names = [heading.name for heading in twos]
-    if names == list(SECTIONS):
-        return None
-    unknown = next((heading for heading in twos if heading.name not in SECTIONS), None)
+    """The row to report for the `##` headings. None if they are the five sections in order.
+
+    A `##` that is not at the top level of the document (in a quote or a list) is no section,
+    whatever its name, and it is the one that is reported (ruling R64).
+    """
+    tops = [heading for heading in twos if heading.top]
+    names = [heading.name for heading in tops]
+    unknown = next((h for h in twos if not h.top or h.name not in SECTIONS), None)
     if unknown is not None:
         return unknown.row
+    if names == list(SECTIONS):
+        return None
     if any(name not in names for name in SECTIONS):
         return 0  # a section is missing, and there is no heading to point at
-    wrong = (h for i, h in enumerate(twos) if i >= len(SECTIONS) or h.name != SECTIONS[i])
+    wrong = (h for i, h in enumerate(tops) if i >= len(SECTIONS) or h.name != SECTIONS[i])
     return next(wrong).row
 
 
-def _in_free_sections(heading: Heading, twos: list[Heading]) -> bool:
-    """Whether the heading stands in the first three sections: behind the first `##` heading, and
-    in front of the fourth."""
-    return bool(twos) and twos[0].row < heading.row and (len(twos) < 4 or heading.row < twos[3].row)
+def _in_free_sections(heading: Heading, tops: list[Heading]) -> bool:
+    """Whether the heading stands in the first three sections: behind the first section heading,
+    and in front of the fourth."""
+    return bool(tops) and tops[0].row < heading.row and (len(tops) < 4 or heading.row < tops[3].row)
 
 
 # --- E-BODY-EMPTY
 
 
 def _section(tokens: list[Token], found: list[Heading], heading: Heading) -> list[Token]:
-    """The tokens behind a `##` heading, up to the next one."""
-    later = (other.index for other in found if other.level == 2 and other.index > heading.index)
+    """The tokens behind the heading of a section, up to the heading of the next one."""
+    later = (other.index for other in sections(found) if other.index > heading.index)
     return tokens[heading.index + 3 : next(later, len(tokens))]  # the heading has three tokens
 
 
@@ -199,7 +210,7 @@ def _empty(report: _Report, tokens: list[Token], found: list[Heading]) -> list[F
     """A free-text section with fewer than 20 characters of text (whitespace runs as one space)."""
     findings = []
     for name in FREE_SECTIONS:
-        heading = find(found, name)
+        heading = find(found, name, top=True)
         if heading is None:
             continue
         inlines = [t for t in _section(tokens, found, heading) if t.type == "inline"]
@@ -240,7 +251,7 @@ def _tools(
     rules say what is wrong with it, and the body is not also called incomplete. Without the
     section there is nothing to judge, and E-BODY-SECTIONS says that it is not there.
     """
-    why = find(found, "Why each tool")
+    why = find(found, "Why each tool", top=True)
     if why is None:
         return []
     bullets = list(_bullets(_section(tokens, found, why)))
@@ -404,24 +415,26 @@ def _drift(
 ) -> list[Finding]:
     """A generated section that is not what `render_generated` makes of the policy, byte for byte.
 
-    A section is its lines from its heading up to the next `##` heading, and the last one runs to
-    the end of the file, without the newlines there (E-FINAL-NEWLINE's, ruling R15). The first
-    section with a name is the one, and a section that is not there is E-BODY-SECTIONS's. A policy
-    that cannot be rendered (a tool that is not one) has errors that say so, and no drift.
+    A section is its lines from the heading of the section up to the heading of the next one, as
+    the renderer has it (`rewrite` goes by the same headings, the `##` at the top level of the
+    document). The last one runs to the end of the file, without the newlines there
+    (E-FINAL-NEWLINE's, ruling R15). The check relies on the five sections being right, each there
+    once and in its place, and `check_body` runs it only then (ruling R58). A policy that cannot be
+    rendered (a tool that is not one) has errors that say so, and no drift.
     """
     try:
         rendered = render_generated(p, catalog)
     except ValueError:
         return []
-    twos = [heading for heading in found if heading.level == 2]
+    tops = sections(found)
     findings = []
     for name, text in zip(GENERATED_SECTIONS, rendered, strict=True):
-        index = next((i for i, heading in enumerate(twos) if heading.name == name), None)
+        index = next((i for i, heading in enumerate(tops) if heading.name == name), None)
         if index is None:
             continue
-        start = twos[index].row
-        last = index + 1 == len(twos)
-        have = lines[start:] if last else lines[start : twos[index + 1].row]
+        start = tops[index].row
+        last = index + 1 == len(tops)
+        have = lines[start:] if last else lines[start : tops[index + 1].row]
         want = text.split("\n")[:-1]  # every line ends with an LF
         if last:
             have, want = _without_blank_ends(have), _without_blank_ends(want)

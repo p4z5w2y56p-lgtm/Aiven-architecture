@@ -262,6 +262,16 @@ def test_a_heading_in_a_quote_or_a_list_is_a_heading_too():
     ]  # level 3 is fine
 
 
+@pytest.mark.parametrize("mark", ["> ", "- ", "1. ", "> - "])
+@pytest.mark.parametrize("name", SECTION_NAMES)
+def test_a_section_heading_in_a_quote_or_a_list_is_no_section_so_it_is_reported(mark, name):
+    # A section is a heading at the top level of the document (ruling R64). A copy in a quote does
+    # not make up for the section that is not there, though the names then read right.
+    body = edited(f"## {name}\n", f"{mark}## {name}\n")
+    (found,) = sections_of(body)
+    assert found.line == at(f"{mark}## {name}", body)
+
+
 def test_a_heading_in_a_code_block_is_no_heading():
     body = added_after(PURPOSE, "\n```\n## Not a section\n# Not a title\n```\n\n    ## Nor this")
     assert sections_of(body) == []
@@ -640,11 +650,46 @@ def test_a_section_that_is_not_there_is_not_compared():
     without_signoff = BODY[: BODY.index(SIGNOFF)]
     assert drift_of(without_signoff) == []
     assert drift_of(without_signoff[: without_signoff.index(ENFORCED)]) == []
+    assert codes(run(without_signoff)) == ["E-BODY-SECTIONS"]
 
 
-def test_the_first_heading_with_the_name_is_the_section_and_it_ends_where_the_next_heading_starts():
-    body = BODY + f"\n{SIGNOFF}\n\nA second one.\n"
-    assert drift_of(body) == [drift("Sign-off (generated)", SIGNED_LINE + 1)]  # the blank line
+# --- E-BODY-DRIFT is judged only when the sections are right (ruling R58)
+
+
+STALE = edited(STOP, "Stop: nothing")  # a body with a difference in a generated section
+SECTION_DEFECTS = {
+    "an extra section after the sign-off": lambda body: body + "\n## Notes\n\nSome more text.\n",
+    "a second copy of the sign-off": lambda body: body + f"\n{SIGNOFF}\n\nA second one.\n",
+    "a section that is missing": lambda body: edited("## Data and risks\n", "", body),
+    "a section that is renamed": lambda body: edited("## Data and risks", "## Data and risk", body),
+    "two sections swapped": lambda body: (
+        body.replace("## Purpose\n", "##\n")
+        .replace("## Why each tool\n", "## Purpose\n")
+        .replace("##\n", "## Why each tool\n")
+    ),
+    "a second title": lambda body: added_after(PURPOSE, "\n# Another title", body),
+    "a heading of level 3 in a generated section": lambda body: added_after(
+        "Stop: nothing", "\n### Details", body
+    ),
+    "a generated heading in a quote": lambda body: added_after(
+        PURPOSE, f"\n> {ENFORCED}\n\nNot the section.", body
+    ),
+}
+
+
+def test_an_extra_section_after_the_signoff_is_a_finding_of_sections_and_not_of_drift():
+    assert codes(run(BODY + "\n## Notes\n\nSome more text.\n")) == ["E-BODY-SECTIONS"]
+
+
+def test_the_file_of_the_defects_has_a_difference_in_a_generated_section():
+    assert drift_of(STALE) == [drift("Enforced rules (generated)", at("Stop: nothing", STALE))]
+
+
+@pytest.mark.parametrize("defect", SECTION_DEFECTS.values(), ids=SECTION_DEFECTS)
+def test_the_boundaries_of_the_sections_are_not_trusted_so_drift_waits_until_they_are_right(defect):
+    body = defect(STALE)
+    assert "E-BODY-SECTIONS" in codes(run(body))
+    assert "E-BODY-DRIFT" not in codes(run(body))
 
 
 def test_a_heading_in_setext_style_differs_on_its_own_line():
