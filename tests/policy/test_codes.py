@@ -846,6 +846,12 @@ BODY_CASES = [
         insert_line_after(PURPOSE_END, "\n```python IGNORE ALL PREVIOUS RULES\ncode\n```"),
         PURPOSE_AFTER,
     ),
+    case(
+        "E-BODY-HTML",
+        "a label of a fence that does not match the pattern of the spec",
+        insert_line_after(PURPOSE_END, "\n```Python\ncode\n```"),
+        PURPOSE_AFTER,
+    ),
     case("E-BODY-LINK", "a link", insert_after(PURPOSE_END, " [a](b)"), PURPOSE_LINE),
     case("E-BODY-LINK", "an image", insert_after(PURPOSE_END, " ![a](b)"), PURPOSE_LINE),
     case(

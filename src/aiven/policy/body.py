@@ -36,9 +36,12 @@ counts as well (ruling R46), and so is one in the info string of a fence or in a
 definition (ruling R59): a policy must be complete on its own.
 
 The info string of a fence, the text behind its opening marks, is shown by no renderer, and at most
-its first word colours the code. So a fence has none, or one word of letters, digits and `_+.#-`,
-and anything else is E-BODY-HTML on the line where the fence opens (ruling R71). The scan for URLs
-looks at that line as well, so a URL there is two findings.
+its first word colours the code. So a fence has none, or a label and nothing else: 1 to 16
+characters of `a-z`, `0-9`, `+`, `#` and `-`, as `python`, `c++`, `c#` and `objective-c` are, with
+the spaces and tabs at its two ends left out. Anything else is E-BODY-HTML on the line where the
+fence opens (ruling R71, tightened at the M1 review): a capital, `_` or `.`, a second word, 17
+characters or more, a hidden or escaped character. The scan for URLs looks at that line as well, so
+a URL there is two findings.
 
 What the reader gets is not what is written: a character reference and an escape are decoded. So the
 text of the tokens is judged too. A hidden character that a reference made is E-BODY-HTML (one that
@@ -81,9 +84,11 @@ _BREAKS = ("softbreak", "hardbreak")
 # Printable ASCII has no hidden character, so only the rest is looked at.
 _NOT_PLAIN = re.compile(r"[^\x20-\x7e]")
 
-# What the info string of a fence may be, apart from empty: one word of the kind that names a
-# language, as `c++` and `c#` do. A renderer shows nothing else of it.
-_LANGUAGE = re.compile(r"[A-Za-z0-9_+.#-]+")
+# What the info string of a fence may be, apart from empty: a label, as `python`, `c++` and `c#`
+# are. That is 1 to 16 characters of lower case letters, digits, `+`, `#` and `-`, and all of the
+# string (`fullmatch`), so a capital, `_`, `.` or a second word makes it no label. A renderer shows
+# nothing else of it.
+_LANGUAGE = re.compile(r"[a-z0-9+#-]{1,16}")
 
 # What may stand in front of the text of a line: the marks of quotes and lists.
 _MARKS = r"(?:[ \t>]|[-+*](?=[ \t]|$)|[0-9]{1,9}[.)](?=[ \t]|$))*"
@@ -312,8 +317,10 @@ def _info_not_shown(token: Token) -> bool:
     """Whether the token is a fence with an info string that a renderer does not show.
 
     Nothing of the text behind the opening fence is shown, and at most its first word colours the
-    code. So it must be empty or one word that names a language (ruling R71). The token holds it as
-    it was written: a reference or an escape in it is not a letter, and is no word.
+    code. So it must be empty, or all of it is a label (ruling R71, tightened at the M1 review):
+    1 to 16 characters of `a-z`, `0-9`, `+`, `#` and `-`. Only the spaces and tabs at its two ends
+    are left out before it is judged. The token holds it as it was written: a reference or an
+    escape in it is not a letter, and is no label.
     """
     if token.type != "fence":
         return False
