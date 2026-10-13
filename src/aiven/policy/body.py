@@ -32,7 +32,15 @@ block of the parser holds is such text. The definitions are links, and the rest 
 HTML: "a policy may not contain text the reader cannot see".
 
 A URL is found in the lines of the body and not in its tokens, so one in a code span or a code block
-counts as well (ruling R46): a policy must be complete on its own.
+counts as well (ruling R46), and so is one in the info string of a fence or in a link reference
+definition (ruling R59): a policy must be complete on its own.
+
+What the reader gets is not what is written: a character reference and an escape are decoded. So the
+text of the tokens is judged too. A hidden character that a reference made is E-BODY-HTML (one that
+is written is E-HIDDEN-CHAR's, ruling R63), it does not count as text for E-BODY-EMPTY or for the
+reason of a tool, and a URL that escapes or references build is E-BODY-LINK, unless the line has a
+finding for a URL as it is written (ruling R65). A cell of a table behind the last cell of the
+header is dropped by the parser, so a row with text in one is E-BODY-HTML (ruling R66).
 
 The row of an inline token is counted from the start of its paragraph, over the breaks and the
 tags that go over lines. A code span or a link title that goes over lines hides its line breaks from
