@@ -61,6 +61,9 @@ VALID = variant_file(render=True)  # version 1 of invoice-reminder: the three wa
 # Without --previous-ref the history is not known, and validate says that it checks none (R86).
 NO_REF_NOTE = "note: version order and widening need --previous-ref"
 
+# Where the output holds an E-INTERNAL and --debug was not given, the cause can be had that way.
+DEBUG_NOTE = "note: run again with --debug to see the cause"
+
 
 # --- calling the command line
 
@@ -709,6 +712,19 @@ def spy_on_subprocess(monkeypatch) -> list[tuple[tuple, dict]]:
     return calls
 
 
+def git_commands(calls) -> list[tuple[str, list[str]]]:
+    """Each call of git as (the folder it runs in, what it is asked to do)."""
+    commands = []
+    for args, _ in calls:
+        (argv,) = args
+        assert argv[:2] == [
+            "git",
+            "-C",
+        ]  # git changes folder first: it need not be called from the repo
+        commands.append((argv[2], argv[3:]))
+    return commands
+
+
 def test_git_is_run_with_a_list_of_arguments_and_no_shell(repo, monkeypatch):
     write(INVOICE, VALID)
     commit()
@@ -721,12 +737,15 @@ def test_git_is_run_with_a_list_of_arguments_and_no_shell(repo, monkeypatch):
         assert all(isinstance(word, str) for word in argv)
         assert not kwargs.get("shell")
         assert kwargs.get("timeout")  # a git that hangs cannot hold up the build
-    shows = [args[0] for args, _ in calls if args[0][1] == "show"]
-    assert shows == [["git", "show", "HEAD:policies/invoice-reminder.md"]]
-    listings = [args[0] for args, _ in calls if args[0][1] == "ls-tree"]
+    commands = git_commands(calls)
+    folder = str(Path(INVOICE).resolve().parent)  # git runs in the folder of the file
+    assert {where for where, _ in commands} == {folder}
+    shows = [command for _, command in commands if command[0] == "show"]
+    assert shows == [["show", "HEAD:policies/invoice-reminder.md"]]
+    listings = [command for _, command in commands if command[0] == "ls-tree"]
     assert listings
-    for argv in listings:  # a path stands after `--`, so that nothing it says can be an option
-        assert argv[-2:] == ["--", "policies/invoice-reminder.md"]
+    for command in listings:  # a path stands after `--`, so that nothing it says can be an option
+        assert command[-2:] == ["--", "policies/invoice-reminder.md"]
 
 
 def test_the_path_given_to_git_is_relative_to_the_repository(repo, monkeypatch):
@@ -737,8 +756,24 @@ def test_the_path_given_to_git_is_relative_to_the_repository(repo, monkeypatch):
     assert repo("validate", "--previous-ref", "HEAD", absolute).status == 0
     monkeypatch.chdir("policies")  # and from a folder of the repository
     assert repo("validate", "--previous-ref", "HEAD", "invoice-reminder.md").status == 0
-    shows = [args[0] for args, _ in calls if args[0][1] == "show"]
-    assert shows == [["git", "show", "HEAD:policies/invoice-reminder.md"]] * 2
+    shows = [command for _, command in git_commands(calls) if command[0] == "show"]
+    assert shows == [["show", "HEAD:policies/invoice-reminder.md"]] * 2
+
+
+def test_the_ref_works_from_outside_the_repository_with_an_absolute_path(
+    repo, monkeypatch, tmp_path
+):
+    write(INVOICE, VALID)
+    commit()
+    write(INVOICE, version_two())
+    absolute = str(Path.cwd() / INVOICE)
+    monkeypatch.chdir(tmp_path)  # the folder above the repository: git finds none from here
+    done = repo("validate", "--previous-ref", "HEAD", absolute)
+    assert (done.status, done.err) == (0, "")
+    assert {line.split()[1] for line in done.lines} == {"W-TOOL-NOT-LIVE"}
+    write(absolute, variant_file(SKIPS_A_VERSION, render=True))  # the file of the repository
+    skipped = repo("validate", "--previous-ref", "HEAD", absolute)
+    assert skipped.status == 1 and "next version must be 2" in skipped.out
 
 
 # --- a crash is E-INTERNAL and exit code 2 (validator-spec section 1, appendix A)
@@ -771,6 +806,7 @@ def test_crash_exits_2_with_e_internal(run, monkeypatch):
     assert "The validator could not finish (RuntimeError)." in done.lines[0]
     assert "LEAK" not in done.out + done.err
     assert "Traceback" not in done.err
+    assert done.err.splitlines() == [DEBUG_NOTE]  # one fixed line: where the cause can be had
 
 
 def test_a_file_named_twice_gets_one_line_when_the_command_crashes(run, monkeypatch):
@@ -803,8 +839,9 @@ def test_debug_prints_the_traceback_to_stderr_and_only_then(run, monkeypatch):
     write(INVOICE, VALID)
     quiet = run("validate", INVOICE)
     loud = run("validate", "--debug", INVOICE)
-    assert quiet.err == ""
+    assert quiet.err.splitlines() == [DEBUG_NOTE]
     assert "Traceback" in loud.err and "RuntimeError" in loud.err and "LEAK" in loud.err
+    assert DEBUG_NOTE not in loud.err  # it has been run with --debug
     assert (loud.status, loud.out) == (2, quiet.out)  # the same line, on stdout, either way
 
 
@@ -956,7 +993,7 @@ def test_an_environment_variable_that_names_no_file_is_a_crash_and_no_fallback(t
     monkeypatch.setenv("AIVEN_POLICY_CONFIG", "config/nowhere.yaml")
     done = tree.raw("validate", INVOICE)
     assert (done.status, done.lines) == (2, [internal(INVOICE, "FileNotFoundError")])
-    assert done.err == ""  # the example was not used
+    assert done.err.splitlines() == [DEBUG_NOTE]  # and the example was not used (no note of it)
 
 
 def test_a_catalog_that_is_not_valid_is_a_crash(run, tmp_path):
@@ -1001,14 +1038,30 @@ def test_a_ref_that_is_empty_or_could_be_an_option_is_refused_and_git_is_not_run
     assert calls == []
 
 
-def test_a_file_outside_the_repository_is_a_crash(repo, tmp_path):
+def test_a_file_that_is_in_no_repository_is_a_crash(repo, tmp_path):
+    # Git is asked in the folder of the file, and finds no repository there (the folder where the
+    # command is run has one, and is not looked at).
     outside = tmp_path / "elsewhere" / "invoice-reminder.md"
     outside.parent.mkdir()
     outside.write_bytes(VALID)
     write(INVOICE, VALID)
     commit()
     done = repo("validate", "--previous-ref", "HEAD", str(outside))
-    assert (done.status, done.lines) == (2, [internal(str(outside), "ValueError")])
+    assert (done.status, done.lines) == (2, [internal(str(outside), "CalledProcessError")])
+
+
+def test_a_file_in_another_repository_is_judged_by_that_one(repo, tmp_path):
+    # The repository of the command has no previous version of the file; that of the file has one.
+    other = tmp_path / "other"
+    other.mkdir()
+    file = other / "invoice-reminder.md"
+    file.write_bytes(VALID)
+    git("-C", str(other), "init", "-q", "-b", "main")
+    git("-C", str(other), "add", "-A")
+    git("-C", str(other), "commit", "-q", "-m", "a commit")
+    file.write_bytes(version_two())
+    done = repo("validate", "--previous-ref", "HEAD", str(file))
+    assert (done.status, done.err) == (0, "")  # version 2 follows version 1 of that repository
 
 
 @pytest.mark.parametrize(
@@ -1382,6 +1435,7 @@ def test_a_trust_anchor_that_cannot_be_used_is_e_internal_and_exit_2(run, signer
     gone = Signer(signer.key, tmp_path / "no-allowed-signers")
     done = verify(run, gone, sig)
     assert (done.status, done.lines) == (2, [internal(INVOICE, "FileNotFoundError")])
+    assert done.err.splitlines() == [VERIFY_NOTE, DEBUG_NOTE]
 
 
 def test_a_signature_that_cannot_be_read_is_a_crash_and_not_a_missing_one(run, signer, tmp_path):

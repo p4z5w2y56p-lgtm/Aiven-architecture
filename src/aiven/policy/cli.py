@@ -10,8 +10,9 @@ The output is file by file in the order of the arguments, a file named twice cou
 whatever spelling (with `..`, by a link). A file's own findings come in the order of
 `validate_file`, and the findings across the files are in with those of the file they are about.
 With `--previous-ref` the previous version of a file is the file as it is at that Git ref (`git
-show REF:path`, run without a shell). A file that is not there is a new agent, and must be version
-1. The previous files are loaded and built and nothing is said of them. A file whose history is
+-C FOLDER show REF:path`, run without a shell, in the folder of the file: the command can be run
+from anywhere). A file that is not there is a new agent, and must be version 1. The previous files
+are loaded and built and nothing is said of them. A file whose history is
 not known has no version order and no widening (E-VERSION-ORDER and W-WIDENS), and is no new
 agent: that is every file without a ref (one note on stderr), and a file whose previous version
 gives no policy (a note on stderr for each; the gateway still refuses a lower version at load).
@@ -40,10 +41,11 @@ Exit codes: 0 when there is no error (warnings are allowed), 1 when there is one
 validator could not run. A crash of any command, and a `verify` that says E-INTERNAL, are 2. A crash
 prints one E-INTERNAL for each file of the command and nothing else: the name of the class of the
 exception is its `detail`. Its message and its traceback can hold text of a file, so they are not
-printed, unless `--debug` is given (traceback, on stderr). The same goes for a command line that
-makes no sense: a usage error of argparse, also exit code 2, and for an output that cannot be
-written (a disk that is full, a pipe that is closed): exit code 2, one fixed line on stderr, and no
-traceback and no message.
+printed, unless `--debug` is given (traceback, on stderr); where the output holds an E-INTERNAL and
+`--debug` is not given, one fixed line on stderr says to use it. Two more things are exit code 2: a
+command line that makes no sense (a usage error of argparse), and an output that cannot be written
+(a disk that is full, a pipe that is closed), which gives one fixed line on stderr, no traceback and
+no message.
 
 Findings go to stdout and notes to stderr. Text of a file reaches the output only in a finding,
 which cleans it (findings.py). A character that the encoding of stdout or stderr cannot take is
@@ -82,6 +84,7 @@ CATALOG_PATH = Path("catalog/catalog-v1.yaml")
 EXAMPLE_NOTE = "note: using the example platform config"
 VERIFY_NOTE = "note: wrapper enablement and the Drive folder are checked at the gateway"
 WRITE_NOTE = "note: the output could not be written"
+DEBUG_NOTE = "note: run again with --debug to see the cause"
 NO_REF_NOTE = "note: version order and widening need --previous-ref"
 NO_POLICY_NOTE = (
     "note: the previous version of {path} gives no policy, "
@@ -138,6 +141,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         text, status = _text(findings, as_json=args.json), EXIT_CRASH
     if not _write(text):
         return EXIT_CRASH
+    if not args.debug and any(f.code == "E-INTERNAL" for f in findings):
+        _note(DEBUG_NOTE)  # the line says what went wrong, and not why: that is in the traceback
     return status
 
 
@@ -406,13 +411,17 @@ def _previous_policies(
     """
     if not ref or ref.startswith("-"):  # not a ref: an empty one means the index, "-" an option
         raise ValueError("not a git ref")
-    root = Path(os.fsdecode(_git("rev-parse", "--show-toplevel").rstrip(b"\n")))
     previous: dict[str, Policy] = {}
     unknown = []
     for path in paths:
-        name = path.resolve().relative_to(root).as_posix()
-        if _git("ls-tree", "-z", "--full-tree", "--name-only", ref, "--", name):
-            before = validate_policy(path, _git("show", f"{ref}:{name}"), cfg, catalog).policy
+        where = path.resolve()
+        # Git is asked in the folder of the file, so the folder of the command does not matter.
+        folder = str(where.parent)
+        root = Path(os.fsdecode(_git(folder, "rev-parse", "--show-toplevel").rstrip(b"\n")))
+        name = where.relative_to(root).as_posix()
+        if _git(folder, "ls-tree", "-z", "--full-tree", "--name-only", ref, "--", name):
+            old_bytes = _git(folder, "show", f"{ref}:{name}")
+            before = validate_policy(path, old_bytes, cfg, catalog).policy
             if before is None:
                 unknown.append(path)
             else:
@@ -420,10 +429,14 @@ def _previous_policies(
     return previous, unknown
 
 
-def _git(*args: str) -> bytes:
-    """What `git` prints with these arguments. It is no shell command, so nothing is expanded."""
-    done = subprocess.run(["git", *args], capture_output=True, check=True, timeout=GIT_TIMEOUT_S)
-    return done.stdout
+def _git(folder: str, *args: str) -> bytes:
+    """What `git` prints when it runs in `folder` (`git -C`) with these arguments.
+
+    It is no shell command, so nothing is expanded, and `folder` is where the file is: a command
+    that is run from outside the repository, with a path to a file in it, works.
+    """
+    command = ["git", "-C", folder, *args]
+    return subprocess.run(command, capture_output=True, check=True, timeout=GIT_TIMEOUT_S).stdout
 
 
 def _text(findings: list[Finding], *, as_json: bool) -> str:
