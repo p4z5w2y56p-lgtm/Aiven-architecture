@@ -10,9 +10,12 @@ The output is file by file in the order of the arguments, a file named twice cou
 own findings come in the order of `validate_file`, and the findings across the files are in with
 those of the file they are about. With `--previous-ref` the previous version of a file is the file
 as it is at that Git ref (`git show REF:path`, run without a shell). A file that is not there is a
-new agent. The previous files are loaded and built and nothing is said of them. Without a ref every
-file is a new agent, so a version other than 1 is E-VERSION-ORDER. `--json` prints one document,
-`{"findings": [...]}`, with the column, the parameters and the text in both languages (section 1).
+new agent, and must be version 1. The previous files are loaded and built and nothing is said of
+them. A file whose history is not known has no version order and no widening (E-VERSION-ORDER and
+W-WIDENS), and is no new agent: that is every file without a ref (one note on stderr), and a file
+whose previous version gives no policy (a note on stderr for each; the gateway still refuses a
+lower version at load). `--json` prints one document, `{"findings": [...]}`, with the column, the
+parameters and the text in both languages (section 1).
 
 `render <file>` rewrites the two generated sections, when the front matter loads and builds a policy
 without an error (ruling R29). A finding of the file, the body or the content does not stop it
@@ -78,7 +81,16 @@ CATALOG_PATH = Path("catalog/catalog-v1.yaml")
 EXAMPLE_NOTE = "note: using the example platform config"
 VERIFY_NOTE = "note: wrapper enablement and the Drive folder are checked at the gateway"
 WRITE_NOTE = "note: the output could not be written"
+NO_REF_NOTE = "note: version order and widening need --previous-ref"
+NO_POLICY_NOTE = (
+    "note: the previous version of {path} gives no policy, "
+    "so its version order and widening are not checked"
+)
 GIT_TIMEOUT_S = 60
+
+# The findings of `check_set` that need the previous version of a file (validator-spec 3.9 and
+# 3.6). For a file whose history is not known they are left out.
+HISTORY_CODES = frozenset({"E-VERSION-ORDER", "W-WIDENS"})
 
 # The codes of the checks of the whole file, of the body and of the content: validator-spec 3.1, 3.7
 # and 3.8. A render does not stop for them. Every other code that `validate_policy` gives belongs to
@@ -260,16 +272,25 @@ def _validate(
         ),
         key=lambda item: str(item[0]),
     )
-    previous = {}
+    # A file whose history is not known has no version order and no widening, and is no new agent
+    # either (rulings R86 and R88): without a ref that is every file, with one it is a file whose
+    # previous version gives no policy.
+    previous: dict[str, Policy] = {}
+    unknown, notes = paths, [NO_REF_NOTE]
     if args.previous_ref is not None:
-        previous = _previous_policies(args.previous_ref, paths, cfg, catalog)
+        previous, unknown = _previous_policies(args.previous_ref, paths, cfg, catalog)
+        notes = [NO_POLICY_NOTE.format(path=_shown(path)) for path in unknown]
+    left_out = {_shown(path) for path in unknown}
     across = defaultdict(list)
     for finding in check_set(built, previous):
-        across[finding.path].append(finding)
+        if not (finding.code in HISTORY_CODES and finding.path in left_out):
+            across[finding.path].append(finding)
     findings = []
     for path, run in zip(paths, runs, strict=True):
-        found = [*run.findings, *across[escape_unprintable(str(path))]]
+        found = [*run.findings, *across[_shown(path)]]
         findings += sorted(found, key=report_order)
+    for note in notes:
+        _note(note)
     return findings, _status(findings)
 
 
@@ -363,23 +384,27 @@ def _replace_file(path: Path, content: bytes) -> None:
 
 def _previous_policies(
     ref: str, paths: list[Path], cfg: PlatformConfig, catalog: Catalog
-) -> dict[str, Policy]:
+) -> tuple[dict[str, Policy], list[Path]]:
     """The previous signed policy of each agent: its file as it is at `ref` in Git (section 3.9).
 
     A file that is not at `ref` is a new agent and has none. What is there is loaded and built, and
-    nothing is said of its findings; a file that gives no policy counts as no previous version.
+    nothing is said of its findings. A file that is there and gives no policy is a file whose
+    history is not known (ruling R88): the second item is those files.
     """
     if not ref or ref.startswith("-"):  # not a ref: an empty one means the index, "-" an option
         raise ValueError("not a git ref")
     root = Path(os.fsdecode(_git("rev-parse", "--show-toplevel").rstrip(b"\n")))
-    previous = {}
+    previous: dict[str, Policy] = {}
+    unknown = []
     for path in paths:
         name = path.resolve().relative_to(root).as_posix()
         if _git("ls-tree", "-z", "--full-tree", "--name-only", ref, "--", name):
             before = validate_policy(path, _git("show", f"{ref}:{name}"), cfg, catalog).policy
-            if before is not None:
+            if before is None:
+                unknown.append(path)
+            else:
                 previous[before.agent] = before
-    return previous
+    return previous, unknown
 
 
 def _git(*args: str) -> bytes:
@@ -410,6 +435,11 @@ def _entry(f: Finding) -> dict[str, object]:
         "params": {name: safe_text(value) for name, value in f.params.items()},
         **{lang: message(f, lang) for lang in LANGUAGES},
     }
+
+
+def _shown(path: Path) -> str:
+    """The path as a finding shows it, with each character that must be escaped written out."""
+    return escape_unprintable(str(path))
 
 
 def _crash(path: Path, error: Exception) -> Finding:

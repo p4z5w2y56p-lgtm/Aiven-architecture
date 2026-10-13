@@ -58,6 +58,9 @@ CATALOG = load_catalog(CATALOG_FILE)
 INVOICE = "policies/invoice-reminder.md"
 VALID = variant_file(render=True)  # version 1 of invoice-reminder: the three warnings of the base
 
+# Without --previous-ref the history is not known, and validate says that it checks none (R86).
+NO_REF_NOTE = "note: version order and widening need --previous-ref"
+
 
 # --- calling the command line
 
@@ -200,7 +203,7 @@ def test_a_valid_file_exits_0_and_prints_its_warnings(run):
     assert done.status == 0
     assert [line.split()[:2] for line in done.lines] == [["warning", "W-TOOL-NOT-LIVE"]] * 3
     assert done.lines == [format_line(f) for f in findings_of(INVOICE, VALID)]
-    assert done.err == ""
+    assert done.err.splitlines() == [NO_REF_NOTE]
 
 
 def test_an_error_exits_1_and_the_lines_are_those_of_validate_file(run):
@@ -238,13 +241,13 @@ def test_without_a_config_the_example_is_used_and_one_note_says_so(tree):
     assert [line.split()[:2] for line in done.lines if line.startswith("error")] == [
         ["error", "E-PRINCIPAL"]
     ]
-    assert done.err.splitlines() == [EXAMPLE_NOTE]
+    assert done.err.splitlines() == [EXAMPLE_NOTE, NO_REF_NOTE]
 
 
 def test_config_platform_yaml_comes_before_the_example(tree):
     Path("config/platform.yaml").write_text(platform_yaml())
     done = tree.raw("validate", INVOICE)
-    assert (done.status, done.err) == (0, "")
+    assert (done.status, done.err.splitlines()) == (0, [NO_REF_NOTE])
 
 
 def test_the_environment_comes_before_the_files(tree, tmp_path, monkeypatch):
@@ -253,7 +256,7 @@ def test_the_environment_comes_before_the_files(tree, tmp_path, monkeypatch):
     chosen.write_text(platform_yaml())
     monkeypatch.setenv("AIVEN_POLICY_CONFIG", str(chosen))
     done = tree.raw("validate", INVOICE)
-    assert (done.status, done.err) == (0, "")
+    assert (done.status, done.err.splitlines()) == (0, [NO_REF_NOTE])
 
 
 def test_the_flag_comes_before_the_environment(tree, tmp_path, monkeypatch):
@@ -261,12 +264,12 @@ def test_the_flag_comes_before_the_environment(tree, tmp_path, monkeypatch):
     wrong.write_text(platform_yaml("aiven-agents-elsewhere"))
     monkeypatch.setenv("AIVEN_POLICY_CONFIG", str(wrong))
     done = tree.raw("validate", "--config", str(tree.platform), INVOICE)
-    assert (done.status, done.err) == (0, "")
+    assert (done.status, done.err.splitlines()) == (0, [NO_REF_NOTE])
 
 
 def test_an_empty_environment_variable_is_no_choice(tree, monkeypatch):
     monkeypatch.setenv("AIVEN_POLICY_CONFIG", "")
-    assert tree.raw("validate", INVOICE).err.splitlines() == [EXAMPLE_NOTE]
+    assert tree.raw("validate", INVOICE).err.splitlines() == [EXAMPLE_NOTE, NO_REF_NOTE]
 
 
 def test_the_catalog_can_be_named(tree, built_catalog):
@@ -279,6 +282,7 @@ def test_the_catalog_can_be_named(tree, built_catalog):
 # --- validate: several files
 
 NUDGE = "policies/payment-nudge.md"
+NUDGE_ID = principal_of("payment-nudge")
 
 
 def agent_file(agent: str) -> bytes:
@@ -528,12 +532,24 @@ def test_the_next_version_is_valid_against_the_version_before_it(repo):
     write(INVOICE, VALID)
     commit()
     write(INVOICE, version_two())
-    without = repo("validate", INVOICE)  # nothing is known of a version before it: a new agent
-    assert without.status == 1
-    assert "version is 2, but the next version must be 1." in without.out
     done = repo("validate", "--previous-ref", "HEAD", INVOICE)
     assert done.status == 0
     assert [line.split()[1] for line in done.lines] == ["W-TOOL-NOT-LIVE"] * 3
+    assert done.err == ""  # nothing is left out, so nothing is said
+
+
+def test_without_a_ref_no_version_order_and_no_widening_is_checked_and_a_note_says_so(run):
+    # The history of a file is not known, and a file is not a new agent for that (ruling R86): a
+    # version 2 or a version 3 is not wrong, and nothing here can tell.
+    for version in (2, 3):
+        write(INVOICE, variant_file(setting("version", version), render=True))
+        done = run("validate", INVOICE)
+        assert done.status == 0
+        assert {line.split()[1] for line in done.lines} == {"W-TOOL-NOT-LIVE"}
+        assert done.err.splitlines() == [NO_REF_NOTE]
+    done = run("validate", "--json", INVOICE)  # also with --json: the note is not in the document
+    assert {entry["code"] for entry in json.loads(done.out)["findings"]} == {"W-TOOL-NOT-LIVE"}
+    assert done.err.splitlines() == [NO_REF_NOTE]
 
 
 def test_a_version_that_skips_one_is_refused(repo):
@@ -588,13 +604,69 @@ def test_the_previous_version_is_never_reported_on(repo):
     assert "E-RANGE" not in done.out
 
 
-def test_a_previous_version_that_gives_no_policy_counts_as_no_version(repo):
+NO_POLICY_NOTE = (
+    "note: the previous version of {path} gives no policy, "
+    "so its version order and widening are not checked"
+)
+
+
+def test_a_previous_version_that_gives_no_policy_is_unknown_history_and_not_a_new_agent(repo):
+    # The file is at the ref, but nothing can be built from it (ruling R88). That is not a new agent
+    # that must be at version 1: the history of this file is not known, as without a ref.
     write(INVOICE, swap(VALID, b"max_class: R2", b"max_class: ["))
     commit()
-    write(INVOICE, VALID)
-    assert repo("validate", "--previous-ref", "HEAD", INVOICE).status == 0
+    for data in (VALID, version_two(), variant_file(SKIPS_A_VERSION, render=True)):
+        write(INVOICE, data)
+        done = repo("validate", "--previous-ref", "HEAD", INVOICE)
+        assert done.status == 0
+        assert {line.split()[1] for line in done.lines} == {"W-TOOL-NOT-LIVE"}
+        assert done.err.splitlines() == [NO_POLICY_NOTE.format(path=INVOICE)]
+
+
+def test_unknown_history_is_for_that_file_only(repo):
+    # Two agents. The previous version of one gives no policy, and the other skips a version.
+    other = "policies/payment-nudge.md"
+    skips = (SKIPS_A_VERSION, setting("agent", "payment-nudge"), setting("principal", NUDGE_ID))
+    write(INVOICE, swap(VALID, b"max_class: R2", b"max_class: ["))
+    write(other, agent_file("payment-nudge"))
+    commit()
     write(INVOICE, version_two())
-    assert repo("validate", "--previous-ref", "HEAD", INVOICE).status == 1
+    write(other, variant_file(*skips, render=True))
+    done = repo("validate", "--previous-ref", "HEAD", INVOICE, other)
+    orders = [(path_of(line), line.split()[1]) for line in done.lines if "VERSION-ORDER" in line]
+    assert orders == [(other, "E-VERSION-ORDER")]  # and none for the file of unknown history
+    assert done.err.splitlines() == [NO_POLICY_NOTE.format(path=INVOICE)]
+
+
+def test_a_widening_is_not_reported_for_a_file_of_unknown_history_either(repo):
+    # Two files of one agent. The previous version of the first is known. That of the copy gives no
+    # policy, but check_set compares the copy with the previous version of the agent all the same,
+    # and would find that it widens: for a file of unknown history that is left out as well.
+    copy = "policies/invoice-copy.md"
+    write(INVOICE, VALID)
+    write(copy, swap(VALID, b"max_class: R2", b"max_class: ["))
+    commit()
+    widened = (NEXT_VERSION, MORE_RUNS_A_DAY)
+    write(INVOICE, variant_file(*widened, render=True))
+    write(
+        copy,
+        variant_file(*widened, setting("principal", principal_of("invoice-copy")), render=True),
+    )
+    done = repo("validate", "--previous-ref", "HEAD", INVOICE, copy)
+    assert [path_of(line) for line in done.lines if " W-WIDENS " in line] == [INVOICE]
+    assert [line for line in done.lines if "VERSION-ORDER" in line] == []
+    assert done.err.splitlines() == [NO_POLICY_NOTE.format(path=copy)]
+
+
+def test_the_note_about_a_previous_version_that_gives_no_policy_names_the_file_escaped(repo):
+    name = "policies/x\n::error::y.md"  # a newline in a name could start a line of its own
+    write(name, swap(VALID, b"max_class: R2", b"max_class: ["))
+    commit()
+    write(name, version_two())  # a version that would be E-VERSION-ORDER for a new agent
+    done = repo("validate", "--previous-ref", "HEAD", name)
+    assert "VERSION-ORDER" not in done.out  # (the name of the file is not the agent's: E-FILENAME)
+    (note,) = done.err.splitlines()
+    assert note == NO_POLICY_NOTE.format(path="policies/x\\u000a::error::y.md")
 
 
 def spy_on_subprocess(monkeypatch) -> list[tuple[tuple, dict]]:
