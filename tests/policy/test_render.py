@@ -493,6 +493,124 @@ def test_a_heading_in_the_front_matter_is_a_comment_and_not_the_section():
     assert rewrite(data, POLICY, CATALOG) == data[:cut] + SECTIONS.encode()
 
 
+# --- rewrite never deletes text that is not a generated section (ruling R64)
+
+AUTHOR = "Text that the author wrote and that no rewrite may take away."
+PURPOSE_HEADING = "## Purpose\n"
+
+
+def sections_first(text: str) -> str:
+    """The base with its three free sections behind the two generated ones."""
+    start = text.index(PURPOSE_HEADING)
+    middle = text.index(ENFORCED)
+    return text[:start] + text[middle:] + "\n" + text[start:middle].rstrip("\n") + "\n"
+
+
+MISORDERED = {
+    "the free sections behind the generated ones": sections_first(
+        BASE_TEXT.replace("Once a day,", f"{AUTHOR} Once a day,")
+    ),
+    "a section behind the sign-off": BASE_TEXT + f"\n## Notes\n\n{AUTHOR}\n",
+    "a section in setext style behind the sign-off": BASE_TEXT + f"\nNotes\n-----\n\n{AUTHOR}\n",
+    "a section between the two": BASE_TEXT.replace(SIGNOFF, f"## Notes\n\n{AUTHOR}\n\n{SIGNOFF}"),
+    "the first heading twice": BASE_TEXT.replace(SIGNOFF, f"{ENFORCED}\n\n{AUTHOR}\n\n{SIGNOFF}"),
+    "the sign-off twice": BASE_TEXT + f"\n{SIGNOFF}\n\n{AUTHOR}\n",
+    "a free section behind the first": BASE_TEXT.replace(
+        SIGNOFF, f"## Data and risks\n\n{AUTHOR}\n\n{SIGNOFF}"
+    ),
+}
+
+
+@pytest.mark.parametrize("text", MISORDERED.values(), ids=MISORDERED)
+def test_sections_that_are_not_the_last_two_are_not_rewritten_and_nothing_of_the_file_is_said(text):
+    assert AUTHOR in text
+    with pytest.raises(ValueError) as raised:
+        rewrite(text.encode(), POLICY, CATALOG)
+    assert AUTHOR not in str(raised.value) and AUTHOR not in repr(raised.value)
+    assert "Purpose" not in str(raised.value) and "Notes" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        f"{AUTHOR}\n",
+        f"### Notes\n\n{AUTHOR}\n",
+        f"> ## Notes\n\n{AUTHOR}\n",
+        f"- ## Notes\n\n{AUTHOR}\n",
+        f"```\n{AUTHOR}\n",
+        f"<!--\n{AUTHOR}\n",
+    ],
+    ids=[
+        "text",
+        "a heading of level 3",
+        "a heading in a quote",
+        "one in a list",
+        "a fence",
+        "a tag",
+    ],
+)
+def test_what_follows_the_signoff_without_a_heading_of_level_2_is_part_of_it_and_is_replaced(tail):
+    text = BASE_TEXT + "\n" + tail
+    assert rewrite(text.encode(), POLICY, CATALOG) == BASE
+
+
+def test_the_first_generated_section_alone_is_completed_and_a_signoff_in_front_is_kept():
+    only_first = BASE_TEXT[: BASE_TEXT.index(SIGNOFF)]
+    assert rewrite(only_first.encode(), POLICY, CATALOG) == BASE
+    swapped = BASE_TEXT[: BASE_TEXT.index(ENFORCED)] + f"{SIGNOFF}\n\n{AUTHOR}\n\n" + SECTIONS
+    cut = swapped.index(ENFORCED)
+    assert rewrite(swapped.encode(), POLICY, CATALOG) == swapped[:cut].encode() + SECTIONS.encode()
+    assert AUTHOR in swapped[:cut]
+
+
+LINES_THAT_ARE_NO_HEADING = {
+    "in a fence that is not closed": f"```\n{ENFORCED}\n\n{AUTHOR}\n",
+    "in a fence of tildes that is not closed": f"~~~~\n{ENFORCED}\n{AUTHOR}\n",
+    "in a fence that is closed": f"```\n{ENFORCED}\n```\n\n{AUTHOR}\n",
+    "in a block of HTML": f"<div>\n{ENFORCED}\n</div>\n\n{AUTHOR}\n",
+    "behind spaces in an indented code block": f"{AUTHOR}\n\n    {ENFORCED}\n",
+}
+
+
+@pytest.mark.parametrize("tail", LINES_THAT_ARE_NO_HEADING.values(), ids=LINES_THAT_ARE_NO_HEADING)
+def test_a_line_that_looks_like_the_heading_but_is_none_raises_instead_of_adding_the_sections(tail):
+    # Added at the end, the sections would be in the fence too, and each rewrite would add more.
+    text = BASE_TEXT[: BASE_TEXT.index(ENFORCED)] + tail
+    with pytest.raises(ValueError) as raised:
+        rewrite(text.encode(), POLICY, CATALOG)
+    assert AUTHOR not in str(raised.value) and ENFORCED not in str(raised.value)
+
+
+@pytest.mark.parametrize("tail", ["```\nsome code\n", "<!--\nsome comment\n", "~~~\ncode"])
+def test_sections_that_would_end_up_in_a_block_that_is_not_closed_raise_instead_of_being_added(
+    tail,
+):
+    # The same without a line like the heading in it: the sections must be headings where they go.
+    data = PREFIX + b"\n\n" + tail.encode()
+    with pytest.raises(ValueError):
+        rewrite(data, POLICY, CATALOG)
+
+
+@pytest.mark.parametrize("mark", ["> ", "- ", "1. ", "> - "])
+def test_a_generated_heading_in_a_quote_or_a_list_is_not_the_section_so_the_sections_are_added(
+    mark,
+):
+    decoy = f"{mark}{ENFORCED}\n\n{AUTHOR}\n"
+    data = PREFIX + b"\n\n" + decoy.encode()
+    result = rewrite(data, POLICY, CATALOG)
+    assert result == data + b"\n" + SECTIONS.encode()
+    assert rewrite(result, POLICY, CATALOG) == result  # and now the real heading is the section
+
+
+@pytest.mark.parametrize("mark", ["> ", "- "])
+def test_a_generated_heading_in_a_quote_inside_the_section_goes_with_the_section(mark):
+    # Inside the text that is replaced, it is replaced: the check names it, and render repairs it.
+    inside = BASE_TEXT.replace("Stop: the agent", f"{mark}{ENFORCED}\n\nStop: the agent")
+    _, body, first_line = split(inside)
+    assert only(check_body(body, first_line, POLICY, CATALOG), "E-BODY-SECTIONS") != []
+    assert rewrite(inside.encode(), POLICY, CATALOG) == BASE
+
+
 # --- the renderer and the check of drift say the same, for any policy
 
 

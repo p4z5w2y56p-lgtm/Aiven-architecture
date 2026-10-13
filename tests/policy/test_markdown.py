@@ -1,6 +1,6 @@
 """The body as markdown-it sees it (validator-spec 3.7): the tokens, and the headings in them."""
 
-from aiven.policy.markdown import find, headings, parse
+from aiven.policy.markdown import find, headings, parse, sections
 
 
 def seen(body: str) -> list[tuple[int, str, int, bool]]:
@@ -55,6 +55,15 @@ def test_find_gives_the_first_heading_of_level_two_with_the_name():
     assert find(found, "Other") is None
     assert find(headings(parse("# Name\n")), "Name") is None  # level 1 is not a section
     assert find(headings(parse("### Name\n\n## Name\n")), "Name").row == 2  # nor level 3
+
+
+def test_the_sections_are_the_headings_of_level_two_at_the_top_of_the_document():
+    body = "# T\n\n## A\n\n> ## In a quote\n\n- ## In a list\n\n### C\n\nSetext\n------\n\n## B\n"
+    assert [(h.name, h.row) for h in sections(headings(parse(body)))] == [
+        ("A", 2),
+        ("Setext", 10),
+        ("B", 13),
+    ]
 
 
 def test_a_cr_is_no_line_end_so_that_a_row_is_a_line_of_the_file():

@@ -96,6 +96,15 @@ def headings(tokens: list[Token]) -> list[Heading]:
     ]
 
 
+def sections(found: list[Heading]) -> list[Heading]:
+    """The `##` headings at the top level of the document: the headings of the sections.
+
+    A `##` in a quote or a list is a heading, and it is content of the section it stands in. The
+    checks of the body and the renderer both go by these, so they cannot differ about a section.
+    """
+    return [heading for heading in found if heading.level == 2 and heading.top]
+
+
 def find(found: list[Heading], name: str, *, top: bool = False) -> Heading | None:
     """The first `##` heading with this name. With `top`, one at the top level of the document."""
     for heading in found:

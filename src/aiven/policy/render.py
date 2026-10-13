@@ -16,7 +16,10 @@ What has no text in section 7 is not rendered: a tool that is not an R0, R1 or R
 catalog (one that is unknown, reserved, a wildcard or R3), and an `untrusted_input` that is neither
 mode. That is a ValueError, and its message holds nothing from the file.
 
-`rewrite` is `aiven-policy render`: it replaces the sections that are there, and nothing else.
+`rewrite` is `aiven-policy render`: it replaces the sections that are there, and nothing else. The
+validator-spec says that it "changes nothing else", so it never takes away text that is not a
+generated section (ruling R64). The generated sections are the last two of a file, and a file in
+which they are not is refused with a ValueError, not repaired by deleting what stands behind them.
 """
 
 import re
@@ -25,7 +28,7 @@ from aiven.policy.catalog import Action, Catalog
 from aiven.policy.constants import GENERATED_SECTIONS, NAMESPACE, SIGNER_NAME, TIMEZONE
 from aiven.policy.fileformat import decode_text
 from aiven.policy.frontmatter import split
-from aiven.policy.markdown import find, headings, parse
+from aiven.policy.markdown import find, headings, parse, sections
 from aiven.policy.model import Limits, Policy, Scope
 
 # The class and the gate of a tool, by class.
@@ -56,6 +59,10 @@ _MODE_RULES = {
     ),
 }
 _BACKTICKS = re.compile(r"`+")
+_HEADING = f"## {GENERATED_SECTIONS[0]}"  # the line that starts the first generated section
+_NOT_LAST = "the generated sections are not the last two sections of the file"
+_NOT_A_HEADING = "a line of the file is like the heading of the generated sections, but is none"
+_NOT_HEADINGS = "the generated sections would not be sections where they are added"
 _NO_SCOPE = "- None: this agent has no Drive or email tools."
 _STOP = (
     "Stop: the agent kill switch stops this agent; the global kill switch stops every agent. "
@@ -91,16 +98,28 @@ def rewrite(data: bytes, p: Policy, catalog: Catalog) -> bytes:
     """The file with its generated sections rendered from `p`. Nothing else changes.
 
     Everything from the heading of "Enforced rules (generated)" to the end of the file is replaced
-    by the two sections, and the result ends with one LF. The heading is found in the tokens of the
-    body, so one in a code block or a quote is not it, and a setext heading is. Without that
-    heading the sections are added at the end, after a blank line. The bytes before the heading
-    stay as they are, those that the validator reports (a byte-order mark, a CR) included.
+    by the two sections, and the result ends with one LF. The heading is a `##` at the top level
+    of the document, found in the tokens of the body: one in a code block, a quote or a list is not
+    it, and a setext heading is. Without that heading the sections are added at the end, after a
+    blank line. The bytes before the heading stay as they are, those that the validator reports (a
+    byte-order mark, a CR) included.
+
+    ValueError, with a message that holds nothing from the file, when that would take away more
+    than the generated sections or would not be undone by the next `rewrite` (ruling R64):
+
+    - the `##` sections from the heading onward are not that one and the sign-off, or that one
+      alone (text behind the sign-off that has no `##` heading of its own is part of it);
+    - a line of the file is the heading but no heading, as in a fence that is never closed;
+    - the sections would not be headings where they are added, as behind a comment that is open.
     """
-    sections = "".join(render_generated(p, catalog)).encode("utf-8")
+    generated = "".join(render_generated(p, catalog)).encode("utf-8")
     start = _section_start(data)
-    if start is None:
-        return data + _gap(data) + sections
-    return data[:start] + sections
+    if start is not None:
+        return data[:start] + generated
+    head = data + _gap(data)
+    if _section_start(head + generated) != len(head):
+        raise ValueError(_NOT_HEADINGS)
+    return head + generated
 
 
 def _action(tool: str, catalog: Catalog) -> Action:
@@ -224,13 +243,23 @@ def _section_start(data: bytes) -> int | None:
     The rows of the tokens are lines of the text, and the text has the lines of the bytes: decoding
     changes no LF, and `decode_text` drops only a byte-order mark, which is inside the first line.
     A file without front matter has no body to cut out, and is searched whole.
+
+    ValueError for the two cases of `rewrite` that this decides: there is a heading and the `##`
+    sections from there are not the generated ones, or there is no heading and there is a line that
+    looks like it.
     """
     text = decode_text(data)
     parts = split(text)
     body, first_line = (text, 1) if parts is None else (parts[1], parts[2])
-    heading = find(headings(parse(body)), GENERATED_SECTIONS[0], top=True)
+    found = headings(parse(body))
+    heading = find(found, GENERATED_SECTIONS[0], top=True)
     if heading is None:
+        if any(line.strip() == _HEADING for line in body.split("\n")):
+            raise ValueError(_NOT_A_HEADING)
         return None
+    onward = [other.name for other in sections(found) if other.index >= heading.index]
+    if onward not in ([GENERATED_SECTIONS[0]], list(GENERATED_SECTIONS)):
+        raise ValueError(_NOT_LAST)
     start = 0
     for _ in range(first_line - 1 + heading.row):
         start = data.index(b"\n", start) + 1
