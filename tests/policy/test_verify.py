@@ -60,6 +60,20 @@ from tests.support.signing import work_in_a_temporary_folder as work_in_a_tempor
 from tests.support.spies import CHECKS, spy_on
 from tests.support.variants import variant_file
 
+# The codes that the tests of this module trigger and that no table of test_codes.py holds as it is
+# triggered here (test_coverage_of_codes.py reads it). Declared, not found: see the tests below.
+CODES_TRIGGERED = frozenset(
+    {
+        "E-FILE-SIZE",  # the size is judged first
+        "E-SIG-MISSING",  # no signature file
+        "E-SIG-INVALID",  # a signature that does not verify
+        "E-VERSION-ORDER",  # older than the active version, or the same one in other bytes
+        "E-TOOL-NOT-LIVE",  # a wrapper that is planned, or not switched on for the agent
+        "E-SCOPE-NOT-IN-SANDBOX",  # a folder that the caller does not vouch for
+        "E-INTERNAL",  # whatever goes wrong in the load fails closed
+    }
+)
+
 BASE = valid_base()
 TEMPLATE = TEMPLATE_PATH.read_bytes()
 AGENT = "invoice-reminder"

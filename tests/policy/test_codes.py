@@ -1025,6 +1025,15 @@ SET_CASES = [
 ]
 
 
+# The codes that a test function of this module covers and no row of a table does: a table changes
+# the bytes of the valid base, and a case that needs more than that has a test of its own. Each
+# entry names that test. test_coverage_of_codes.py holds the entries to it: the test must exist, and
+# must mention the code.
+COVERED_ELSEWHERE = {
+    "E-FILENAME": "test_a_file_name_other_than_the_agent_yields_exactly_one_new_finding",
+}
+
+
 def test_valid_base_has_no_errors():
     # Today no wrapper is live, so the three tools give the three warnings of spec section 9, and
     # nothing else (that is how the template becomes a real policy: "only the three warnings").
