@@ -150,7 +150,12 @@ def test_no_policy_when_a_required_field_is_missing(path):
 @pytest.mark.parametrize("path", ["scope", *(f"scope.{name}" for name in FIELDS["scope"])])
 def test_the_scope_is_optional_so_a_policy_is_built_without_it(path):
     policy, _ = build(front_without(path))
-    assert policy is not None
+    nothing = {"drive_folder_id": None, "drive_folder_path": None, "email_to": ()}
+    if path == "scope":
+        assert policy.scope == Scope(**nothing)
+    else:
+        name = path.split(".")[1]
+        assert policy.scope == replace(EXPECTED.scope, **{name: nothing[name]})
 
 
 NO_POLICY = {

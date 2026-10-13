@@ -10,8 +10,10 @@ from dataclasses import replace
 import pytest
 
 from aiven.policy import constants
-from tests.support.frontmatter import swap
-from tests.support.policies import AGENTS_PROJECT
+from aiven.policy.fields import Fields, range_finding, size_finding
+from aiven.policy.frontmatter import load
+from tests.support.frontmatter import front_without, swap
+from tests.support.policies import AGENTS_PROJECT, BASE_PATH
 from tests.support.rules import CFG, check, run_front, setting
 
 NOT_ASCII = "caf\N{LATIN SMALL LETTER E WITH ACUTE}"
@@ -159,6 +161,13 @@ def test_a_number_that_is_far_too_large_is_one_e_range():
     run = check(setting("limits.runs_per_day", 10**4299))
     assert run.places() == [("E-RANGE", run.line("runs_per_day:"))]
     assert run.params("E-RANGE")["min"] == "1" and run.params("E-RANGE")["max"] == "10"
+
+
+def test_a_number_or_a_list_that_has_no_value_has_no_range_finding():
+    # It is missing or a wrong type, and `load` has said so: there is nothing to measure.
+    fields = Fields(load(front_without("version", "tools"), BASE_PATH))
+    assert range_finding(fields, "version") is None
+    assert size_finding(fields, "tools") is None
 
 
 # --- principal
