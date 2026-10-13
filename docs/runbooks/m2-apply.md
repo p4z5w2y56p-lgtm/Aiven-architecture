@@ -138,7 +138,7 @@ terraform output service_accounts
 If the apply stops at an organisation policy with `Permission 'orgpolicy.policies.create' denied`,
 part 2 is missing: do it, then plan and apply again. Nothing else is made before the policies.
 
-## 6. After the apply: the drills
+## 6. After the apply: drills and checks
 
 1. **The alert path.** Run the credit reminder by hand:
    `gcloud scheduler jobs run credit-reminder --location=europe-west4 --project=<control-project>`.
@@ -147,6 +147,24 @@ part 2 is missing: do it, then plan and apply again. Nothing else is made before
    2027-01-04 a run writes nothing; the yearly schedule then stays silent.)
 2. **BD-1 and BD-2**, the budget stop, on the scratch project only: runbook `budget-stop.md`,
    section Drill. Write down the time from publishing to the unlink, for the report.
+3. **The deploy checks** (gateway-design section 11, BD-3). They only read, with your login; the
+   Sandbox checks need the Drive scope as well, so log in once more with it:
+
+   ```sh
+   gcloud auth application-default login \
+     --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive.readonly
+   uv run aiven-deploy-check all
+   ```
+
+   Every line must be PASS, apart from these NOTEs, which are expected in M2:
+   - `NOTE iam gateway service`: the gateway service comes with M3;
+   - `NOTE stores aiven-audit lock`: the lock waits for your confirmation;
+   - `NOTE stores firestore gateway ttl`, right after the apply: the TTL is still being made.
+
+   The drive checks need `sandbox_drive_id` in `config/platform.yaml` (setup step S5). Exit code 0
+   means no FAIL. If Google refuses the Drive scope for gcloud's login, check the Sandbox by hand
+   instead: its members are exactly you (Manager) and the gateway account (Contributor), and
+   "Allow people who aren't members to access files" is off.
 
 ## Later, and only when you confirm it: the audit log lock
 

@@ -19,6 +19,10 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+deploy = [
+    { name = "google-auth" },
+    { name = "requests" },
+]
 dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -38,6 +42,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+deploy = [
+    { name = "google-auth", specifier = "==2.59.0" },
+    { name = "requests", specifier = "==2.34.2" },
+]
 dev = [
     { name = "pytest" },
     { name = "pytest-cov" },

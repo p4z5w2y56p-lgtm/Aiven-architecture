@@ -721,3 +721,27 @@ def test_a_name_that_suggests_a_secret(name):
 @pytest.mark.parametrize("name", PLAIN_NAMES)
 def test_a_name_that_does_not(name):
     assert not secret_like(name)
+
+
+# --- the values, for a tool that compares against them (the deploy check)
+
+
+def test_read_tfvars_gives_the_values_of_a_file_the_guard_passes(tmp_path):
+    from decimal import Decimal
+
+    from aiven.common.config_guard import read_tfvars
+
+    values = read_tfvars(tfvars(tmp_path, TFVARS))
+    assert values["agents_project"] == "aiven-agents-test"
+    assert values["agents"] == ("invoice-reminder", "payment-nudge")
+    assert values["budget_stop_amount"] == Decimal("25.50")
+    assert values["stop_enabled"] is True
+
+
+def test_read_tfvars_refuses_a_file_the_guard_refuses_without_its_values(tmp_path):
+    from aiven.common.config_guard import read_tfvars
+
+    path = tfvars(tmp_path, swap(TFVARS, '"aiven"', f'"{AWS_KEY}"'))
+    with pytest.raises(ValueError, match="C-SECRET line 21") as caught:
+        read_tfvars(path)
+    assert AWS_KEY not in str(caught.value)

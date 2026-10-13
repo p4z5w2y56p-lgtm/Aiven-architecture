@@ -485,6 +485,20 @@ def _check_tfvars(text: str, where: str, variables: Path) -> list[Problem]:
 # --- a file, and the command
 
 
+def read_tfvars(path: Path) -> dict[str, _Value]:
+    """The values of a Terraform values file, for a tool that compares against them.
+
+    The file is read only when the guard finds no problem in it; otherwise ValueError names the
+    codes of the problems and their lines, never a value.
+    """
+    problems = check_file(path)
+    if problems:
+        found = ", ".join(f"{problem.code} line {problem.line}" for problem in problems)
+        raise ValueError(f"{_ascii(str(path))} does not pass aiven-check-config: {found}")
+    assignments, _ = _assignments(path.read_text(encoding="ascii"))
+    return {item.name: item.value for item in assignments}
+
+
 def _kind(name: str) -> str | None:
     if name.endswith((".yaml", ".yml")):
         return "platform"
