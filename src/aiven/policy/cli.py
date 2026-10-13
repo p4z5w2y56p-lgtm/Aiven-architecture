@@ -12,18 +12,18 @@ whatever spelling (with `..`, by a link). A file's own findings come in the orde
 With `--previous-ref` the previous version of a file is the file as it is at that Git ref (`git
 -C FOLDER show REF:path`, run without a shell, in the folder of the file: the command can be run
 from anywhere). A file that is not there is a new agent, and must be version 1. The previous files
-are loaded and built and nothing is said of them. A file whose history is
-not known has no version order and no widening (E-VERSION-ORDER and W-WIDENS), and is no new
-agent: that is every file without a ref (one note on stderr), and a file whose previous version
-gives no policy (a note on stderr for each; the gateway still refuses a lower version at load).
-`--json` prints one document, `{"findings": [...]}`, with the column, the parameters and the text
-in both languages (section 1).
+are loaded and built and nothing is said of them. A file whose history is not known has no version
+order and no widening (E-VERSION-ORDER and W-WIDENS), and is no new agent: that is every file
+without a ref (one note on stderr), and a file whose previous version gives no policy (a note on
+stderr for each; the gateway still refuses a lower version at load). `--json` prints one document,
+`{"findings": [...]}`, with the column, the parameters and the text in both languages (section 1).
 
 `render <file>` rewrites the two generated sections, when the front matter loads and builds a policy
 without an error (ruling R29). A finding of the file, the body or the content does not stop it
 (`FILE_AND_BODY_CODES`): a template has them on its way to being a policy (section 9). Otherwise the
-findings of the front matter are printed, the exit code is 1, and the file is not touched. The
-sections are written all at once (`_replace_file`).
+file is not touched, the exit code is 1, and the findings of the front matter are printed, or all
+findings when the front matter has no error (see `_render`). The sections are written all at once
+(`_replace_file`).
 
 `verify <file> --sig S --allowed-signers P [--active-version N --active-sha256 H]` is the check
 before an upload. Whether a wrapper is switched on for the agent and whether the folder is in the
@@ -330,9 +330,12 @@ def _render(
 
     The front matter is good when it builds a policy and has no error. A finding of the file, the
     body or the content does not matter (`FILE_AND_BODY_CODES`): a template has them all on its way
-    to being a policy. When the front matter is not good, what is shown is its findings and the file
-    is not touched. It is the same when the renderer refuses the sections (a ValueError, which
-    holds no text of the file): the findings of the body say why, and then all findings are shown.
+    to being a policy. When the front matter is not good the file is not touched, the exit code is
+    1, and the findings of the front matter are shown if one of them is an error. If none is, all
+    findings of the file are shown, because the reason is not in the front matter: a placeholder
+    where a number belongs gives no policy (its finding is of the file), and the renderer can refuse
+    the sections (a ValueError, which holds no text of the file) where the errors of the body say
+    why.
     """
     (path,) = args.files
     data = path.read_bytes()
