@@ -1228,17 +1228,33 @@ def test_a_placeholder_where_a_number_belongs_stops_the_render_and_is_shown(run)
     assert Path(INVOICE).read_bytes() == data
 
 
-@pytest.mark.parametrize(
-    "tail",
-    [b"\n## Appendix\n\nMore text.\n", b"\n# Second title\n\nMore text.\n"],
-    ids=["a section behind the sign-off", "a second title"],
-)
-def test_sections_that_cannot_be_rewritten_stop_the_render_and_the_file_is_not_touched(run, tail):
-    data = VALID + tail
+# Files whose generated sections the renderer cannot put where they belong, with the errors of the
+# body that say why. Nothing is wrong in their front matter, so render shows all their findings.
+REFUSED_BY_THE_RENDERER = {
+    "a section behind the sign-off": (
+        VALID + b"\n## Appendix\n\nMore text.\n",
+        {"E-BODY-SECTIONS"},
+    ),
+    "a second title": (VALID + b"\n# Second title\n\nMore text.\n", {"E-BODY-SECTIONS"}),
+    "the heading in a fence that is never closed": (
+        swap(VALID, HEADING, b"```\n" + HEADING),
+        {"E-BODY-SECTIONS"},
+    ),
+    "no sections, and a comment that is open": (
+        VALID.split(HEADING)[0] + b"<!-- open\n",
+        {"E-BODY-SECTIONS", "E-BODY-HTML"},
+    ),
+}
+
+
+@pytest.mark.parametrize("name", REFUSED_BY_THE_RENDERER)
+def test_sections_that_cannot_be_rewritten_stop_the_render_and_the_file_is_not_touched(run, name):
+    data, codes = REFUSED_BY_THE_RENDERER[name]
     write(INVOICE, data)
     done = run("render", INVOICE)
     assert done.status == 1
-    assert "error E-BODY-SECTIONS policies/invoice-reminder.md:" in done.out
+    assert done.lines == [format_line(f) for f in findings_of(INVOICE, data)]  # all of them
+    assert {line.split()[1] for line in done.lines if line.startswith("error")} == codes
     assert Path(INVOICE).read_bytes() == data
 
 
@@ -1249,6 +1265,7 @@ def test_a_value_error_of_the_renderer_counts_as_a_front_matter_error(run, monke
     done = run("render", INVOICE)
     assert done.status == 1
     assert Path(INVOICE).read_bytes() == STALE
+    assert done.lines == [format_line(f) for f in findings_of(INVOICE, STALE)]  # all of them
     assert "LEAK" not in done.out + done.err and "Traceback" not in done.err
 
 
