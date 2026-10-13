@@ -41,7 +41,10 @@ DATA = {
 
 
 def emit(data: dict, indent: int = 0) -> list[str]:
-    """YAML lines for `data`: a mapping of strings, integers, lists of strings and mappings."""
+    """YAML lines for `data`: a mapping of strings, integers, lists of strings and mappings.
+
+    An empty list or mapping is written as `[]` or `{}`, not as a key without a value (null).
+    """
     pad = " " * indent
     lines = []
     for key, value in data.items():
@@ -49,8 +52,10 @@ def emit(data: dict, indent: int = 0) -> list[str]:
             lines += [f"{pad}{key}:", *emit(value, indent + 2)]
         elif isinstance(value, dict):
             lines.append(f"{pad}{key}: {{}}")
-        elif isinstance(value, list):
+        elif isinstance(value, list) and value:
             lines += [f"{pad}{key}:", *[f'{pad}  - "{item}"' for item in value]]
+        elif isinstance(value, list):
+            lines.append(f"{pad}{key}: []")
         else:
             lines.append(f"{pad}{key}: {value}")
     return lines

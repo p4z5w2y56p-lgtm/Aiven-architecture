@@ -702,8 +702,19 @@ def test_sexagesimal_is_not_an_integer():
 
 
 def test_lookalike_forbidden_entry_is_reported():
-    data = BASE.replace(b"drive.delete", f"drive.d{CYRILLIC_E}lete".encode(), 1)
-    assert ("E-FM-NON-ASCII", at("- drive.delete")) in {(f.code, f.line) for f in validate(data)}
+    lookalike = f"drive.d{CYRILLIC_E}lete"
+    found = validate(BASE.replace(b"drive.delete", lookalike.encode(), 1))
+    line = at("- drive.delete")
+    assert ("E-FM-NON-ASCII", line) in {(f.code, f.line) for f in found}
+    # It is no exact name, so it is E-FORBIDDEN-PATTERN (and not also unknown), and the real
+    # drive.delete is then missing from the baseline.
+    assert [(f.line, f.params) for f in found if f.code == "E-FORBIDDEN-PATTERN"] == [
+        (line, {"entry": lookalike})
+    ]
+    assert [(f.line, f.params) for f in found if f.code == "E-FORBIDDEN-BASELINE"] == [
+        (at("forbidden:"), {"missing": "drive.delete"})
+    ]
+    assert "E-FORBIDDEN-UNKNOWN" not in {f.code for f in found}
 
 
 def test_field_names_are_case_sensitive():
@@ -743,13 +754,18 @@ UNUSABLE = {
 
 
 def test_checks_that_need_the_front_matter_are_skipped_when_it_has_no_data(monkeypatch):
-    calls = []
+    calls, rules = [], []
     monkeypatch.setattr(
         "aiven.policy.validate.check_filename", lambda path, front: calls.append(front) or []
+    )
+    monkeypatch.setattr(
+        "aiven.policy.validate.build_policy",
+        lambda front, *args, **kwargs: rules.append(front) or (None, []),
     )
     for old, new in UNUSABLE.values():
         assert BASE.count(old) == 1
         validate(BASE.replace(old, new))
-    assert calls == []  # no data, so nothing that needs the fields has run
+    assert calls == [] and rules == []  # no data, so nothing that needs the fields has run
     validate(BASE)
     assert [front.data for front in calls] == [DATA]
+    assert [front.data for front in rules] == [DATA]

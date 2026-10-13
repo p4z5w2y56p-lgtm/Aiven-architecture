@@ -1,9 +1,10 @@
 """One table for the codes of every check: a mutated valid policy yields exactly one new finding.
 
-Each case is (code, mutation, expected_line). The mutation edits the bytes of `valid_base()`. The
-validator must then report exactly one finding that the base does not have, with that code on that
-line (None for a finding about the whole file). Findings that disappear are ignored, and the base
-may carry warnings (later checks add W-TOOL-NOT-LIVE), so the full list is never compared.
+Each case is (code, mutation, expected_line), and may have the parameters of the message as a
+fourth item. The mutation edits the bytes of `valid_base()`. The validator must then report exactly
+one finding that the base does not have, with that code on that line (None for a finding about the
+whole file). Findings that disappear are ignored, and the base carries the three warnings that no
+wrapper is live (W-TOOL-NOT-LIVE), so the full list is never compared.
 
 Rules for a mutation:
 - Edit text inside one free-text line of the body (Purpose, Why each tool, Data and risks). Never
@@ -12,6 +13,11 @@ Rules for a mutation:
   matter cases: those edit the front matter in place (a field is commented out, the comment-only
   line 2 is replaced), so that no line moves. Only E-LIST-DUPLICATE adds a line, behind the
   forbidden list, where nothing else points.
+- The field, tool, limit and scope cases (Task 1.4) edit the front matter in place as well, or add
+  one line behind the last entry of a list: the lines below it move down, and the base has no
+  finding below any of them. They never replace a valid entry, which would leave the body
+  explaining other tools than the front matter lists. A rule that needs a different set of tools
+  (the warnings about slack and unused limits and scope) comments out the tools it does not want.
 - Use no URLs, links or HTML: later body checks reject them.
 - Find the target line by content (`line_of`), not by number.
 - E-FILENAME changes the path that the validator is given, not the bytes (see its own test).
@@ -35,7 +41,9 @@ from aiven.policy.validate import validate_file
 from tests.support import REPO_ROOT, gen
 from tests.support.gen import grouped
 from tests.support.policies import (
+    AGENTS_PROJECT,
     BASE_PATH,
+    FOLDER_ID,
     TEMPLATE_PATH,
     line_of,
     platform_config,
@@ -70,6 +78,24 @@ LIMITS_LINE = line_of(BASE_TEXT, "limits:")
 RUNTIME_LINE = line_of(BASE_TEXT, "max_runtime_s: 300")
 DELETE_LINE = line_of(BASE_TEXT, "- drive.delete")
 LAST_FORBIDDEN_LINE = line_of(BASE_TEXT, "- gmail.send_bulk")
+SCHEMA_LINE = line_of(BASE_TEXT, "schema: aiven-policy/v1")
+PRINCIPAL_LINE = line_of(BASE_TEXT, "principal: agent-")
+MAX_CLASS_LINE = line_of(BASE_TEXT, "max_class: R2")
+SHEETS_LINE = line_of(BASE_TEXT, "- sheets.read")
+DRAFT_LINE = line_of(BASE_TEXT, "- gmail.draft")
+SEND_LINE = DRAFT_LINE + 1  # `- gmail.send` is also the start of the line of gmail.send_bulk
+FORBIDDEN_LINE = line_of(BASE_TEXT, "forbidden:")
+UNTRUSTED_LINE = line_of(BASE_TEXT, "untrusted_input: strict")
+EMAILS_LINE = line_of(BASE_TEXT, "emails_per_day: 10")
+RECORDS_LINE = line_of(BASE_TEXT, "records_per_run: 10")
+SPEND_LINE = line_of(BASE_TEXT, "spend_eur_per_run: 0")
+RUNS_LINE = line_of(BASE_TEXT, "runs_per_day: 1")
+SCOPE_LINE = line_of(BASE_TEXT, "scope:")
+FOLDER_ID_LINE = line_of(BASE_TEXT, "drive_folder_id:")
+SANDBOX_LINE = line_of(BASE_TEXT, "drive_folder_path:")
+EMAIL_TO_LINE = line_of(BASE_TEXT, "email_to:")
+LAST_EMAIL_LINE = line_of(BASE_TEXT, '- "@aivenstudios.com"')
+MIN_RUNS_LINE = line_of(BASE_TEXT, "min_runs: 10")
 
 Mutation = Callable[[bytes], bytes]
 
@@ -139,8 +165,49 @@ def new_findings(data: bytes) -> list[Finding]:
     return list((Counter(findings_of(data)) - Counter(findings_of(BASE))).elements())
 
 
-def case(code: str, label: str, mutation: Mutation, line: int | None):
-    return pytest.param(code, mutation, line, id=f"{code} {label}")
+def case(
+    code: str,
+    label: str,
+    mutation: Mutation,
+    line: int | None,
+    params: dict[str, str] | None = None,
+):
+    return pytest.param(code, mutation, line, params, id=f"{code} {label}")
+
+
+def together(*mutations: Mutation) -> Mutation:
+    """Several edits in a row. None of them may add or remove a line."""
+
+    def mutate(data: bytes) -> bytes:
+        for mutation in mutations:
+            data = mutation(data)
+        return data
+
+    return mutate
+
+
+def add_tool(name: str) -> Mutation:
+    """Add a tool behind the last one. The lines below it move down."""
+    return replace("  - gmail.send\nforbidden:", f"  - gmail.send\n  - {name}\nforbidden:")
+
+
+def add_forbidden(entry: str) -> Mutation:
+    return insert_line_after("- gmail.send_bulk", f"  - {entry}")
+
+
+def add_emails(*entries: str) -> Mutation:
+    lines = "\n".join(f'    - "{entry}"' for entry in entries)
+    return insert_line_after('- "@aivenstudios.com"', lines)
+
+
+def comment_out(needle: str) -> Mutation:
+    """Turn the one line that holds `needle` into a comment. No line moves."""
+    return edit_line(needle, needle, f"# {needle}")
+
+
+def set_value(key: str, old: str, new: str) -> Mutation:
+    """Change a value in the line of a field of the front matter: `limits: 10` to `limits: 0`."""
+    return edit_line(f"{key}: {old}", f"{key}: {old}", f"{key}: {new}")
 
 
 def content_samples() -> list[tuple[str, str, str, str]]:
@@ -253,9 +320,305 @@ FRONT_MATTER_CASES = [
     ),
 ]
 
+TOOLS_END = SEND_LINE + 1  # where an added tool stands
+FORBIDDEN_END = LAST_FORBIDDEN_LINE + 1
+EMAILS_END = LAST_EMAIL_LINE + 1
+
+# The text of the base, as the cases change it.
+SENDS = "  - gmail.send\nforbidden:"
+NO_SENDS = "  # - gmail.send\nforbidden:"
+
+# A policy without gmail.send. Its email limit is then 0, or it would be unused.
+WITHOUT_SEND = together(replace(SENDS, NO_SENDS), set_value("emails_per_day", "10", "0"))
+
+# A policy that only reads: R0, no emails and no records. The email scope is then unused.
+ONLY_READS = together(
+    replace("  - gmail.draft\n" + SENDS, "  # - gmail.draft\n" + NO_SENDS),
+    set_value("max_class", "R2", "R0"),
+    set_value("emails_per_day", "10", "0"),
+    set_value("records_per_run", "10", "0"),
+)
+
+# Task 1.4: the field, tool, limit and scope rules (validator-spec 3.3 to 3.5).
+LONG_AGENT = "a" * 25
+RULE_CASES = [
+    case(
+        "E-SCHEMA",
+        "aiven-policy/v2",
+        edit_line("schema: aiven-policy/v1", "v1", "v2"),
+        SCHEMA_LINE,
+        {"found": "aiven-policy/v2"},
+    ),
+    *[
+        # Ruling R28: the file name and the principal are those of invoice-reminder and would be
+        # wrong too. Without the ruling one bad id gives three findings.
+        case(
+            "E-AGENT-ID",
+            label,
+            edit_line("agent: invoice-reminder", "invoice-reminder", agent),
+            AGENT_LINE,
+            {"value": agent},
+        )
+        for label, agent in [
+            ("two characters", "ab"),
+            ("reserved", "admin"),
+            ("25 characters", LONG_AGENT),
+            ("capital", "Invoice-reminder"),
+        ]
+    ],
+    case(
+        "E-PRINCIPAL",
+        "another project",
+        edit_line("principal: agent-", AGENTS_PROJECT, "other-project"),
+        PRINCIPAL_LINE,
+        {
+            "agent": "invoice-reminder",
+            "project": AGENTS_PROJECT,
+            "value": "agent-invoice-reminder@other-project.iam.gserviceaccount.com",
+        },
+    ),
+    case("E-MAX-CLASS-R3", "R3", set_value("max_class", "R2", "R3"), MAX_CLASS_LINE, {}),
+    case("E-MAX-CLASS-R4", "R4", set_value("max_class", "R2", "R4"), MAX_CLASS_LINE, {}),
+    case(
+        "E-FIELD-TYPE",
+        "max_class high",
+        set_value("max_class", "R2", "high"),
+        MAX_CLASS_LINE,
+        {"field": "max_class", "expected": "R0 | R1 | R2", "found": "high"},
+    ),
+    case(
+        "E-UNTRUSTED-INPUT",
+        "off",
+        set_value("untrusted_input", "strict", "off"),
+        UNTRUSTED_LINE,
+        {},
+    ),
+    case(
+        "W-UNTRUSTED-TAINT",
+        "taint",
+        set_value("untrusted_input", "strict", "taint"),
+        UNTRUSTED_LINE,
+        {},
+    ),
+    # E-RANGE: one above (or below) the ceiling of each number. The boundaries that pass are
+    # in BOUNDARY_CASES.
+    *[
+        case(
+            "E-RANGE",
+            f"{field} {value}",
+            set_value(field, old, str(value)),
+            line,
+            {"field": path, "value": str(value), "min": str(low), "max": str(high)},
+        )
+        for field, path, old, line, low, high, values in [
+            ("version", "version", "1", VERSION_LINE, 1, 9999, (0, 10_000)),
+            ("emails_per_day", "limits.emails_per_day", "10", EMAILS_LINE, 0, 50, (51,)),
+            ("records_per_run", "limits.records_per_run", "10", RECORDS_LINE, 0, 200, (201,)),
+            ("max_runtime_s", "limits.max_runtime_s", "300", RUNTIME_LINE, 30, 900, (29, 901)),
+            ("runs_per_day", "limits.runs_per_day", "1", RUNS_LINE, 1, 10, (0, 11)),
+            ("min_runs", "shadow.min_runs", "10", MIN_RUNS_LINE, 1, 100, (0, 101)),
+        ]
+        for value in values
+    ],
+    case(
+        "E-RANGE",
+        "51 addresses",
+        add_emails(*[f"a{n}@aivenstudios.com" for n in range(50)]),
+        EMAIL_TO_LINE,
+        {"field": "scope.email_to", "value": "51", "min": "1", "max": "50"},
+    ),
+    case(
+        "E-RANGE",
+        "no address",
+        together(
+            edit_line("email_to:", "email_to:", "email_to: []"),
+            comment_out('    - "@aivenstudios.com"'),
+        ),
+        EMAIL_TO_LINE,
+        {"field": "scope.email_to", "value": "0", "min": "1", "max": "50"},
+    ),
+    case("E-TOOL-UNKNOWN", "a typo", add_tool("drive.reed"), TOOLS_END, {"tool": "drive.reed"}),
+    case("E-TOOL-WILDCARD", "drive.*", add_tool("drive.*"), TOOLS_END, {"tool": "drive.*"}),
+    case("E-TOOL-R3", "drive.move", add_tool("drive.move"), TOOLS_END, {"tool": "drive.move"}),
+    case(
+        "E-TOOL-R4", "payments.pay", add_tool("payments.pay"), TOOLS_END, {"tool": "payments.pay"}
+    ),
+    case(
+        "E-TOOL-ABOVE-MAX-CLASS",
+        "gmail.send with max_class R1",
+        set_value("max_class", "R2", "R1"),
+        SEND_LINE,
+        {"tool": "gmail.send", "class": "R2", "max": "R1"},
+    ),
+    case(
+        "E-TOOL-FORBIDDEN",
+        "sheets.read",
+        add_forbidden("sheets.read"),
+        SHEETS_LINE,
+        {"tool": "sheets.read", "pattern": "sheets.read"},
+    ),
+    case(
+        "E-FORBIDDEN-PATTERN",
+        "a star in the middle",
+        add_forbidden("payments.*.pay"),
+        FORBIDDEN_END,
+        {"entry": "payments.*.pay"},
+    ),
+    case(
+        "E-FORBIDDEN-UNKNOWN",
+        "paymnets.*",
+        add_forbidden("paymnets.*"),
+        FORBIDDEN_END,
+        {"entry": "paymnets.*"},
+    ),
+    case(
+        "E-FORBIDDEN-BASELINE",
+        "drive.share left out",
+        comment_out("- drive.share"),
+        FORBIDDEN_LINE,
+        {"missing": "drive.share"},
+    ),
+    case("E-LIMIT-SPEND", "5", set_value("spend_eur_per_run", "0", "5"), SPEND_LINE, {}),
+    case(
+        "E-LIMIT-CONFLICT",
+        "gmail.send, no emails",
+        set_value("emails_per_day", "10", "0"),
+        EMAILS_LINE,
+        {"limit": "emails_per_day", "tool": "gmail.send"},
+    ),
+    case(
+        "E-LIMIT-CONFLICT",
+        "gmail.draft, no records",
+        set_value("records_per_run", "10", "0"),
+        RECORDS_LINE,
+        {"limit": "records_per_run", "tool": "gmail.draft"},
+    ),
+    case(
+        "E-SCOPE-MISSING",
+        "drive_folder_id",
+        comment_out("drive_folder_id:"),
+        SCOPE_LINE,
+        {"field": "drive_folder_id", "tool": "sheets.read"},
+    ),
+    case(
+        "E-SCOPE-MISSING",
+        "drive_folder_path",
+        comment_out("drive_folder_path:"),
+        SCOPE_LINE,
+        {"field": "drive_folder_path", "tool": "sheets.read"},
+    ),
+    case(
+        "E-SCOPE-MISSING",
+        "email_to",
+        together(comment_out("email_to:"), comment_out('    - "@aivenstudios.com"')),
+        SCOPE_LINE,
+        {"field": "email_to", "tool": "gmail.draft"},
+    ),
+    case(
+        "E-FIELD-TYPE",
+        "drive_folder_id too short",
+        edit_line("drive_folder_id:", FOLDER_ID, "short"),
+        FOLDER_ID_LINE,
+        {
+            "field": "scope.drive_folder_id",
+            "expected": "[A-Za-z0-9_-]{10,100}",
+            "found": "short",
+        },
+    ),
+    case(
+        "E-SCOPE-SANDBOX",
+        "another drive",
+        edit_line("drive_folder_path:", "AIVEN Architecture Sandbox", "Other Drive"),
+        SANDBOX_LINE,
+        {},
+    ),
+    *[
+        case("E-SCOPE-EMAIL", entry, add_emails(entry), EMAILS_END, {"entry": entry})
+        for entry in ("@Aivenstudios.com", "*@x.nl")
+    ],
+    case(
+        "E-SCOPE-EMAIL-PUBLIC",
+        "@gmail.com",
+        add_emails("@gmail.com"),
+        EMAILS_END,
+        {"entry": "@gmail.com"},
+    ),
+    case(
+        "E-SCOPE-EMAIL-EXTERNAL",
+        "@client.nl",
+        add_emails("@client.nl"),
+        EMAILS_END,
+        {"entry": "@client.nl"},
+    ),
+    case(
+        "W-MAX-CLASS-SLACK",
+        "R2 with nothing above R1",
+        WITHOUT_SEND,
+        MAX_CLASS_LINE,
+        {"max": "R2", "highest": "R1"},
+    ),
+    case(
+        "W-TOOL-NOT-LIVE",
+        "drive.read",
+        add_tool("drive.read"),
+        TOOLS_END,
+        {"tool": "drive.read", "wrapper": "Drive"},
+    ),
+    case(
+        "W-TOOL-NOT-LIVE",
+        "agentbuilder.read",
+        add_tool("agentbuilder.read"),
+        TOOLS_END,
+        {"tool": "agentbuilder.read", "wrapper": "Agent Builder"},
+    ),
+    case(
+        "W-LIMIT-UNUSED",
+        "emails without gmail.send",
+        together(
+            replace(SENDS, NO_SENDS),
+            set_value("max_class", "R2", "R1"),
+        ),
+        EMAILS_LINE,
+        {"limit": "emails_per_day", "value": "10"},
+    ),
+    case(
+        "W-SCOPE-UNUSED",
+        "email_to without gmail tools",
+        ONLY_READS,
+        EMAIL_TO_LINE,
+        {"field": "email_to"},
+    ),
+    case(
+        "W-SHADOW-LOW",
+        "5 runs",
+        set_value("min_runs", "10", "5"),
+        MIN_RUNS_LINE,
+        {"value": "5"},
+    ),
+]
+
+# Numbers on the boundary that is allowed: no new finding at all.
+BOUNDARY_CASES = [
+    pytest.param(set_value(field, old, str(value)), id=f"{field} {value}")
+    for field, old, value in [
+        ("version", "1", 9999),
+        ("emails_per_day", "10", 50),
+        ("records_per_run", "10", 200),
+        ("max_runtime_s", "300", 30),
+        ("max_runtime_s", "300", 900),
+        ("runs_per_day", "1", 10),
+        ("min_runs", "10", 100),
+    ]
+] + [
+    pytest.param(
+        add_emails(*[f"a{n}@aivenstudios.com" for n in range(49)]), id="email_to 50 addresses"
+    )
+]
+
 # Task 1.2: the file checks (validator-spec 3.1) and content safety (3.8).
 CASES = [
     *FRONT_MATTER_CASES,
+    *RULE_CASES,
     case("E-ENCODING", "byte-order mark", lambda data: codecs.BOM_UTF8 + data, 1),
     case("E-ENCODING", "invalid byte", insert_after(PURPOSE, b"\xff"), PURPOSE_LINE),
     case("E-LINE-ENDINGS", "CR before the LF", insert_after(PURPOSE_END, "\r"), PURPOSE_LINE),
@@ -279,17 +642,33 @@ CASES = [
 
 
 def test_valid_base_has_no_errors():
-    assert [f for f in findings_of(BASE) if f.severity == "error"] == []
+    # Today no wrapper is live, so the three tools give the three warnings of spec section 9, and
+    # nothing else (that is how the template becomes a real policy: "only the three warnings").
+    found = findings_of(BASE)
+    assert [(f.code, f.severity, f.line) for f in found] == [
+        ("W-TOOL-NOT-LIVE", "warning", SHEETS_LINE),
+        ("W-TOOL-NOT-LIVE", "warning", DRAFT_LINE),
+        ("W-TOOL-NOT-LIVE", "warning", SEND_LINE),
+    ]
+    assert [f.params for f in found] == [
+        {"tool": "sheets.read", "wrapper": "Drive"},
+        {"tool": "gmail.draft", "wrapper": "Email"},
+        {"tool": "gmail.send", "wrapper": "Email"},
+    ]
 
 
-@pytest.mark.parametrize(("code", "mutation", "expected_line"), CASES)
-def test_mutation_yields_exactly_one_new_finding(code, mutation, expected_line):
+@pytest.mark.parametrize(("code", "mutation", "expected_line", "params"), CASES)
+def test_mutation_yields_exactly_one_new_finding(code, mutation, expected_line, params):
     new = new_findings(mutation(BASE))
     assert [(f.code, f.line) for f in new] == [(code, expected_line)]
     finding = new[0]
+    assert params is None or finding.params == params
     assert finding.severity == ("error" if code.startswith("E-") else "warning")
     for lang in ("en", "nl"):
         text = message(finding, lang)  # raises KeyError if the finding lacks a parameter
+        # No `{name}` is left over. A value may hold braces itself: the pattern of a folder ID.
+        for value in finding.params.values():
+            text = text.replace(value, "")
         assert "{" not in text and "}" not in text
     assert format_line(finding).startswith(f"{finding.severity} {code} {BASE_PATH}")
 
@@ -477,6 +856,11 @@ E_FILENAME_SKIPPED = {
     "missing": edit_line("agent: invoice-reminder", "agent:", "# agent:"),
     "placeholder": edit_line("agent: invoice-reminder", "invoice-reminder", "TODO"),
     "no front matter": replace("---\n# AIVEN", "--- \n# AIVEN"),
+    # Ruling R28: a bad id is E-AGENT-ID, and the file name is not also wrong.
+    "too short": edit_line("agent: invoice-reminder", "invoice-reminder", "ab"),
+    "reserved": edit_line("agent: invoice-reminder", "invoice-reminder", "admin"),
+    "too long": edit_line("agent: invoice-reminder", "invoice-reminder", LONG_AGENT),
+    "capital": edit_line("agent: invoice-reminder", "invoice-reminder", "Invoice-reminder"),
 }
 
 
@@ -486,27 +870,81 @@ def test_e_filename_needs_a_usable_agent(mutation):
     assert "E-FILENAME" not in {f.code for f in findings}
 
 
-def test_the_template_gives_the_findings_of_spec_section_9_that_exist_so_far():
-    # The rows of the self-test for the checks that are built: the file name and the placeholders.
-    # The W-TOOL-NOT-LIVE rows come with the tool checks, and then this list grows.
+def test_the_template_gives_the_findings_of_spec_section_9():
     _, *rows = table_after("9. Template self-test")
-    so_far = [row for row in rows if row[1] in ("E-FILENAME", "E-PLACEHOLDER")]
     findings = validate_file(
         Path("templates/policy-template.md"), TEMPLATE_PATH.read_bytes(), CFG, CATALOG
     )
-    assert [(f.code, f.line) for f in findings] == [
-        (code, None if line == "(file)" else int(line)) for _, code, line, _ in so_far
+    assert [(f.severity, f.code, f.line) for f in findings] == [
+        (severity, code, None if line == "(file)" else int(line))
+        for severity, code, line, _ in rows
     ]
     assert [(f.code, f.line) for f in findings] == [
         ("E-FILENAME", None),
         ("E-PLACEHOLDER", 6),
+        ("W-TOOL-NOT-LIVE", 9),
+        ("W-TOOL-NOT-LIVE", 10),
+        ("W-TOOL-NOT-LIVE", 11),
         ("E-PLACEHOLDER", 25),
         ("E-PLACEHOLDER", 56),
         ("E-PLACEHOLDER", 84),
     ]
     assert findings[0].params == {"name": "policy-template.md", "agent": "invoice-reminder"}
-    assert [f.params["token"] for f in findings[1:]] == [
-        code_spans(about)[0] for _, _, _, about in so_far[1:]
+    for finding, (_, _, _, about) in zip(findings, rows, strict=True):
+        if finding.code == "E-PLACEHOLDER":
+            assert finding.params == {"token": code_spans(about)[0]}
+        if finding.code == "W-TOOL-NOT-LIVE":
+            wrapper = re.search(r"\(([^)]+)\)", about).group(1)  # "`sheets.read` (Drive)"
+            assert finding.params == {"tool": code_spans(about)[0], "wrapper": wrapper}
+
+
+def test_placeholder_skips_other_checks_for_that_field():
+    # The principal of the template holds REPLACE_ME_AGENTS_PROJECT, which is no agents project.
+    # A field that holds a placeholder skips its other checks (validator-spec 3.1): E-PLACEHOLDER
+    # on line 6, and no E-PRINCIPAL.
+    template = TEMPLATE_PATH.read_bytes()
+    principal_line = line_of(template.decode("utf-8"), "principal: agent-")
+    path = Path("policies/invoice-reminder.md")
+    found = validate_file(path, template, CFG, CATALOG)
+    assert principal_line == 6
+    assert ("E-PLACEHOLDER", principal_line) in {(f.code, f.line) for f in found}
+    assert "E-PRINCIPAL" not in {f.code for f in found}
+    # The control: with another project in place of the placeholder, the field is checked.
+    filled = template.replace(b"REPLACE_ME_AGENTS_PROJECT", b"other-project", 1)
+    assert [(f.code, f.line) for f in validate_file(path, filled, CFG, CATALOG)].count(
+        ("E-PRINCIPAL", principal_line)
+    ) == 1
+
+
+@pytest.mark.parametrize("mutation", BOUNDARY_CASES)
+def test_a_number_on_the_boundary_that_is_allowed_yields_no_new_finding(mutation):
+    assert new_findings(mutation(BASE)) == []
+
+
+def test_a_bad_agent_id_is_one_finding_also_when_the_file_has_that_name():
+    # Ruling R28: one defect, one code. The file name matches here, so it is only the principal
+    # of invoice-reminder that would have been wrong as well.
+    data = edit_line("agent: invoice-reminder", "invoice-reminder", "ab")(BASE)
+    found = validate_file(Path("policies/ab.md"), data, CFG, CATALOG)
+    assert {f.code for f in found} == {"E-AGENT-ID", "W-TOOL-NOT-LIVE"}
+
+
+def test_the_rules_report_alongside_the_findings_of_the_front_matter_in_one_sorted_list():
+    data = together(
+        set_value("max_class", "R2", "R3"),
+        set_value("runs_per_day", "1", "11"),
+        replace("  - gmail.send\nforbidden:", "  - gmail.send\n  - drive.reed\nforbidden:"),
+        edit_line("- drive.delete", "# required", f"# r{CYRILLIC_E}quired"),
+    )(BASE)
+    found = findings_of(data)
+    assert [(f.code, f.line) for f in found] == [
+        ("E-MAX-CLASS-R3", MAX_CLASS_LINE),
+        ("W-TOOL-NOT-LIVE", SHEETS_LINE),
+        ("W-TOOL-NOT-LIVE", DRAFT_LINE),
+        ("W-TOOL-NOT-LIVE", SEND_LINE),
+        ("E-TOOL-UNKNOWN", TOOLS_END),
+        ("E-FM-NON-ASCII", DELETE_LINE + 1),
+        ("E-RANGE", RUNS_LINE + 1),
     ]
 
 

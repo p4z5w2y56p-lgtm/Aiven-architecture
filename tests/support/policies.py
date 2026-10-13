@@ -20,7 +20,7 @@ FOLDER_ID = "1aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"
 
 
 def platform_config() -> PlatformConfig:
-    """The deploy values that the tests use. `AGENTS_PROJECT` is the project in the base's `principal`.
+    """The deploy values that the tests use. `AGENTS_PROJECT` is the project of the base policy.
 
     `config/platform.example.yaml` names another project (`aiven-agents-example`) and is tested on
     its own in test_config.py. The name is not `test_config`: pytest would collect that function
