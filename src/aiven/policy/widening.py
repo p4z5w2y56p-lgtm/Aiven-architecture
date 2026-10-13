@@ -1,0 +1,93 @@
+"""Widening (validator-spec section 3.6): what a new version allows that the previous one did not.
+
+`widening(prev, new)` compares two policies of the same agent. It gives one string for each way in
+which `new` gives the agent more room, in this order, and whether shadow mode starts again:
+
+1. each tool that `new` has and `prev` has not, in the order of `new`: `tools: +<tool>`;
+2. a higher `max_class`: `max_class: R0 -> R1`;
+3. each of `emails_per_day`, `records_per_run`, `max_runtime_s` and `runs_per_day` that rose, in
+   that order: `limits.<name>: 10 -> 20`. The spend is not one of them: it must be 0
+   (E-LIMIT-SPEND);
+4. in the scope, in this order: a folder ID that is set and is not the old one
+   (`scope.drive_folder_id: changed`), a folder path that is neither the old path nor a folder
+   inside it (`scope.drive_folder_path: changed`), and each `email_to` entry that the old list does
+   not have (`scope.email_to: +<entry>`);
+5. `untrusted_input` from `strict` to `taint`: `untrusted_input: strict -> taint`;
+6. a lower `shadow.min_runs`: `shadow.min_runs: 10 -> 5`.
+
+Narrowing is never listed. Shadow mode starts again exactly when a tool is added or `max_class`
+rises (section 3.6). It then lasts `new.shadow_min_runs` runs, which the caller reads from `new`.
+
+The policy of a file with errors is compared as it is. The classes that a policy may have are R0,
+R1 and R2: R3 and R4 are E-MAX-CLASS-R3 and E-MAX-CLASS-R4 of their own file, and a placeholder is
+E-PLACEHOLDER, so such a class is not ranked here. The other fields are compared whatever their
+values are.
+
+The strings are plain ASCII (`->`), and `check_set` joins them with `; ` for W-WIDENS. They hold
+text from the file (tools, folder IDs, addresses): the `Finding` that quotes them cleans them.
+"""
+
+from aiven.policy.constants import POLICY_CLASSES
+from aiven.policy.model import Policy
+
+# The limits that widening looks at, in the order of the file. The spend is not one of them.
+_LIMITS = ("emails_per_day", "records_per_run", "max_runtime_s", "runs_per_day")
+
+
+def widening(prev: Policy, new: Policy) -> tuple[list[str], bool]:
+    """The changes that give the agent more room in `new`, and whether shadow mode starts again."""
+    added = [tool for tool in new.tools if tool not in prev.tools]
+    raised = _raised(prev.max_class, new.max_class)
+    changes = [f"tools: +{tool}" for tool in added]
+    if raised:
+        changes.append(f"max_class: {prev.max_class} -> {new.max_class}")
+    changes += _limits(prev, new)
+    changes += _scope(prev, new)
+    if prev.untrusted_input == "strict" and new.untrusted_input == "taint":
+        changes.append("untrusted_input: strict -> taint")
+    if new.shadow_min_runs < prev.shadow_min_runs:
+        changes.append(f"shadow.min_runs: {prev.shadow_min_runs} -> {new.shadow_min_runs}")
+    return changes, bool(added) or raised
+
+
+def _raised(old: str, new: str) -> bool:
+    """Whether `new` is a higher class than `old`, where R0 < R1 < R2.
+
+    Only the classes that a policy may have are ranked: with any other class on either side (R3,
+    R4, a placeholder) nothing is raised, because that file has its own code for it.
+    """
+    return (
+        old in POLICY_CLASSES
+        and new in POLICY_CLASSES
+        and POLICY_CLASSES.index(new) > POLICY_CLASSES.index(old)
+    )
+
+
+def _limits(prev: Policy, new: Policy) -> list[str]:
+    changes = []
+    for name in _LIMITS:
+        old, now = getattr(prev.limits, name), getattr(new.limits, name)
+        if now > old:
+            changes.append(f"limits.{name}: {old} -> {now}")
+    return changes
+
+
+def _scope(prev: Policy, new: Policy) -> list[str]:
+    old, now = prev.scope, new.scope
+    changes = []
+    if now.drive_folder_id is not None and now.drive_folder_id != old.drive_folder_id:
+        changes.append("scope.drive_folder_id: changed")
+    path = now.drive_folder_path
+    if path is not None and not _inside(path, old.drive_folder_path):
+        changes.append("scope.drive_folder_path: changed")
+    changes += [f"scope.email_to: +{entry}" for entry in now.email_to if entry not in old.email_to]
+    return changes
+
+
+def _inside(path: str, root: str | None) -> bool:
+    """Whether `path` is the Drive path `root` or a folder inside it.
+
+    The parts of a path are whole folders, joined by ` / ` (section 3.3): `Invoices-old` is not
+    inside `Invoices`.
+    """
+    return root is not None and (path == root or path.startswith(f"{root} / "))

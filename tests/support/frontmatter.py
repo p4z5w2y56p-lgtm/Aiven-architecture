@@ -75,15 +75,20 @@ def edited(change) -> str:
     return "\n".join(emit(data)) + "\n"
 
 
-def front_without(*paths: str) -> str:
-    """Front matter text of `DATA` minus the given fields (`limits.runs_per_day`, `scope`)."""
+def without(*paths: str):
+    """A change for `edited` that removes the given fields (`limits.runs_per_day`, `scope`)."""
 
     def remove(data):
         for path in paths:
             *parents, name = path.split(".")
             del lookup(data, parents)[name]
 
-    return edited(remove)
+    return remove
+
+
+def front_without(*paths: str) -> str:
+    """Front matter text of `DATA` minus the given fields (`limits.runs_per_day`, `scope`)."""
+    return edited(without(*paths))
 
 
 def swap(old: str, new: str) -> str:

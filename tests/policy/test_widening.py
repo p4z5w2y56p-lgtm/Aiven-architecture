@@ -1,0 +1,261 @@
+"""Widening (validator-spec 3.6): what a new version allows that the previous signed one did not.
+
+`widening(prev, new)` gives the changes, as strings in a fixed order, and whether shadow mode starts
+again. Narrowing is never listed. The policies are made as files from the valid base and read with
+the real pipeline (tests/support/variants.py); `PREV` is the base.
+"""
+
+import pytest
+
+from aiven.policy.widening import widening
+from tests.support.bodies import policy_of
+from tests.support.frontmatter import DATA, without
+from tests.support.policies import valid_base
+from tests.support.rules import setting, with_tools
+from tests.support.variants import variant
+
+PREV = variant()
+TOOLS = tuple(DATA["tools"])  # sheets.read, gmail.draft, gmail.send
+READS_ONLY = with_tools("sheets.read")
+FOLDER = DATA["scope"]["drive_folder_path"]  # AIVEN Architecture Sandbox / Invoices
+SANDBOX = "AIVEN Architecture Sandbox"
+LIMITS = {name: value for name, value in DATA["limits"].items() if name != "spend_eur_per_run"}
+
+# --- the main cases of validator-spec 3.6: what restarts shadow mode, and what does not
+
+
+def test_added_tool_restarts_shadow():
+    new = variant(with_tools(*TOOLS, "drive.read"))
+    assert widening(PREV, new) == (["tools: +drive.read"], True)
+
+
+@pytest.mark.parametrize(("low", "high"), [("R0", "R1"), ("R1", "R2"), ("R0", "R2")])
+def test_raised_max_class_restarts_shadow(low, high):
+    before = variant(READS_ONLY, setting("max_class", low))
+    after = variant(READS_ONLY, setting("max_class", high))
+    assert widening(before, after) == ([f"max_class: {low} -> {high}"], True)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("emails_per_day", 11), ("records_per_run", 200), ("max_runtime_s", 600), ("runs_per_day", 2)],
+)
+def test_raised_limit_widens_without_restart(name, value):
+    new = variant(setting(f"limits.{name}", value))
+    assert widening(PREV, new) == ([f"limits.{name}: {LIMITS[name]} -> {value}"], False)
+
+
+def test_strict_to_taint_widens():
+    new = variant(setting("untrusted_input", "taint"))
+    assert widening(PREV, new) == (["untrusted_input: strict -> taint"], False)
+
+
+def test_removed_tool_is_not_widening():
+    new = variant(with_tools("sheets.read", "gmail.draft"))
+    assert widening(PREV, new) == ([], False)
+
+
+# --- what is widening, rule by rule
+
+
+def test_a_lower_min_runs_widens_without_restart():
+    new = variant(setting("shadow.min_runs", 5))
+    assert widening(PREV, new) == (["shadow.min_runs: 10 -> 5"], False)
+
+
+def test_added_tools_are_listed_in_the_order_of_the_new_policy():
+    new = variant(with_tools("gmail.send", "drive.read", "sheets.read", "drive.create"))
+    assert widening(PREV, new) == (["tools: +drive.read", "tools: +drive.create"], True)
+
+
+def test_a_tool_that_moves_is_not_added():
+    new = variant(with_tools("gmail.send", "sheets.read", "gmail.draft"))
+    assert widening(PREV, new) == ([], False)
+
+
+def test_a_policy_does_not_widen_against_itself():
+    assert widening(PREV, PREV) == ([], False)
+    assert widening(PREV, policy_of(valid_base())) == ([], False)  # the same fields, another hash
+
+
+def test_another_folder_id_widens():
+    new = variant(setting("scope.drive_folder_id", "0AnotherFolderId1234"))
+    assert widening(PREV, new) == (["scope.drive_folder_id: changed"], False)
+
+
+def test_a_folder_id_where_there_was_none_widens():
+    before = variant(without("scope.drive_folder_id"))
+    assert widening(before, PREV) == (["scope.drive_folder_id: changed"], False)
+    assert widening(PREV, before) == ([], False)  # the other way it is gone, which is narrowing
+
+
+@pytest.mark.parametrize(
+    ("path", "changed"),
+    [
+        (FOLDER, False),
+        (f"{FOLDER} / 2026", False),
+        (f"{FOLDER} / 2026 / Q1", False),
+        (SANDBOX, True),  # the folder above it
+        (f"{SANDBOX} / Receipts", True),  # a folder next to it
+        (f"{FOLDER}-old", True),  # starts with the same letters, but is not a folder inside it
+        (f"{FOLDER}s", True),
+    ],
+)
+def test_a_folder_path_widens_unless_it_is_the_old_path_or_inside_it(path, changed):
+    new = variant(setting("scope.drive_folder_path", path))
+    assert widening(PREV, new) == (["scope.drive_folder_path: changed"] if changed else [], False)
+
+
+def test_a_folder_path_where_there_was_none_widens():
+    before = variant(without("scope.drive_folder_path"))
+    assert widening(before, PREV) == (["scope.drive_folder_path: changed"], False)
+    assert widening(PREV, before) == ([], False)
+
+
+def test_a_drive_scope_where_there_was_none_widens_with_its_tool():
+    before = variant(
+        with_tools("gmail.draft", "gmail.send"),
+        without("scope.drive_folder_id", "scope.drive_folder_path"),
+    )
+    assert widening(before, PREV) == (
+        [
+            "tools: +sheets.read",
+            "scope.drive_folder_id: changed",
+            "scope.drive_folder_path: changed",
+        ],
+        True,
+    )
+
+
+def test_every_new_address_widens_in_the_order_of_the_new_list():
+    before = variant(setting("scope.email_to", ["@aivenstudios.com", "a@aivenstudios.com"]))
+    after = variant(
+        setting(
+            "scope.email_to",
+            ["c@aivenstudios.com", "a@aivenstudios.com", "@aivenstudios.com", "b@aivenstudios.com"],
+        )
+    )
+    assert widening(before, after) == (
+        ["scope.email_to: +c@aivenstudios.com", "scope.email_to: +b@aivenstudios.com"],
+        False,
+    )
+
+
+def test_an_address_in_a_domain_that_was_listed_is_still_a_new_entry():
+    # The comparison is by entry: it does not ask what the old entries cover.
+    new = variant(setting("scope.email_to", ["@aivenstudios.com", "a@aivenstudios.com"]))
+    assert widening(PREV, new) == (["scope.email_to: +a@aivenstudios.com"], False)
+
+
+def test_addresses_where_there_were_none_widen():
+    before = variant(without("scope.email_to"))
+    assert widening(before, PREV) == (["scope.email_to: +@aivenstudios.com"], False)
+
+
+# --- what is never listed
+
+NARROWINGS = {
+    "a tool less": ((), (with_tools("sheets.read", "gmail.draft"),)),
+    "the tools in another order": ((), (with_tools("gmail.send", "sheets.read", "gmail.draft"),)),
+    "a lower max_class": ((), (with_tools("sheets.read", "gmail.draft", max_class="R1"),)),
+    "lower limits": (
+        (),
+        (
+            setting("limits.emails_per_day", 5),
+            setting("limits.records_per_run", 5),
+            setting("limits.max_runtime_s", 60),
+        ),
+    ),
+    "taint to strict": ((setting("untrusted_input", "taint"),), ()),
+    "a higher min_runs": ((), (setting("shadow.min_runs", 20),)),
+    "a folder inside the old one": ((), (setting("scope.drive_folder_path", f"{FOLDER} / 2026"),)),
+    "a folder inside the drive": ((setting("scope.drive_folder_path", SANDBOX),), ()),
+    "no folder": ((), (without("scope.drive_folder_id", "scope.drive_folder_path"),)),
+    "fewer addresses": (
+        (setting("scope.email_to", ["@aivenstudios.com", "a@aivenstudios.com"]),),
+        (),
+    ),
+    "the addresses in another order": (
+        (setting("scope.email_to", ["@aivenstudios.com", "a@aivenstudios.com"]),),
+        (setting("scope.email_to", ["a@aivenstudios.com", "@aivenstudios.com"]),),
+    ),
+    "no scope": ((), (without("scope"),)),
+    # The spend must be 0 (E-LIMIT-SPEND), so it is not one of the limits that widening lists.
+    "a spend that rose": ((), (setting("limits.spend_eur_per_run", 5),)),
+}
+
+
+@pytest.mark.parametrize(("before", "after"), NARROWINGS.values(), ids=NARROWINGS)
+def test_narrowing_is_never_listed(before, after):
+    assert widening(variant(*before), variant(*after)) == ([], False)
+
+
+@pytest.mark.parametrize("odd", ["R3", "R4"])
+def test_a_class_that_a_policy_may_not_have_is_not_compared(odd):
+    # max_class R3 and R4 are E-MAX-CLASS-R3 and E-MAX-CLASS-R4 of their own file, and the policy
+    # of that file is still made. They are not ranked: no error here, and no second code for it.
+    odd_class = variant(setting("max_class", odd))
+    assert widening(PREV, odd_class) == ([], False)
+    assert widening(odd_class, PREV) == ([], False)
+
+
+def test_only_strict_to_taint_is_a_change_of_the_mode():
+    # `off` is E-UNTRUSTED-INPUT of its own file, and the policy of that file is still made.
+    off = variant(setting("untrusted_input", "off"))
+    taint = variant(setting("untrusted_input", "taint"))
+    assert widening(PREV, off) == ([], False)
+    assert widening(off, taint) == ([], False)
+    assert widening(taint, taint) == ([], False)
+
+
+# --- all of it together
+
+BEFORE = variant(
+    with_tools("sheets.read", max_class="R0"),
+    setting("limits.emails_per_day", 0),
+    setting("limits.records_per_run", 0),
+    setting("limits.max_runtime_s", 60),
+    setting("scope.drive_folder_id", "0FolderBeforeId1234"),
+    setting("scope.email_to", ["@aivenstudios.com"]),
+)
+AFTER = variant(
+    with_tools("gmail.send", "sheets.read", "drive.read", "gmail.draft", max_class="R2"),
+    setting("untrusted_input", "taint"),
+    setting("limits.emails_per_day", 20),
+    setting("limits.records_per_run", 30),
+    setting("limits.max_runtime_s", 600),
+    setting("limits.runs_per_day", 2),
+    setting("scope.drive_folder_path", SANDBOX),
+    setting("scope.email_to", ["@aivenstudios.com", "b@aivenstudios.com", "a@aivenstudios.com"]),
+    setting("shadow.min_runs", 5),
+)
+
+
+def test_changes_come_in_a_fixed_order():
+    # Tools (in the order of the new policy), max_class, the limits in the order of the file,
+    # the scope (folder ID, folder path, addresses), the mode, min_runs.
+    changes, restart = widening(BEFORE, AFTER)
+    assert restart is True
+    assert changes == [
+        "tools: +gmail.send",
+        "tools: +drive.read",
+        "tools: +gmail.draft",
+        "max_class: R0 -> R2",
+        "limits.emails_per_day: 0 -> 20",
+        "limits.records_per_run: 0 -> 30",
+        "limits.max_runtime_s: 60 -> 600",
+        "limits.runs_per_day: 1 -> 2",
+        "scope.drive_folder_id: changed",
+        "scope.drive_folder_path: changed",
+        "scope.email_to: +b@aivenstudios.com",
+        "scope.email_to: +a@aivenstudios.com",
+        "untrusted_input: strict -> taint",
+        "shadow.min_runs: 10 -> 5",
+    ]
+
+
+def test_the_changes_are_plain_ascii_text():
+    changes, _ = widening(BEFORE, AFTER)
+    assert len(changes) == 14
+    assert all(type(change) is str and change.isascii() for change in changes)
+    assert all(change.isprintable() for change in changes)
