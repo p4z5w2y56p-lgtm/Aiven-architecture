@@ -315,7 +315,8 @@ def test_an_empty_section_is_one_finding_with_its_name_and_nothing_else_is_said_
 @pytest.mark.parametrize(
     ("text", "length"),
     [
-        ("a   b\t\tc", 5),  # runs of whitespace count as one space
+        ("a   b     c", 5),  # runs of whitespace count as one space
+        ("a\tb", 2),  # a tab is a hidden character, and a hidden character is no text
         ("  padded  ", 6),  # and the ends are cut
         ("ab\ncd", 5),  # a line break in a paragraph counts as one space
         ("`code`", 4),  # a code span counts, without its backticks
@@ -350,6 +351,36 @@ def test_a_heading_inside_the_section_counts_as_text_and_the_heading_of_the_sect
 )
 def test_code_blocks_html_and_images_are_not_text(block):
     assert [name for name, _ in empty_of(section_with("Purpose", block))] == ["Purpose"]
+
+
+@pytest.mark.parametrize(
+    "hidden",
+    [
+        "&#8203;",
+        "&#x202E;",
+        "&#xE0041;",
+        "&nbsp;",
+        "\N{ZERO WIDTH SPACE}",
+        "\N{TAG LATIN SMALL LETTER A}",
+    ],
+    ids=[
+        "zero width",
+        "override",
+        "tag letter",
+        "no-break space",
+        "written zero width",
+        "written tag",
+    ],
+)
+def test_characters_that_the_reader_cannot_see_are_not_text(hidden):
+    # Twenty of them is nothing, and the written ones are E-HIDDEN-CHAR's as well (a file check).
+    assert [name for name, _ in empty_of(section_with("Purpose", hidden * 20))] == ["Purpose"]
+    # and they do not help a short text to reach 20 characters
+    assert [name for name, _ in empty_of(section_with("Purpose", "Short. " + hidden * 20))] == [
+        "Purpose"
+    ]
+    # while the same text without them, long enough, is fine
+    assert empty_of(section_with("Purpose", "A sentence that is long." + hidden * 3)) == []
 
 
 def test_a_section_that_is_not_there_is_not_empty():
@@ -435,6 +466,18 @@ def test_a_bullet_that_does_not_have_the_form_does_not_explain_the_tool(bullet):
 )
 def test_a_bullet_with_a_code_span_a_colon_and_a_reason_explains_the_tool(bullet):
     assert tools_of(edited(BULLET, bullet)) == []
+
+
+@pytest.mark.parametrize(
+    "hidden",
+    ["&#8203;", "&#x202E;", "&nbsp;", "\N{ZERO WIDTH SPACE}", "\N{TAG LATIN SMALL LETTER A}"],
+)
+def test_a_reason_that_is_only_characters_that_the_reader_cannot_see_is_no_reason(hidden):
+    found = tools_of(edited(BULLET, f"- `gmail.draft`: {hidden}"))
+    assert ("E-BODY-TOOL-UNEXPLAINED", WHY_LINE, "gmail.draft") in found
+    found = tools_of(edited(BULLET, f"- `gmail.draft`:{hidden}{hidden}"))
+    assert ("E-BODY-TOOL-UNEXPLAINED", WHY_LINE, "gmail.draft") in found
+    assert tools_of(edited(BULLET, f"- `gmail.draft`: {hidden}writes drafts")) == []
 
 
 def test_a_sub_bullet_explains_a_tool():

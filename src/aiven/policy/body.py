@@ -46,6 +46,7 @@ from pathlib import Path
 from markdown_it.token import Token
 
 from aiven.policy.catalog import Catalog
+from aiven.policy.chars import is_hidden
 from aiven.policy.constants import FREE_SECTIONS, GENERATED_SECTIONS, MIN_SECTION_CHARS, SECTIONS
 from aiven.policy.findings import Finding
 from aiven.policy.markdown import Heading, find, headings, parse
@@ -58,6 +59,9 @@ _LEAVES = frozenset(
     {"paragraph_open", "heading_open", "fence", "code_block", "html_block", "hr", "table_open"}
 )
 _BREAKS = ("softbreak", "hardbreak")
+
+# Printable ASCII has no hidden character, so only the rest is looked at.
+_NOT_PLAIN = re.compile(r"[^\x20-\x7e]")
 
 # What may stand in front of the text of a line: the marks of quotes and lists.
 _MARKS = r"(?:[ \t>]|[-+*](?=[ \t]|$)|[0-9]{1,9}[.)](?=[ \t]|$))*"
@@ -170,19 +174,28 @@ def _section(tokens: list[Token], found: list[Heading], heading: Heading) -> lis
     return tokens[heading.index + 3 : next(later, len(tokens))]  # the heading has three tokens
 
 
+def _shown(text: str) -> str:
+    """The text without the characters that the reader cannot see, written or made by references."""
+    return _NOT_PLAIN.sub(lambda found: "" if is_hidden(found.group()) else found.group(), text)
+
+
 def _plain(tokens: list[Token]) -> str:
-    """The text of inline tokens: text, code spans and soft breaks (as a space). Nothing else."""
+    """The text of inline tokens that shows: text, code spans and soft breaks (as a space).
+
+    Nothing else counts, and a character that the reader cannot see is not a character of text:
+    twenty zero width spaces are not a sentence, and not a reason.
+    """
     parts = []
     for token in tokens:
         if token.type in ("text", "code_inline"):
-            parts.append(token.content)
+            parts.append(_shown(token.content))
         elif token.type == "softbreak":
             parts.append(" ")
     return "".join(parts)
 
 
 def _empty(report: _Report, tokens: list[Token], found: list[Heading]) -> list[Finding]:
-    """A section of free text with fewer than 20 characters of text, whitespace runs as one space."""
+    """A free-text section with fewer than 20 characters of text (whitespace runs as one space)."""
     findings = []
     for name in FREE_SECTIONS:
         heading = find(found, name)
@@ -253,22 +266,43 @@ def _markup(report: _Report, tokens: list[Token], lines: list[str]) -> list[Find
         for token in tokens
         if token.type == "html_block" and token.map
     ]
-    for token, row in _inline_tokens(tokens):
+    written = set()  # the rows where a URL was found as it is written
+    for row, line in enumerate(lines):
+        urls = [report.at("E-BODY-LINK", row) for _ in _urls(line)]
+        findings += urls
+        if urls:
+            written.add(row)
+    for token in tokens:
+        if token.type == "inline" and token.map:
+            findings += _inline(report, token, written)
+    return findings + _hidden(report, tokens, lines)
+
+
+def _inline(report: _Report, inline: Token, written: set[int]) -> list[Finding]:
+    """The tags, links and images of a paragraph, and what its text is when it is rendered.
+
+    The text that the reader gets is not the text that is written (a reference or an escape is
+    decoded). So a character that a reference made and that is hidden is HTML (what is written is
+    E-HIDDEN-CHAR's), and a URL in the rendered text is a link, also when markup or a code span
+    cuts it in pieces. A row where a URL was found as it is written (`written`) has had its finding:
+    the rendered text adds one more finding for a row, at most, and none to such a row.
+    """
+    findings = []
+    shown: dict[int, list[str]] = {}
+    for token, row in _walk(inline.children or [], inline.map[0]):
         if token.type == "html_inline":
             findings.append(report.at("E-BODY-HTML", row))
         elif token.type in ("link_open", "image"):
             findings.append(report.at("E-BODY-LINK", row))
-    findings += _hidden(report, tokens, lines)
-    for row, line in enumerate(lines):
-        findings += [report.at("E-BODY-LINK", row) for _ in _urls(line)]
+        elif token.type == "text" and any(map(is_hidden, token.meta.get("entities", ""))):
+            findings.append(report.at("E-BODY-HTML", row))
+        if token.type in ("text", "code_inline"):
+            shown.setdefault(row, []).append(_shown(token.content))
+    for row, parts in shown.items():
+        if row not in written and any(True for _ in _urls("".join(parts))):
+            findings.append(report.at("E-BODY-LINK", row))
+            written.add(row)
     return findings
-
-
-def _inline_tokens(tokens: list[Token]) -> Iterator[tuple[Token, int]]:
-    """Every inline token of the body with the row where it starts."""
-    for token in tokens:
-        if token.type == "inline" and token.map:
-            yield from _walk(token.children or [], token.map[0])
 
 
 def _walk(children: list[Token], row: int) -> Generator[tuple[Token, int], None, int]:

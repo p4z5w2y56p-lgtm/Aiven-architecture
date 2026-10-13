@@ -160,6 +160,58 @@ def test_a_tag_that_goes_over_lines_counts_the_lines_it_has():
     ]
 
 
+# --- character references: what is rendered is not what is written (rulings R63 and R65)
+
+
+HIDDEN_REFERENCES = [
+    "&#x202E;",  # a right-to-left override
+    "&#8203;",  # a zero width space
+    "&#xE0041;",  # a tag letter
+    "&#9;",  # a tab
+    "&#x00AD;",  # a soft hyphen
+    "&ZeroWidthSpace;",
+    "&nbsp;",
+]
+
+
+@pytest.mark.parametrize("reference", HIDDEN_REFERENCES)
+def test_a_character_reference_that_gives_a_hidden_character_is_html_on_its_line(reference):
+    # E-HIDDEN-CHAR reads the bytes of the file, and they are plain ASCII here.
+    body = purpose_with(f"text {reference} text")
+    assert places(run(body)) == [("E-BODY-HTML", at(PURPOSE, body))]
+
+
+def test_a_run_of_references_is_one_finding_and_a_run_that_markup_cuts_in_two_is_two():
+    body = purpose_with("&#8203;" * 20)
+    assert [f.line for f in only(run(body), "E-BODY-HTML")] == [at(PURPOSE, body)]
+    body = purpose_with("a &#8203; *b* &#8203; c")
+    assert [f.line for f in only(run(body), "E-BODY-HTML")] == [at(PURPOSE, body)] * 2
+
+
+def test_a_reference_in_the_alt_text_of_an_image_or_in_a_heading_or_a_cell_is_found_too():
+    for text in ("![a &#8203; b](x)", "### a &#8203; b", "| a | b &#8203; |\n|---|---|\n| c | d |"):
+        body = after_purpose(text)
+        assert "E-BODY-HTML" in codes(run(body)), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["`&#8203;`", "\\&#8203;", "&#0;", "&amp; &lt; &#65; &eacute;", "&#8203"],
+    ids=["a code span", "an escaped ampersand", "NUL", "references that show", "no semicolon"],
+)
+def test_a_reference_that_gives_a_character_that_shows_or_is_text_is_not_reported(text):
+    assert only(run(purpose_with(f"text {text} text")), "E-BODY-HTML") == []
+
+
+def test_a_reference_in_a_code_block_is_text_and_not_reported():
+    assert only(run(after_purpose("```\n&#8203;\n```")), "E-BODY-HTML") == []
+
+
+def test_a_hidden_character_that_is_written_is_the_business_of_e_hidden_char_and_not_of_the_body():
+    for char in ("\N{ZERO WIDTH SPACE}", "\N{RIGHT-TO-LEFT OVERRIDE}", "\N{NO-BREAK SPACE}", "\t"):
+        assert only(run(purpose_with(f"text {char} text")), "E-BODY-HTML") == [], repr(char)
+
+
 # --- E-BODY-LINK
 
 
@@ -239,6 +291,75 @@ def test_a_url_at_the_start_of_a_line_is_found_also_with_a_scheme_of_one_letter(
     for url in ("https://example.test", "x://y"):
         body = after_purpose(url)
         assert places(run(body)) == [("E-BODY-LINK", at(url, body))]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https\\://evil.test",
+        "https&#58;//evil.test",
+        "https&#x3A;//evil.test",
+        "www\\.evil.test",
+        "www&#46;evil.test",
+        "https&colon;//evil.test",
+        "h&#116;tps://evil.test",
+        "https:&sol;&sol;evil.test",
+    ],
+)
+def test_a_url_that_is_built_by_an_escape_or_a_reference_is_found_in_what_is_rendered(url):
+    body = purpose_with(f"See {url} here.")
+    assert places(run(body)) == [("E-BODY-LINK", at(PURPOSE, body))]
+
+
+@pytest.mark.parametrize("url", ["htt*p*://evil.test", "h**ttps**://evil.test", "ww*w*.evil.test"])
+def test_a_url_that_markup_cuts_in_pieces_is_found_in_what_is_rendered_too(url):
+    body = purpose_with(f"See {url} here.")
+    assert places(run(body)) == [("E-BODY-LINK", at(PURPOSE, body))]
+
+
+def test_a_url_that_a_code_span_cuts_in_pieces_is_found_too():
+    body = purpose_with("See htt`p`://evil.test here.")
+    assert places(run(body)) == [("E-BODY-LINK", at(PURPOSE, body))]
+
+
+def test_what_is_rendered_gives_no_second_finding_on_a_line_where_the_lines_gave_one():
+    body = purpose_with("https://a.test and https&#58;//b.test and www&#46;c.test")
+    assert [f.line for f in only(run(body), "E-BODY-LINK")] == [at(PURPOSE, body)]
+    # without a URL as it is written, the line gets one finding for all of what is rendered
+    body = purpose_with("https&#58;//a.test and www&#46;b.test")
+    assert [f.line for f in only(run(body), "E-BODY-LINK")] == [at(PURPOSE, body)]
+
+
+def test_a_url_is_found_on_the_line_where_it_is_in_a_paragraph_of_several_lines():
+    body = edited(END, "no email\ngoes to https&#58;//evil.test\nand more")
+    assert [f.line for f in only(run(body), "E-BODY-LINK")] == [at("goes to", body)]
+
+
+def test_text_that_is_cut_by_a_break_or_by_a_tag_is_not_one_url():
+    for text in ("https:\n//evil.test", "www\n.evil.test"):
+        body = edited(END, f"no email {text}")
+        assert only(run(body), "E-BODY-LINK") == [], text
+
+
+def test_a_url_in_the_alt_text_of_an_image_is_found_on_its_line_with_the_image():
+    body = purpose_with("![https&#58;//evil.test](x)")
+    assert codes(run(body)) == ["E-BODY-LINK", "E-BODY-LINK"]
+
+
+def test_a_url_in_a_fenced_code_block_info_string_or_in_a_link_definition_is_found():
+    # Ruling R59: the lines of the body are looked at as they are, whatever the parser does with them.
+    body = after_purpose("```https://evil.test\ncode\n```")
+    assert places(run(body)) == [("E-BODY-LINK", at("```https", body))]
+    body = after_purpose("~~~ www.evil.test\ncode\n~~~")
+    assert places(run(body)) == [("E-BODY-LINK", at("~~~ www", body))]
+    body = after_purpose('[r]: https://evil.test "title"')
+    line = at("[r]: https", body)
+    assert places(run(body)) == [("E-BODY-LINK", line)] * 2  # the URL, and the definition
+
+
+def test_a_url_in_the_title_of_a_link_definition_is_found():
+    body = after_purpose('[r]: /somewhere "see www.evil.test"')
+    assert places(run(body)) == [("E-BODY-LINK", at("[r]: /somewhere", body))] * 2
 
 
 def test_a_url_in_a_link_is_the_link_and_the_url():
