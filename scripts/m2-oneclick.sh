@@ -10,7 +10,9 @@
 # Drive scope to gcloud's own login, so the Sandbox drive takes one step by hand, which it prints.
 #
 # In order: the tools (Terraform 1.16.4 checked against its SHA-256, gcloud and uv through
-# Homebrew), the two logins, the values (checked with aiven-check-config), Organization Policy
+# Homebrew), the two logins, the values (checked with aiven-check-config; when they name no projects
+# yet, it makes the four projects aiven-<role>-<suffix> in your organisation and links them to your
+# billing account, after one "Make them? (y/n)"; other projects are never touched), Organization Policy
 # Administrator for you, the bootstrap of the control project (4 APIs and the state bucket),
 # terraform init and plan, a short summary against the runbook, the question, the apply. Then: the
 # credit reminder run by hand, drills BD-1 and BD-2 on the scratch project only, the deploy checks
@@ -93,6 +95,10 @@ ACCOUNT=""       # who logged in
 GCLOUD_HOME=""   # the folder of this run's logins
 EMAILS="not asked"
 STOP_AMOUNT=""   # budget aiven-stop, a whole amount (variables.tf)
+VALUES_DIR="$REPO"  # where the values files are: the repository, or a dry run's own folder
+PROJECTS_PENDING=0  # a dry run whose projects are not made yet
+PROJECT_PREFIX="aiven"
+ROLES="agents gateway control scratch"
 APPLIED="no"     # whether this run applied, or found nothing to apply
 STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -355,10 +361,133 @@ suggest_project() { # the one project of yours whose ID holds the word, if there
   fi
 }
 
+# A fresh suffix for the project IDs: 6 hex digits, so aiven-gateway-<suffix> stays under 30.
+new_suffix() { od -An -N3 -tx1 /dev/urandom | tr -d ' \n'; }
+
+check_config() { uv run --frozen --quiet aiven-check-config "$@"; }
+
+find_org() {
+  [[ -n $ORG ]] && return 0
+  if [[ -n $V_control_project ]]; then
+    ORG="$(gcloud projects get-ancestors "$V_control_project" --format='value(id,type)' 2>>"$LOG" | awk '$2 == "organization" {print $1}' || true)"
+  fi
+  if [[ -z $ORG ]]; then
+    local found
+    found="$(gcloud organizations list --format='value(ID)' 2>>"$LOG" || true)"
+    [[ -n $found && $(printf '%s\n' "$found" | wc -l) -eq 1 ]] && ORG="$found"
+  fi
+  if [[ -z $ORG ]]; then
+    ask ORG "Organisation ID (gcloud organizations list)" "" is_org "a number"
+  fi
+  return 0
+}
+
+ask_billing_account() {
+  [[ -n $V_billing_account ]] && return 0
+  local found=""
+  if [[ -n $V_control_project ]]; then
+    found="$(gcloud billing projects describe "$V_control_project" --format='value(billingAccountName)' 2>>"$LOG" || true)"
+  fi
+  if [[ -z $found ]]; then
+    found="$(gcloud billing accounts list --filter=open=true --format='value(name)' 2>>"$LOG" || true)"
+    [[ $(printf '%s\n' "$found" | wc -l) -eq 1 ]] || found=""
+  fi
+  ask V_billing_account "Billing account ID" "${found#billingAccounts/}" is_billing \
+    "XXXXXX-XXXXXX-XXXXXX (0 to 9 and A to F)"
+}
+
+why_not() { # a plain-English reason for the last gcloud error in the run log
+  local tail
+  tail="$(tail -n 20 "$LOG")"
+  case "$tail" in
+    *[Qq]uota*) say "   Hint: a quota of your account or billing account is full (see the lines above)." ;;
+    *PERMISSION_DENIED* | *"does not have permission"*) say "   Hint: your account lacks a permission (Project Creator on the organisation, or Billing Account User)." ;;
+  esac
+}
+
+# make_project ROLE: makes the project of V_<role>_project when it does not exist yet; an ID that
+# someone else already has gets a new suffix (three tries). Billing is linked afterwards.
+make_project() {
+  local role="$1" var="V_${1}_project" _
+  for _ in 1 2 3; do
+    if project_exists "${!var}"; then
+      return 0
+    fi
+    if logged gcloud projects create "${!var}" --organization="$ORG" --name="AIVEN $role" --quiet; then
+      return 0
+    fi
+    if tail -n 20 "$LOG" | grep -qiE "already exists|ALREADY_EXISTS|already in use|not available"; then
+      printf -v "$var" '%s' "$PROJECT_PREFIX-$role-$(new_suffix)"
+      state_set "project_$role" "${!var}"
+      continue
+    fi
+    show_log_tail
+    why_not
+    fail "project ${!var} could not be made" "see the hint above; then run again (projects already made are kept)"
+  done
+  fail "no free project ID for $role after three tries" "run again"
+}
+
+link_billing() { # link_billing PROJECT
+  billing_on "$1" && return 0
+  if ! logged gcloud billing projects link "$1" --billing-account="$V_billing_account"; then
+    show_log_tail
+    if tail -n 20 "$LOG" | grep -qi "quota"; then
+      fail "billing account $V_billing_account takes no more linked projects (its quota is full)" \
+        "ask Google for more (https://support.google.com/code/contact/billing_quota_increase), or unlink a project you no longer use; then run again"
+    fi
+    why_not
+    fail "billing could not be linked to $1" "see the lines above; then run again"
+  fi
+}
+
+# new_projects ROLE...: the projects that the values do not name yet. Their IDs are kept in
+# .m2-oneclick/state, so a run that stops halfway, and the dry run before it, use the same ones.
+new_projects() {
+  local role var suffix id answer
+  find_org
+  suffix="$(state_get project_suffix)"
+  if [[ -z $suffix ]]; then
+    suffix="$(new_suffix)"
+    state_set project_suffix "$suffix"
+  fi
+  say "   The values name no projects yet. This makes them, in organisation $ORG, each linked to"
+  say "   billing account $V_billing_account (your other projects are not touched):"
+  for role in "$@"; do
+    var="V_${role}_project"
+    id="$(state_get "project_$role")"
+    [[ -n $id ]] || id="$PROJECT_PREFIX-$role-$suffix"
+    state_set "project_$role" "$id"
+    printf -v "$var" '%s' "$id"
+    say "     $role: $id"
+  done
+  if [[ $DRY_RUN == 1 ]]; then
+    PROJECTS_PENDING=1
+    record NOTE projects "a full run makes: $(for role in "$@"; do v="V_${role}_project"; printf '%s ' "${!v}"; done)(after one y/n)"
+    return 0
+  fi
+  flush_input
+  read -r -p "   Make these $# projects? (y/n) " answer || true
+  if [[ $answer != y && $answer != Y && $answer != yes ]]; then
+    say "   Then give the IDs of $# projects that exist already."
+    for role in "$@"; do
+      ask "V_${role}_project" "Project ID of $role" "$(suggest_project "$role")" is_reachable_project \
+        "the ID of a project that your account can see"
+    done
+    return 0
+  fi
+  for role in "$@"; do
+    make_project "$role"
+    var="V_${role}_project"
+    link_billing "${!var}"
+  done
+  record PASS projects "made and linked to $V_billing_account: $(for role in "$@"; do v="V_${role}_project"; printf '%s ' "${!v}"; done)"
+}
+
 values() {
   step "3. The values (IDs and addresses only)"
-  local key value asked=0 role var
-  if ! helper values-read >"$WORK/values.txt" 2>"$WORK/values.err"; then
+  local key value role var todo=()
+  if ! helper values-read --root "$REPO" >"$WORK/values.txt" 2>"$WORK/values.err"; then
     cat "$WORK/values.err" >&2
     fail "the values files do not pass the check above" \
       "fix the lines it names (or delete the file to be asked again)"
@@ -367,70 +496,65 @@ values() {
     printf -v "V_$key" '%s' "$value"
   done <"$WORK/values.txt"
 
-  for role in agents gateway control scratch; do
+  for role in $ROLES; do
     var="V_${role}_project"
-    if [[ -z ${!var} ]]; then
-      ask "$var" "Project ID of $role" "$(suggest_project "$role")" is_reachable_project \
-        "the ID of a project that your account can see"
-      asked=1
-    fi
+    [[ -n ${!var} ]] || todo+=("$role")
   done
+  ask_billing_account
+  if ((${#todo[@]} > 0)); then
+    new_projects "${todo[@]}"
+  fi
   if [[ $(printf '%s\n' "$V_agents_project" "$V_gateway_project" "$V_control_project" "$V_scratch_project" | sort -u | wc -l) -ne 4 ]]; then
     fail "the four project IDs are not four different projects" \
       "fix them in infra/terraform/terraform.tfvars (or delete it to be asked again)"
-  fi
-  if [[ -z $V_billing_account ]]; then
-    local linked
-    linked="$(gcloud billing projects describe "$V_control_project" --format='value(billingAccountName)' 2>>"$LOG" || true)"
-    ask V_billing_account "Billing account ID" "${linked#billingAccounts/}" is_billing \
-      "XXXXXX-XXXXXX-XXXXXX (0 to 9 and A to F)"
-    asked=1
   fi
   if [[ -z $V_budget_currency ]]; then
     local currency
     currency="$(gcloud billing accounts describe "$V_billing_account" --format='value(currencyCode)' 2>>"$LOG" || true)"
     ask V_budget_currency "Currency of the billing account (EUR or USD)" "$currency" is_currency "EUR or USD"
-    asked=1
   fi
   if [[ -z $V_alert_email ]]; then
     ask V_alert_email "Address for the alerts" "$ACCOUNT" is_aiven_address "an @aivenstudios.com address"
-    asked=1
   fi
   if [[ -z $V_sandbox_drive_id ]]; then
     say "   The Sandbox drive ID is the last part of its address in Drive (drive/folders/<ID>)."
     ask V_sandbox_drive_id "Sandbox drive ID (Enter: not yet)" "" is_drive_or_empty \
       "a drive ID (10 to 100 letters, digits, _ and -)"
-    asked=1
   fi
   [[ -n $V_trusted_authors ]] || V_trusted_authors="$ACCOUNT"
   [[ -n $V_agents ]] || V_agents="invoice-reminder"
 
-  if [[ $asked == 1 || ! -f config/platform.yaml || ! -f infra/terraform/terraform.tfvars ]]; then
-    local pairs=(
-      "agents_project=$V_agents_project" "gateway_project=$V_gateway_project"
-      "control_project=$V_control_project" "scratch_project=$V_scratch_project"
-      "billing_account=$V_billing_account" "budget_currency=$V_budget_currency"
-      "alert_email=$V_alert_email" "agents=$V_agents" "trusted_authors=$V_trusted_authors"
-    )
-    [[ -n $V_sandbox_drive_id ]] && pairs+=("sandbox_drive_id=$V_sandbox_drive_id")
-    if ! helper values-write "${pairs[@]}" 2>"$WORK/values.err"; then
-      cat "$WORK/values.err" >&2
-      fail "the values were not written: the check above refused them" "run again, and give the IDs again"
-    fi
+  if [[ $PROJECTS_PENDING == 1 ]]; then
+    # A dry run, and the projects are not made yet: its values go to a folder of its own.
+    VALUES_DIR="$WORK/dry-run-values"
+    rm -rf "${VALUES_DIR:?}"
+    mkdir -p "$VALUES_DIR/config" "$VALUES_DIR/infra/terraform"
+    cp "$TFDIR/variables.tf" "$VALUES_DIR/infra/terraform/"
+  fi
+  local pairs=(
+    "agents_project=$V_agents_project" "gateway_project=$V_gateway_project"
+    "control_project=$V_control_project" "scratch_project=$V_scratch_project"
+    "billing_account=$V_billing_account" "budget_currency=$V_budget_currency"
+    "alert_email=$V_alert_email" "agents=$V_agents" "trusted_authors=$V_trusted_authors"
+  )
+  [[ -n $V_sandbox_drive_id ]] && pairs+=("sandbox_drive_id=$V_sandbox_drive_id")
+  if ! helper values-write --root "$VALUES_DIR" "${pairs[@]}" 2>"$WORK/values.err"; then
+    cat "$WORK/values.err" >&2
+    fail "the values were not written: the check above refused them" "run again, and give the IDs again"
+  fi
+  if [[ $PROJECTS_PENDING == 1 ]]; then
+    say "   Dry run: the values are in .m2-oneclick/dry-run-values, not in the repository."
+  else
     say "   Written: config/platform.yaml and infra/terraform/terraform.tfvars."
   fi
-  if ! quietly uv run --frozen --quiet aiven-check-config; then
+  if ! quietly check_config "$VALUES_DIR/config/platform.yaml" "$VALUES_DIR/infra/terraform/terraform.tfvars"; then
     fail "aiven-check-config refuses the values files" "fix the lines it names above"
   fi
-  STOP_AMOUNT="$(sed -nE 's/^budget_stop_amount *= *([0-9]+).*/\1/p' infra/terraform/terraform.tfvars)"
+  STOP_AMOUNT="$(sed -nE 's/^budget_stop_amount *= *([0-9]+).*/\1/p' "$VALUES_DIR/infra/terraform/terraform.tfvars")"
   if ! [[ $STOP_AMOUNT =~ ^[0-9]+$ ]]; then
     fail "budget_stop_amount in infra/terraform/terraform.tfvars is not a whole amount" "make it 25 (EUR) or 27 (USD)"
   fi
-
-  ORG="$(gcloud projects get-ancestors "$V_control_project" --format='value(id,type)' 2>>"$LOG" | awk '$2 == "organization" {print $1}' || true)"
-  if [[ -z $ORG ]]; then
-    ask ORG "Organisation ID (gcloud organizations list)" "" is_org "a number"
-  fi
+  find_org
   record PASS values "checked with aiven-check-config; organisation $ORG"
 }
 
@@ -471,7 +595,7 @@ bootstrap() {
   else
     # shellcheck disable=SC2086 # one word per API
     quietly gcloud services enable $missing --project="$control" ||
-      fail "the APIs could not be turned on in $control" "check that billing is linked to $control"
+      fail "the APIs could not be turned on in $control" "check that billing is linked to $control; a project made a minute ago may need two more minutes"
     record PASS bootstrap-apis "turned on:$missing"
   fi
   where="$(gcloud storage buckets describe "gs://$control-tfstate" --format='value(location,versioning_enabled)' 2>>"$LOG" || true)"
@@ -521,7 +645,7 @@ init_terraform() {
     local copy="$WORK/dry-run"
     rm -rf "${copy:?}"
     mkdir -p "$copy/infra/terraform"
-    cp "$TFDIR"/*.tf "$TFDIR/.terraform.lock.hcl" "$TFDIR/terraform.tfvars" "$copy/infra/terraform/"
+    cp "$TFDIR"/*.tf "$TFDIR/.terraform.lock.hcl" "$VALUES_DIR/infra/terraform/terraform.tfvars" "$copy/infra/terraform/"
     cp -R "$TFDIR/modules" "$copy/infra/terraform/"
     ln -s "$REPO/src" "$copy/src"
     printf 'terraform {\n  backend "local" {}\n}\n' >"$copy/infra/terraform/backend_override.tf"

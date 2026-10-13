@@ -9,6 +9,8 @@ here, as subcommands of `python -m aiven.m2_oneclick`:
   that the config guard refuses, or two files that name different projects, stop it (exit 1).
 - `values-write name=value ...`: writes both files with these values and the ones they hold, and
   checks them with the config guard. A file that the guard refuses is put back as it was (exit 1).
+  Both take `--root DIR`, the folder that holds `config/` and `infra/terraform/`: a dry run that
+  still has projects to make writes its values to a folder of its own, not to the repository.
 - `plan-summary <plan.json> --mode main|drill-on|drill-off`: a short summary of a Terraform plan
   (`terraform show -json`) against the runbook. Exit 3 when the plan must not be applied: a service
   account key, a lock (`locked = true`, ruling R105), a role for anyone but a service account, or
@@ -565,9 +567,16 @@ def clean_result(text: str) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m aiven.m2_oneclick", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("values-read")
+    reading = commands.add_parser("values-read")
     writing = commands.add_parser("values-write")
     writing.add_argument("pairs", nargs="*", metavar="name=value")
+    for command in (reading, writing):
+        command.add_argument(
+            "--root",
+            type=Path,
+            default=Path("."),
+            help="the folder that holds config/ and infra/terraform/ (default: here)",
+        )
     summary = commands.add_parser("plan-summary")
     summary.add_argument("plan", type=Path)
     summary.add_argument("--mode", choices=["main", "drill-on", "drill-off"], default="main")
@@ -578,12 +587,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         if args.command == "values-read":
-            for name, value in read_values().items():
+            for name, value in read_values(args.root / TFVARS, args.root / PLATFORM).items():
                 if name in FIELDS:
                     print(f"{name}={_shown(value)}")
             return EXIT_OK
         if args.command == "values-write":
-            write_values(_parse_updates(args.pairs))
+            write_values(_parse_updates(args.pairs), args.root / TFVARS, args.root / PLATFORM)
             return EXIT_OK
         if args.command == "plan-summary":
             plan = json.loads(args.plan.read_text(encoding="utf-8"))

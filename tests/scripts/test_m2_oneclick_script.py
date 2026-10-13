@@ -178,28 +178,59 @@ def logins_are_gone(tmp_path: Path, calls: list[str]) -> bool:
     return revoked and not left
 
 
-# Enter for each suggestion (the four projects, the billing account, its currency, the alert
-# address), then the Sandbox drive ID.
-FRESH_ANSWERS = "\n" * 7 + "0AKx7rT2mQpLsUk9PVA\n"
+def reset(repo: Path) -> None:
+    """No values, no state, no report: as before the first run."""
+    for name in (
+        "config/platform.yaml",
+        "infra/terraform/terraform.tfvars",
+        "m2-result.txt",
+        ".m2-oneclick/state",
+    ):
+        (repo / name).unlink(missing_ok=True)
 
 
-def test_a_dry_run_of_a_fresh_deployment_plans_and_changes_nothing(
+# Enter for the billing account and its currency (both found), Enter for the alert address (the
+# login), then the Sandbox drive ID.
+FRESH_ANSWERS = "\n\n\n0AKx7rT2mQpLsUk9PVA\n"
+ONLY_MINE = {"MOCK_PROJECTS": "my-first-project-511521"}  # one project of Matthijs's own, as now
+PLANNED = re.compile(r"^ {5}(agents|gateway|control|scratch): (aiven-[a-z]+-[0-9a-f]{6})$", re.M)
+
+
+def planned(out: str) -> dict[str, str]:
+    return dict(PLANNED.findall(out))
+
+
+def test_a_dry_run_without_projects_shows_the_four_it_would_make_and_changes_nothing(
     copy_of_the_repository, tmp_path, needs_terraform
 ):
     repo = copy_of_the_repository
-    done, calls = run(repo, tmp_path, "--dry-run", answers=FRESH_ANSWERS)
+    reset(repo)
+    done, calls = run(repo, tmp_path, "--dry-run", answers=FRESH_ANSWERS, **ONLY_MINE)
     out = done.stdout + done.stderr
     assert done.returncode == 0, out
     assert not [call for call in calls if any(change in call for change in CHANGES)], calls
-    assert not [call for call in calls if call.startswith("brew")]
+    assert not [call for call in calls if call.startswith(("brew", "projects create"))]
+    assert not [call for call in calls if "my-first-project-511521" in call]  # never touched
     assert logins_are_gone(tmp_path, calls)
     assert "auth application-default login --quiet" in calls  # no Drive scope asked for
 
-    # The values: asked once, written, and passed by the guard.
-    tfvars = repo / "infra" / "terraform" / "terraform.tfvars"
-    platform = repo / "config" / "platform.yaml"
+    # The projects it would make: aiven-<role>-<one suffix>, and no question in a dry run.
+    ids = planned(out)
+    assert sorted(ids) == ["agents", "control", "gateway", "scratch"]
+    assert len({value.rsplit("-", 1)[1] for value in ids.values()}) == 1
+    assert all(value.startswith(f"aiven-{role}-") for role, value in ids.items())
+    assert "Make these" not in out
+    assert f"NOTE projects: a full run makes: {ids['agents']} " in out
+
+    # The values: in the dry run's own folder, never in the repository, and passed by the guard.
+    assert not (repo / "config" / "platform.yaml").exists()
+    assert not (repo / "infra" / "terraform" / "terraform.tfvars").exists()
+    values = repo / ".m2-oneclick" / "dry-run-values"
+    tfvars = values / "infra" / "terraform" / "terraform.tfvars"
+    platform = values / "config" / "platform.yaml"
     assert check_file(tfvars) == [] and check_file(platform) == []
-    assert 'control_project = "aiven-control-mock"' in tfvars.read_text()
+    assert f'control_project = "{ids["control"]}"' in tfvars.read_text()
+    assert 'billing_account     = "01F2A3-B4C5D6-E7F809"' in tfvars.read_text()
     assert 'sandbox_drive_id: "0AKx7rT2mQpLsUk9PVA"' in platform.read_text()
 
     # The plan: what the runbook says, and nothing that it forbids.
@@ -207,27 +238,59 @@ def test_a_dry_run_of_a_fresh_deployment_plans_and_changes_nothing(
     rows = [line for line in out.splitlines() if re.match(r"^ {5}(ok|!!) ", line)]
     assert len(rows) == 11 and all(row.startswith("     ok ") for row in rows), rows
     assert "NOTE org-policy-admin: you do not have it yet: a full run grants it" in out
-    assert "NOTE state-bucket: gs://aiven-control-mock-tfstate does not exist yet" in out
+    assert f"NOTE state-bucket: gs://{ids['control']}-tfstate does not exist yet" in out
     assert "Dry run: nothing was applied, and nothing changed in Google Cloud." in out
     assert "Apply?" not in out
 
     result = (repo / "m2-result.txt").read_text()
     assert "Mode: dry run (nothing applied)" in result
+    assert "NOTE projects: a full run makes:" in result
     assert "PASS plan: dry run: planned, nothing applied" in result
     assert "Terraform plan: 85 to create" in result
     assert "mock" not in result.replace("-mock", "")  # the stand-in token is nowhere in it
 
 
-def test_a_second_dry_run_asks_nothing_and_plans_again(
+def test_a_second_dry_run_shows_the_same_projects(
     copy_of_the_repository, tmp_path, needs_terraform
 ):
     repo = copy_of_the_repository
-    if not (repo / "config" / "platform.yaml").exists():
-        run(repo, tmp_path, "--dry-run", answers=FRESH_ANSWERS)
+    reset(repo)
+    first, _ = run(repo, tmp_path, "--dry-run", answers=FRESH_ANSWERS, **ONLY_MINE)
+    again, calls = run(repo, tmp_path, "--dry-run", answers=FRESH_ANSWERS, **ONLY_MINE)
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert planned(again.stdout) == planned(first.stdout) != {}
+    assert not [call for call in calls if call.startswith("projects create")]
+
+
+def test_a_dry_run_with_values_already_there_asks_nothing(
+    copy_of_the_repository, tmp_path, needs_terraform
+):
+    repo = copy_of_the_repository
+    reset(repo)
+    pairs = [
+        "agents_project=aiven-agents-mock",
+        "gateway_project=aiven-gateway-mock",
+        "control_project=aiven-control-mock",
+        "scratch_project=aiven-scratch-mock",
+        "billing_account=01F2A3-B4C5D6-E7F809",
+        "budget_currency=EUR",
+        "alert_email=owner@aivenstudios.com",
+        "agents=invoice-reminder",
+        "trusted_authors=owner@aivenstudios.com",
+        "sandbox_drive_id=0AKx7rT2mQpLsUk9PVA",
+    ]
+    command = [sys.executable, "-m", "aiven.m2_oneclick", "values-write", "--root", str(repo)]
+    subprocess.run(
+        [*command, *pairs], check=True, env={**os.environ, "PYTHONPATH": str(repo / "src")}
+    )
+    before = (repo / "infra" / "terraform" / "terraform.tfvars").read_bytes()
     done, calls = run(repo, tmp_path, "--dry-run", answers="")  # no answers to give
     assert done.returncode == 0, done.stdout + done.stderr
     assert "Terraform plan: 85 to create" in done.stdout
-    assert not [call for call in calls if call.startswith("projects list")]  # nothing was asked
+    assert "NOTE state-bucket: gs://aiven-control-mock-tfstate does not exist yet" in done.stdout
+    assert not [call for call in calls if call.startswith(("projects list", "projects create"))]
+    assert (repo / "infra" / "terraform" / "terraform.tfvars").read_bytes() == before
+    reset(repo)
 
 
 def test_an_account_outside_aiven_stops_before_anything(
@@ -290,6 +353,9 @@ wait_until() {
   return 1
 }
 helper() { "$PYTHON" -m aiven.m2_oneclick "$@"; }
+check_config() {
+  "$PYTHON" -c 'import sys; from aiven.common.config_guard import main; sys.exit(main(sys.argv[1:]))' "$@"
+}
 TF="$FAKE_TERRAFORM" TFRUN="$REPO/infra/terraform" DRY_RUN=0 ACCOUNT=owner@aivenstudios.com
 V_agents_project=aiven-agents-mock V_gateway_project=aiven-gateway-mock
 V_control_project=aiven-control-mock V_scratch_project=aiven-scratch-mock
@@ -298,22 +364,35 @@ V_alert_email=owner@aivenstudios.com V_sandbox_drive_id=0AKx7rT2mQpLsUk9PVA
 """
 
 
-def after_apply(repo: Path, tmp_path: Path, steps: str, plans: dict | None = None, **mock: str):
-    """Run `steps` (bash) after the harness: the process, the mock's calls, and its state folder."""
+def after_apply(
+    repo: Path,
+    tmp_path: Path,
+    steps: str,
+    plans: dict | None = None,
+    *,
+    answers: str = "",
+    keep_state: bool = False,
+    **mock: str,
+):
+    """Run `steps` (bash) after the harness: the process, the mock's calls, and its state folder.
+
+    `answers` are what is typed at the questions; `keep_state` keeps the script's
+    .m2-oneclick/state and the mock's projects from a run before (in the same tmp_path)."""
     import json
 
     from tests.scripts.test_m2_oneclick import drill_plan
 
     state = tmp_path / "state"
-    state.mkdir()
+    state.mkdir(exist_ok=True)
     planned = tmp_path / "plans"
-    planned.mkdir()
+    planned.mkdir(exist_ok=True)
     for mode in ("drill-on", "drill-off"):
         doc = (plans or {}).get(mode) or drill_plan(mode)
         (planned / f"{mode}.json").write_text(json.dumps(doc))
     calls = tmp_path / "calls.log"
     calls.touch()
-    (repo / ".m2-oneclick" / "state").unlink(missing_ok=True)
+    if not keep_state:
+        (repo / ".m2-oneclick" / "state").unlink(missing_ok=True)
     env = {
         **{
             k: v
@@ -332,6 +411,7 @@ def after_apply(repo: Path, tmp_path: Path, steps: str, plans: dict | None = Non
     }
     done = subprocess.run(
         ["bash", "-c", HARNESS + steps],
+        input=answers,
         cwd=repo,
         env=env,
         capture_output=True,
@@ -497,3 +577,134 @@ def test_the_report_says_what_happened(copy_of_the_repository, tmp_path, steps, 
     assert "Send m2-result.txt to Claude." in done.stdout
     expected = "failed=1" if "FAIL" in steps else "failed=0"
     assert done.stdout.rstrip().endswith(expected)
+
+
+# --- making the four projects (no project IDs in the values yet)
+
+NO_VALUES = (
+    "V_agents_project= V_gateway_project= V_control_project= V_scratch_project= "
+    "V_billing_account= V_budget_currency= V_alert_email= V_sandbox_drive_id= ORG=; "
+)
+# Enter for the billing account, y to make the projects, Enter for the currency, the alert address
+# and "no drive yet".
+MAKE = "\ny\n\n\n\n"
+ROLES = ("agents", "gateway", "control", "scratch")
+
+
+def make_projects(repo: Path, tmp_path: Path, answers: str = MAKE, **mock: str):
+    mock = {"MOCK_PROJECTS": "my-first-project-511521", **mock}
+    return after_apply(repo, tmp_path, NO_VALUES + "values", answers=answers, **mock)
+
+
+def made(calls: list[str]) -> list[str]:
+    return [call.split()[2] for call in calls if call.startswith("projects create")]
+
+
+def test_the_four_projects_are_made_and_linked_after_one_yes(copy_of_the_repository, tmp_path):
+    repo = copy_of_the_repository
+    reset(repo)
+    done, calls, _ = make_projects(repo, tmp_path)
+    assert done.returncode == 0, done.stdout + done.stderr
+    ids = made(calls)
+    assert [project.rsplit("-", 1)[0] for project in ids] == [f"aiven-{role}" for role in ROLES]
+    assert len({project.rsplit("-", 1)[1] for project in ids}) == 1  # one suffix
+    for role, project in zip(ROLES, ids, strict=True):
+        assert (
+            f"projects create {project} --organization=998877665544 --name=AIVEN {role} --quiet"
+            in calls
+        )
+        assert f"billing projects link {project} --billing-account=01F2A3-B4C5D6-E7F809" in calls
+    assert "Make these 4 projects? (y/n)" not in done.stdout  # read -p prints only on a terminal
+    assert "PASS projects: made and linked to 01F2A3-B4C5D6-E7F809:" in done.stdout
+    assert not [call for call in calls if "my-first-project-511521" in call]  # never touched
+
+    tfvars = (repo / "infra" / "terraform" / "terraform.tfvars").read_text()
+    platform = (repo / "config" / "platform.yaml").read_text()
+    for role, project in zip(ROLES, ids, strict=True):
+        assert f"{role}_project" in tfvars and f'"{project}"' in tfvars
+    assert f"agents_project: {ids[0]}" in platform
+    assert f"gateway_principal: gateway@{ids[1]}.iam.gserviceaccount.com" in platform
+    assert check_file(repo / "infra" / "terraform" / "terraform.tfvars") == []
+
+    # Run again: the values name the projects now, so nothing is made or asked.
+    again, calls_again, _ = after_apply(repo, tmp_path, "values", keep_state=True)
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert made(calls_again) == ids  # the calls of the first run only
+    reset(repo)
+
+
+def test_answering_no_asks_for_existing_projects_instead(copy_of_the_repository, tmp_path):
+    repo = copy_of_the_repository
+    reset(repo)
+    existing = "aiven-agents-mock aiven-gateway-mock aiven-control-mock aiven-scratch-mock"
+    # Enter (billing), n, Enter for each of the four suggested projects, currency, alert, drive.
+    done, calls, _ = make_projects(
+        repo,
+        tmp_path,
+        answers="\nn\n" + "\n" * 7,
+        MOCK_PROJECTS=f"{existing} my-first-project-511521",
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert made(calls) == []
+    assert not [call for call in calls if call.startswith("billing projects link")]
+    assert (
+        'control_project = "aiven-control-mock"'
+        in (repo / "infra" / "terraform" / "terraform.tfvars").read_text()
+    )
+    reset(repo)
+
+
+def test_a_project_id_that_is_taken_gets_a_new_suffix(copy_of_the_repository, tmp_path):
+    repo = copy_of_the_repository
+    reset(repo)
+    done, calls, _ = make_projects(repo, tmp_path, MOCK_CREATE_TAKEN="gateway")
+    assert done.returncode == 0, done.stdout + done.stderr
+    tried = made(calls)
+    assert len(tried) == 5  # the gateway twice
+    first, second = [project for project in tried if project.startswith("aiven-gateway-")]
+    assert first != second
+    tfvars = (repo / "infra" / "terraform" / "terraform.tfvars").read_text()
+    assert f'"{second}"' in tfvars and f'"{first}"' not in tfvars
+    reset(repo)
+
+
+def test_a_full_project_quota_stops_with_what_happened(copy_of_the_repository, tmp_path):
+    repo = copy_of_the_repository
+    reset(repo)
+    done, calls, _ = make_projects(repo, tmp_path, MOCK_CREATE_QUOTA="1")
+    assert done.returncode == 3
+    assert "STOPPED: project aiven-agents-" in done.stderr and "could not be made" in done.stderr
+    assert "Hint: a quota of your account or billing account is full" in done.stdout
+    assert not [call for call in calls if call.startswith("billing projects link")]
+    assert not (repo / "infra" / "terraform" / "terraform.tfvars").exists()
+    reset(repo)
+
+
+def test_a_run_that_stopped_at_a_full_billing_quota_resumes_with_the_same_ids(
+    copy_of_the_repository, tmp_path
+):
+    repo = copy_of_the_repository
+    reset(repo)
+    stopped, calls, _ = make_projects(repo, tmp_path, MOCK_LINK_QUOTA="1")
+    assert stopped.returncode == 3
+    assert "takes no more linked projects (its quota is full)" in stopped.stderr
+    assert "billing_quota_increase" in stopped.stderr
+    assert not (repo / "infra" / "terraform" / "terraform.tfvars").exists()
+    first = made(calls)
+    assert len(first) == 1  # made, and then its billing could not be linked
+
+    # Quota raised: the run again makes the other three, with the IDs it showed the first time.
+    again, calls, _ = after_apply(
+        repo,
+        tmp_path,
+        NO_VALUES + "values",
+        answers=MAKE,
+        keep_state=True,
+        MOCK_PROJECTS="my-first-project-511521",
+    )
+    assert again.returncode == 0, again.stdout + again.stderr
+    ids = made(calls)
+    assert ids[0] == first[0] and len(ids) == 4
+    assert len({project.rsplit("-", 1)[1] for project in ids}) == 1
+    assert f"billing projects link {first[0]} --billing-account=01F2A3-B4C5D6-E7F809" in calls
+    reset(repo)

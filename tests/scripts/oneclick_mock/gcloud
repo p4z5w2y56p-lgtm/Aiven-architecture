@@ -5,10 +5,45 @@
 #   MOCK_APIS=on|off            whether the 4 bootstrap APIs are on in the control project
 #   MOCK_STATE_BUCKET=yes|no    whether the state bucket exists
 #   MOCK_ACCOUNT                who logs in (default owner@aivenstudios.com)
+#   MOCK_PROJECTS               the projects that exist (default: the four aiven-*-mock ones);
+#                               `projects create` adds one, kept next to $MOCK_LOG
+#   MOCK_CREATE_TAKEN=<word>    the first project ID holding <word> is someone else's already
+#   MOCK_CREATE_QUOTA=1         the account may make no more projects
+#   MOCK_LINK_QUOTA=1           the billing account takes no more linked projects
 set -u
 printf '%s\n' "$*" >>"${MOCK_LOG:?}"
 args=" $* "
-projects=(aiven-agents-mock aiven-gateway-mock aiven-control-mock aiven-scratch-mock)
+read -r -a projects <<<"${MOCK_PROJECTS:-aiven-agents-mock aiven-gateway-mock aiven-control-mock aiven-scratch-mock}"
+if [[ -f "$MOCK_LOG.created" ]]; then
+  while read -r made; do projects+=("$made"); done <"$MOCK_LOG.created"
+fi
+
+case "$args" in
+  " projects create "*)
+    if [[ ${MOCK_CREATE_QUOTA:-0} == 1 ]]; then
+      echo "ERROR: (gcloud.projects.create) FAILED_PRECONDITION: Quota exceeded for total allowable projects." >&2
+      exit 1
+    fi
+    if [[ -n ${MOCK_CREATE_TAKEN:-} && $3 == *"$MOCK_CREATE_TAKEN"* && ! -f "$MOCK_LOG.taken" ]]; then
+      : >"$MOCK_LOG.taken"
+      echo "ERROR: (gcloud.projects.create) Project creation failed. The project ID you specified is already in use by another project. ALREADY_EXISTS" >&2
+      exit 1
+    fi
+    echo "$3" >>"$MOCK_LOG.created"
+    [[ -n ${MOCK_STATE:-} ]] && echo False >"$MOCK_STATE/billing-$3"
+    exit 0 ;;
+  " organizations list "*)
+    echo "998877665544"
+    exit 0 ;;
+  " billing accounts list "*)
+    echo "billingAccounts/01F2A3-B4C5D6-E7F809"
+    exit 0 ;;
+  " billing projects link "*)
+    if [[ ${MOCK_LINK_QUOTA:-0} == 1 ]]; then
+      echo "ERROR: (gcloud.billing.projects.link) FAILED_PRECONDITION: Precondition check failed. Cloud billing quota exceeded" >&2
+      exit 1
+    fi ;;
+esac
 
 # With MOCK_STATE (a folder), it also plays the projects after the apply: billing per project, the
 # drill's copy of the budget stop (it unlinks aiven-scratch-mock at the stop amount, as

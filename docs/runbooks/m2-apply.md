@@ -19,6 +19,11 @@ answer `Apply? (y/n)` once, after a short summary of the plan against part 4. At
 whether the alert emails arrived (Enter skips that). Then send `m2-result.txt`, and commit
 `config/platform.yaml` and `infra/terraform/terraform.tfvars`.
 
+- **No projects yet?** When the values name no projects, the script makes the four itself,
+  `aiven-agents-<suffix>`, `aiven-gateway-<suffix>`, `aiven-control-<suffix>` and
+  `aiven-scratch-<suffix>` (one random suffix of 6 hex digits), in your organisation, each linked
+  to your billing account, after one `Make these 4 projects? (y/n)`. Answer `n` to give the IDs of
+  existing projects instead. A dry run only shows the four. Your other projects are never touched.
 - **Safe to run again.** Every step checks first and skips what is done. The reminder email and
   drills that passed are not repeated (`.m2-oneclick/state`). A real error stops it with what
   happened and what to do; a check that fails is reported, and the rest still runs.
@@ -53,7 +58,7 @@ order. Each one says what to check before you go on.
 
 - The IDs from setup steps S1 to S4: the organisation ID (`gcloud organizations list`), the
   billing account ID (`gcloud billing accounts list`) and its currency, and the project IDs of
-  agents, gateway, control and scratch.
+  agents, gateway, control and scratch (the one command can make these four for you).
 - Billing Account Administrator on the billing account, for the budgets.
 
 ## 1. The values (IDs and addresses only)
