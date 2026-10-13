@@ -202,6 +202,21 @@ def new_findings(data: bytes) -> list[Finding]:
     return list((Counter(findings_of(data)) - Counter(findings_of(BASE))).elements())
 
 
+def assert_prints(finding: Finding, where: str | Path) -> None:
+    """The finding has every param that its message needs, in both languages, and prints right.
+
+    A missing param raises KeyError in `message`. No `{name}` may be left over (a value may hold
+    braces itself: the pattern of a folder ID), and the one-line form starts with the severity,
+    the code and `where`, the path of the file.
+    """
+    for lang in ("en", "nl"):
+        text = message(finding, lang)
+        for value in finding.params.values():
+            text = text.replace(value, "")
+        assert "{" not in text and "}" not in text
+    assert format_line(finding).startswith(f"{finding.severity} {finding.code} {where}")
+
+
 def case(
     code: str,
     label: str,
@@ -1033,13 +1048,7 @@ def test_mutation_yields_exactly_one_new_finding(code, mutation, expected_line, 
     finding = new[0]
     assert params is None or finding.params == params
     assert finding.severity == ("error" if code.startswith("E-") else "warning")
-    for lang in ("en", "nl"):
-        text = message(finding, lang)  # raises KeyError if the finding lacks a parameter
-        # No `{name}` is left over. A value may hold braces itself: the pattern of a folder ID.
-        for value in finding.params.values():
-            text = text.replace(value, "")
-        assert "{" not in text and "}" not in text
-    assert format_line(finding).startswith(f"{finding.severity} {code} {BASE_PATH}")
+    assert_prints(finding, BASE_PATH)
 
 
 def test_a_valid_set_has_no_finding():
@@ -1085,12 +1094,7 @@ def test_set_case_yields_exactly_its_findings(code, build, findings):
     for finding in found:
         assert (finding.line, finding.column) == (None, None)
         assert finding.severity == ("error" if code.startswith("E-") else "warning")
-        for lang in ("en", "nl"):
-            text = message(finding, lang)  # raises KeyError if the finding lacks a parameter
-            for value in finding.params.values():
-                text = text.replace(value, "")
-            assert "{" not in text and "}" not in text
-        assert format_line(finding).startswith(f"{finding.severity} {code} {finding.path}")
+        assert_prints(finding, finding.path)
 
 
 def test_a_file_name_other_than_the_agent_yields_exactly_one_new_finding():
