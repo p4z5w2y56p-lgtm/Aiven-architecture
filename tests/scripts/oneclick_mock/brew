@@ -1,0 +1,4 @@
+#!/bin/sh
+# The mock has every tool already, so the script must not call Homebrew.
+printf 'brew %s\n' "$*" >>"${MOCK_LOG:?}"
+exit 1

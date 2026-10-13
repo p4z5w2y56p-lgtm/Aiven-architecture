@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# A stand-in for gcloud in the mock runs of scripts/m2-oneclick.sh: it answers as Google would for
+# a fresh deployment, and writes every call to $MOCK_LOG. Nothing here reaches Google.
+#   MOCK_ORG_ROLE=yes|no        whether the account has Organization Policy Administrator
+#   MOCK_APIS=on|off            whether the 4 bootstrap APIs are on in the control project
+#   MOCK_STATE_BUCKET=yes|no    whether the state bucket exists
+#   MOCK_ACCOUNT                who logs in (default owner@aivenstudios.com)
+set -u
+printf '%s\n' "$*" >>"${MOCK_LOG:?}"
+args=" $* "
+projects=(aiven-agents-mock aiven-gateway-mock aiven-control-mock aiven-scratch-mock)
+
+# With MOCK_STATE (a folder), it also plays the projects after the apply: billing per project, the
+# drill's copy of the budget stop (it unlinks aiven-scratch-mock at the stop amount, as
+# src/aiven/functions/budget_stop.py does), the credit reminder, and the logs that both write, on a
+# clock of their own that ticks once per event. MOCK_DRILL_BROKEN=1 makes the copy do nothing, and
+# MOCK_DOUBLE_AUDIT=1 makes it write an audit entry for a project that is stopped already.
+if [[ -n ${MOCK_STATE:-} ]]; then
+  tick() {
+    local n
+    n=$(($(cat "$MOCK_STATE/clock" 2>/dev/null || echo 0) + 1))
+    echo "$n" >"$MOCK_STATE/clock"
+    printf '2026-10-13T10:%02d:%02dZ' $((n / 60)) $((n % 60))
+  }
+  billing_file() { printf '%s/billing-%s' "$MOCK_STATE" "$1"; }
+  case "$args" in
+    " billing projects describe "*billingEnabled*)
+      cat "$(billing_file "$4")" 2>/dev/null || echo True
+      exit 0 ;;
+    " billing projects link "*)
+      echo True >"$(billing_file "$4")"
+      exit 0 ;;
+    " scheduler jobs run credit-reminder "*)
+      echo "$(tick) CREDIT_EXPIRY" >>"$MOCK_STATE/audit"
+      exit 0 ;;
+    " run services update budget-stop-drill "*)
+      case "$args" in
+        *STOP_ENABLED=false*) echo false >"$MOCK_STATE/stop-enabled" ;;
+        *STOP_ENABLED=true*) echo true >"$MOCK_STATE/stop-enabled" ;;
+      esac
+      exit 0 ;;
+    " pubsub topics publish budget-stop-drill "*)
+      [[ ${MOCK_DRILL_BROKEN:-0} == 1 ]] && exit 0
+      cost=$(sed -E 's/.*"costAmount":([0-9.]+).*/\1/' <<<"$args")
+      budget=$(sed -E 's/.*"budgetAmount":([0-9.]+).*/\1/' <<<"$args")
+      if [[ $(cat "$MOCK_STATE/stop-enabled" 2>/dev/null || echo true) != true ]]; then
+        outcome=disabled
+      elif awk -v c="$cost" -v b="$budget" 'BEGIN { exit !(c < b) }'; then
+        outcome=below
+      elif [[ $(cat "$(billing_file aiven-scratch-mock)" 2>/dev/null || echo True) == False ]]; then
+        outcome=already_stopped
+        [[ ${MOCK_DOUBLE_AUDIT:-0} == 1 ]] && echo "$(tick) budget_stop" >>"$MOCK_STATE/audit"
+      else
+        echo False >"$(billing_file aiven-scratch-mock)"
+        echo "$(tick) budget_stop" >>"$MOCK_STATE/audit"
+        outcome=stopped
+      fi
+      echo "$(tick) $outcome" >>"$MOCK_STATE/drill"
+      exit 0 ;;
+    " pubsub topics publish "*)
+      echo "the mock refuses: only the drill's topic may be published to" >&2
+      exit 1 ;;
+    " logging read "*)
+      since=$(sed -E 's/.*timestamp>="([^"]+)".*/\1/' <<<"$args")
+      case "$args" in
+        *'jsonPayload.reason="CREDIT_EXPIRY"'*) file=audit want=CREDIT_EXPIRY ;;
+        *'jsonPayload.event="budget_stop"'*) file=audit want=budget_stop ;;
+        *'jsonPayload.outcome="'*) file=drill want=$(sed -E 's/.*jsonPayload.outcome="([a-z_]+)".*/\1/' <<<"$args") ;;
+        *) exit 0 ;;
+      esac
+      awk -v since="$since" -v want="$want" '$1 >= since && $2 == want { print $1 }' "$MOCK_STATE/$file" 2>/dev/null
+      exit 0 ;;
+  esac
+fi
+
+case "$args" in
+  " auth login "* | " auth application-default login "* | " auth revoke "* | " auth application-default revoke "*)
+    exit 0 ;;
+  " config get-value account "*)
+    echo "${MOCK_ACCOUNT:-owner@aivenstudios.com}" ;;
+  " projects list "*)
+    printf '%s\n' "${projects[@]}" ;;
+  " projects describe "*)
+    for project in "${projects[@]}"; do [[ $3 == "$project" ]] && { echo "$project"; exit 0; }; done
+    echo "ERROR: project $3 not found" >&2; exit 1 ;;
+  " projects get-ancestors "*)
+    printf '%s\tproject\n998877665544\torganization\n' "$3" ;;
+  " billing projects describe "*)
+    case "$args" in
+      *billingAccountName*) echo "billingAccounts/01F2A3-B4C5D6-E7F809" ;;
+      *) echo "True" ;;
+    esac ;;
+  " billing accounts describe "*)
+    echo "EUR" ;;
+  " organizations get-iam-policy "*)
+    [[ ${MOCK_ORG_ROLE:-no} == yes ]] && echo "roles/orgpolicy.policyAdmin"
+    exit 0 ;;
+  " services list "*)
+    [[ ${MOCK_APIS:-on} == on ]] && printf '%s\n' serviceusage.googleapis.com cloudresourcemanager.googleapis.com orgpolicy.googleapis.com storage.googleapis.com
+    exit 0 ;;
+  " storage buckets describe "*)
+    if [[ ${MOCK_STATE_BUCKET:-no} == yes ]]; then printf 'EUROPE-WEST4\tTrue\n'; exit 0; fi
+    echo "ERROR: (gcloud.storage.buckets.describe) $4 not found: 404." >&2; exit 1 ;;
+  *)
+    # Everything else changes something: the mock takes it, and the log shows it was called.
+    exit 0 ;;
+esac

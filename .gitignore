@@ -26,3 +26,6 @@ crash.log
 
 # The zips of the functions that Terraform builds.
 .build/
+
+# The one-click apply of M2: its Terraform, plans, plugin cache, state and log (scripts/m2-oneclick.sh).
+.m2-oneclick/

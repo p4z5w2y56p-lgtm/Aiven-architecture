@@ -1,0 +1,11 @@
+#!/bin/sh
+# Only on the PATH of the run that downloads Terraform: what it writes is not Terraform.
+printf 'curl %s\n' "$*" >>"${MOCK_LOG:?}"
+out=""
+prev=""
+for arg; do
+  [ "$prev" = "-fsSLo" ] && out="$arg"
+  prev="$arg"
+done
+[ -n "$out" ] && printf 'not terraform\n' >"$out"
+exit 0

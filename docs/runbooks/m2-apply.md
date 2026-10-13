@@ -2,8 +2,34 @@
 
 These are Matthijs's steps. Agents never apply Terraform and hold no credentials (ruling R97):
 Terraform runs on your machine, with your own login. CI only checks the code (format, validate,
-`terraform test` on a mock provider). Work through the parts in order. Each one says what to check
-before you go on.
+`terraform test` on a mock provider).
+
+## The one command
+
+On your Mac, in the repository:
+
+```sh
+bash scripts/m2-oneclick.sh --dry-run   # optional: up to the plan, and nothing changes in Google Cloud
+bash scripts/m2-oneclick.sh             # all of M2
+```
+
+The script does parts 0 to 6 below, in order, and writes part 7 for you. What you do: log in twice
+in the browser (gcloud, then Terraform's login), type an ID only when the values files lack it, and
+answer `Apply? (y/n)` once, after a short summary of the plan against part 4. At the end it asks
+whether the alert emails arrived (Enter skips that). Then send `m2-result.txt`, and commit
+`config/platform.yaml` and `infra/terraform/terraform.tfvars`.
+
+- **Safe to run again.** Every step checks first and skips what is done. The reminder email and
+  drills that passed are not repeated (`.m2-oneclick/state`). A real error stops it with what
+  happened and what to do; a check that fails is reported, and the rest still runs.
+- **Your logins** live in a folder of their own for that one run, and are revoked and deleted when
+  it ends, also after an error or Ctrl-C. Your own gcloud setup is not touched, and no token is
+  printed, written or logged.
+- **Not done by the script:** the audit log lock (it waits for your confirmation), committing or
+  pushing anything, and Homebrew itself (install it from brew.sh first).
+
+The parts below say what each step does, and are the way to do it by hand. Work through them in
+order. Each one says what to check before you go on.
 
 ## 0. What you need
 
@@ -171,9 +197,26 @@ part 2 is missing: do it, then plan and apply again. Nothing else is made before
    instead: its members are exactly you (Manager) and the gateway account (Contributor), and
    "Allow people who aren't members to access files" is off.
 
+## 7. What to send back
+
+The script puts all of this in `m2-result.txt` (IDs and results only, no credentials): send that
+file, and the CI result of the commit with the two values files. By hand, send:
+
+1. The last line of `terraform apply` (`Apply complete! Resources: ...`) and
+   `terraform output service_accounts`.
+2. The whole output of `uv run aiven-deploy-check all`.
+3. BD-1: the time from publishing to the unlink, and whether each pass item held (unlinked within
+   5 minutes, the `budget_stop` audit entry, the real projects' billing still on).
+4. BD-2: `below` at 24.99, `disabled` while switched off, and for two notifications at 25.01 one
+   unlink, `already_stopped`, and one audit entry.
+5. The emails: did the credit reminder's arrive (yes or no), and the budget stop's from BD-1?
+6. Any step that stopped with an error: the command and its last lines.
+7. The CI result of the commit with `config/platform.yaml` and `infra/terraform/terraform.tfvars`.
+
 ## Later, and only when you confirm it: the audit log lock
 
 Locking `aiven-audit` fixes its 365-day retention for good: it cannot be undone, and the bucket can
-then only be deleted when it is empty. It is not part of M2. When you confirm it in the
+then only be deleted when it is empty. It is not part of M2: it waits until you have seen at least
+a week of audit entries come in properly after the apply (M2 review), and confirm it. When you confirm it in the
 conversation, it comes as one commit that sets `locked = true` and lifts the guard that refuses it
 (ruling R105); you then plan and apply that change on its own.

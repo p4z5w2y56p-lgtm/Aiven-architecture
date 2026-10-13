@@ -1,0 +1,7 @@
+#!/bin/sh
+# The mock runs are on Linux; the script is for a Mac with Apple silicon.
+case "$1" in
+  -s) echo Darwin ;;
+  -m) echo arm64 ;;
+  *) echo Darwin ;;
+esac

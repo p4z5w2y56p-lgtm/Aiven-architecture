@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# A stand-in for Terraform in the tests of the steps after the apply (it is not on the PATH as
+# `terraform`; the tests set TF to it). `plan` makes an empty plan file and says "changes" (exit 2),
+# `show -json` gives the plan that the test put in $MOCK_PLANS under the plan's name, and `apply`
+# does nothing. Every call is written to $MOCK_LOG.
+set -u
+printf 'terraform %s\n' "$*" >>"${MOCK_LOG:?}"
+shift # -chdir=...
+case "$1" in
+  plan)
+    for arg; do
+      case "$arg" in -out=*) : >"${arg#-out=}" ;; esac
+    done
+    exit 2 ;;
+  show)
+    plan="${!#}"
+    cat "${MOCK_PLANS:?}/$(basename "$plan" .tfplan).json" ;;
+  apply) exit 0 ;;
+  *) exit 1 ;;
+esac

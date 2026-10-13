@@ -1,0 +1,1803 @@
+{
+ "format_version": "1.2",
+ "planned_values": {
+  "root_module": {
+   "child_modules": [
+    {
+     "address": "module.agents",
+     "resources": [
+      {
+       "address": "module.agents.google_project_iam_member.project[\"roles/aiplatform.user agent-invoice-reminder\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:agent-invoice-reminder@aiven-agents-mock.iam.gserviceaccount.com",
+        "project": "aiven-agents-mock",
+        "role": "roles/aiplatform.user"
+       }
+      },
+      {
+       "address": "module.agents.google_project_iam_member.project[\"roles/billing.projectManager budget-stop\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:budget-stop@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-agents-mock",
+        "role": "roles/billing.projectManager"
+       }
+      },
+      {
+       "address": "module.agents.google_project_service.api[\"aiplatform.googleapis.com\"]",
+       "mode": "managed",
+       "type": "google_project_service",
+       "values": {
+        "project": "aiven-agents-mock",
+        "service": "aiplatform.googleapis.com"
+       }
+      },
+      {
+       "address": "module.agents.google_project_service.api[\"artifactregistry.googleapis.com\"]",
+       "mode": "managed",
+       "type": "google_project_service",
+       "values": {
+        "project": "aiven-agents-mock",
+        "service": "artifactregistry.googleapis.com"
+       }
+      },
+      {
+       "address": "module.agents.google_project_service.api[\"iam.googleapis.com\"]",
+       "mode": "managed",
+       "type": "google_project_service",
+       "values": {
+        "project": "aiven-agents-mock",
+        "service": "iam.googleapis.com"
+       }
+      },
+      {
+       "address": "module.agents.google_project_service.api[\"logging.googleapis.com\"]",
+       "mode": "managed",
+       "type": "google_project_service",
+       "values": {
+        "project": "aiven-agents-mock",
+        "service": "logging.googleapis.com"
+       }
+      },
+      {
+       "address": "module.agents.google_project_service.api[\"run.googleapis.com\"]",
+       "mode": "managed",
+       "type": "google_project_service",
+       "values": {
+        "project": "aiven-agents-mock",
+        "service": "run.googleapis.com"
+       }
+      },
+      {
+       "address": "module.agents.google_service_account.agent[\"invoice-reminder\"]",
+       "mode": "managed",
+       "type": "google_service_account",
+       "values": {
+        "account_id": "agent-invoice-reminder",
+        "display_name": "Agent invoice-reminder",
+        "member": "serviceAccount:agent-invoice-reminder@aiven-agents-mock.iam.gserviceaccount.com",
+        "project": "aiven-agents-mock"
+       }
+      }
+     ]
+    },
+    {
+     "address": "module.control",
+     "resources": [
+      {
+       "address": "module.control.data.archive_file.function[\"budget-stop\"]",
+       "mode": "data",
+       "type": "archive_file",
+       "values": {
+        "type": "zip"
+       }
+      },
+      {
+       "address": "module.control.data.archive_file.function[\"credit-reminder\"]",
+       "mode": "data",
+       "type": "archive_file",
+       "values": {
+        "type": "zip"
+       }
+      },
+      {
+       "address": "module.control.data.google_project.budget[\"aiven-agents-mock\"]",
+       "mode": "data",
+       "type": "google_project",
+       "values": {}
+      },
+      {
+       "address": "module.control.data.google_project.budget[\"aiven-control-mock\"]",
+       "mode": "data",
+       "type": "google_project",
+       "values": {}
+      },
+      {
+       "address": "module.control.data.google_project.budget[\"aiven-gateway-mock\"]",
+       "mode": "data",
+       "type": "google_project",
+       "values": {}
+      },
+      {
+       "address": "module.control.google_billing_budget.alert",
+       "mode": "managed",
+       "type": "google_billing_budget",
+       "values": {
+        "amount": [
+         {
+          "specified_amount": [
+           {
+            "currency_code": "EUR",
+            "units": "10"
+           }
+          ]
+         }
+        ],
+        "display_name": "aiven-alert"
+       }
+      },
+      {
+       "address": "module.control.google_billing_budget.stop",
+       "mode": "managed",
+       "type": "google_billing_budget",
+       "values": {
+        "amount": [
+         {
+          "specified_amount": [
+           {
+            "currency_code": "EUR",
+            "units": "25"
+           }
+          ]
+         }
+        ],
+        "display_name": "aiven-stop"
+       }
+      },
+      {
+       "address": "module.control.google_cloud_run_v2_service_iam_member.credit_reminder_invoker",
+       "mode": "managed",
+       "type": "google_cloud_run_v2_service_iam_member",
+       "values": {
+        "member": "serviceAccount:credit-reminder@aiven-control-mock.iam.gserviceaccount.com",
+        "name": "credit-reminder",
+        "project": "aiven-control-mock",
+        "role": "roles/run.invoker"
+       }
+      },
+      {
+       "address": "module.control.google_cloud_run_v2_service_iam_member.stop_invoker[\"budget-stop\"]",
+       "mode": "managed",
+       "type": "google_cloud_run_v2_service_iam_member",
+       "values": {
+        "member": "serviceAccount:budget-stop@aiven-control-mock.iam.gserviceaccount.com",
+        "name": "budget-stop",
+        "project": "aiven-control-mock",
+        "role": "roles/run.invoker"
+       }
+      },
+      {
+       "address": "module.control.google_cloud_scheduler_job.credit_reminder",
+       "mode": "managed",
+       "type": "google_cloud_scheduler_job",
+       "values": {
+        "name": "credit-reminder",
+        "project": "aiven-control-mock"
+       }
+      },
+      {
+       "address": "module.control.google_cloudfunctions2_function.credit_reminder",
+       "mode": "managed",
+       "type": "google_cloudfunctions2_function",
+       "values": {
+        "labels": null,
+        "name": "credit-reminder",
+        "project": "aiven-control-mock",
+        "service_config": [
+         {
+          "environment_variables": {
+           "AUDIT_ACTOR": "credit-reminder@aiven-control-mock.iam.gserviceaccount.com",
+           "AUDIT_PROJECT": "aiven-control-mock",
+           "CREDIT_EXPIRY": "2027-01-04"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "address": "module.control.google_cloudfunctions2_function.stop[\"budget-stop\"]",
+       "mode": "managed",
+       "type": "google_cloudfunctions2_function",
+       "values": {
+        "labels": null,
+        "name": "budget-stop",
+        "project": "aiven-control-mock",
+        "service_config": [
+         {
+          "environment_variables": {
+           "AUDIT_ACTOR": "budget-stop@aiven-control-mock.iam.gserviceaccount.com",
+           "AUDIT_PROJECT": "aiven-control-mock",
+           "BUDGET_CURRENCY": "EUR",
+           "STOP_ENABLED": "true",
+           "STOP_PROJECTS": "aiven-agents-mock,aiven-gateway-mock"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "address": "module.control.google_firestore_database.control",
+       "mode": "managed",
+       "type": "google_firestore_database",
+       "values": {
+        "name": "control",
+        "project": "aiven-control-mock",
+        "type": "FIRESTORE_NATIVE"
+       }
+      },
+      {
+       "address": "module.control.google_logging_log_view_iam_member.audit_reader",
+       "mode": "managed",
+       "type": "google_logging_log_view_iam_member",
+       "values": {
+        "member": "serviceAccount:control-ui@aiven-control-mock.iam.gserviceaccount.com",
+        "name": "_AllLogs",
+        "role": "roles/logging.viewAccessor"
+       }
+      },
+      {
+       "address": "module.control.google_logging_metric.control_unreachable",
+       "mode": "managed",
+       "type": "google_logging_metric",
+       "values": {
+        "name": "aiven/control-unreachable",
+        "project": "aiven-control-mock"
+       }
+      },
+      {
+       "address": "module.control.google_logging_project_bucket_config.audit",
+       "mode": "managed",
+       "type": "google_logging_project_bucket_config",
+       "values": {
+        "bucket_id": "aiven-audit",
+        "locked": false,
+        "project": "aiven-control-mock",
+        "retention_days": 365
+       }
+      },
+      {
+       "address": "module.control.google_logging_project_exclusion.audit",
+       "mode": "managed",
+       "type": "google_logging_project_exclusion",
+       "values": {
+        "name": "aiven-audit-only-in-its-bucket",
+        "project": "aiven-control-mock"
+       }
+      },
+      {
+       "address": "module.control.google_logging_project_sink.audit",
+       "mode": "managed",
+       "type": "google_logging_project_sink",
+       "values": {
+        "name": "aiven-audit",
+        "project": "aiven-control-mock"
+       }
+      },
+      {
+       "address": "module.control.google_monitoring_alert_policy.alert_entries",
+       "mode": "managed",
+       "type": "google_monitoring_alert_policy",
+       "values": {
+        "display_name": "AIVEN: an audit entry with an alert",
+        "project": "aiven-control-mock"
+       }
+      },
+      {
+       "address": "module.control.google_monitoring_alert_policy.control_unreachable",
+       "mode": "managed",
+       "type": "google_monitoring_alert_policy",
+       "values": {
+        "display_name": "AIVEN: the gateway fails closed for more than a minute",
+        "project": "aiven-control-mock"
+       }
+      },
+      {
+       "address": "module.control.google_monitoring_notification_channel.email",
+       "mode": "managed",
+       "type": "google_monitoring_notification_channel",
+       "values": {
+        "display_name": "AIVEN alerts",
+        "labels": {
+         "email_address": "owner@aivenstudios.com"
+        },
+        "project": "aiven-control-mock",
+        "type": "email"
+       }
+      },
+      {
+       "address": "module.control.google_project_iam_member.project[\"roles/artifactregistry.writer function-builder\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:function-builder@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-control-mock",
+        "role": "roles/artifactregistry.writer"
+       }
+      },
+      {
+       "address": "module.control.google_project_iam_member.project[\"roles/datastore.user control-ui\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:control-ui@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-control-mock",
+        "role": "roles/datastore.user"
+       }
+      },
+      {
+       "address": "module.control.google_project_iam_member.project[\"roles/datastore.viewer gateway\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:gateway@aiven-gateway-mock.iam.gserviceaccount.com",
+        "project": "aiven-control-mock",
+        "role": "roles/datastore.viewer"
+       }
+      },
+      {
+       "address": "module.control.google_project_iam_member.project[\"roles/logging.logWriter budget-stop\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:budget-stop@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-control-mock",
+        "role": "roles/logging.logWriter"
+       }
+      },
+      {
+       "address": "module.control.google_project_iam_member.project[\"roles/logging.logWriter control-ui\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:control-ui@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-control-mock",
+        "role": "roles/logging.logWriter"
+       }
+      },
+      {
+       "address": "module.control.google_project_iam_member.project[\"roles/logging.logWriter credit-reminder\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:credit-reminder@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-control-mock",
+        "role": "roles/logging.logWriter"
+       }
+      },
+      {
+       "address": "module.control.google_project_iam_member.project[\"roles/logging.logWriter function-builder\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:function-builder@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-control-mock",
+        "role": "roles/logging.logWriter"
+       }
+      },
+      {
+       "address": "module.control.google_project_iam_member.project[\"roles/logging.logWriter gateway\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:gateway@aiven-gateway-mock.iam.gserviceaccount.com",
+        "project": "aiven-control-mock",
+        "role": "roles/logging.logWriter"
+       }
+      },
+      {
+       "address": "module.control.google_pubsub_topic.stop[\"budget-stop\"]",
+       "mode": "managed",
+       "type": "google_pubsub_topic",
+       "values": {
+        "labels": null,
+        "name": "budget-stop",
+        "project": "aiven-control-mock"
+       }
+      },
+      {
+       "address": "module.control.google_pubsub_topic_iam_member.billing_publishes",
+       "mode": "managed",
+       "type": "google_pubsub_topic_iam_member",
+       "values": {
+        "member": "serviceAccount:billing-budget-alert@system.gserviceaccount.com",
+        "project": "aiven-control-mock",
+        "role": "roles/pubsub.publisher"
+       }
+      },
+      {
+       "address": "module.control.google_service_account.account[\"budget-stop\"]",
+       "mode": "managed",
+       "type": "google_service_account",
+       "values": {
+        "account_id": "budget-stop",
+        "display_name": "AIVEN budget-stop",
+        "member": "serviceAccount:budget-stop@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-control-mock"
+       }
+      },
+      {
+       "address": "module.control.google_service_account.account[\"control-ui\"]",
+       "mode": "managed",
+       "type": "google_service_account",
+       "values": {
+        "account_id": "control-ui",
+        "display_name": "AIVEN control-ui",
+        "member": "serviceAccount:control-ui@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-control-mock"
+       }
+      },
+      {
+       "address": "module.control.google_service_account.account[\"credit-reminder\"]",
+       "mode": "managed",
+       "type": "google_service_account",
+       "values": {
+        "account_id": "credit-reminder",
+        "display_name": "AIVEN credit-reminder",
+        "member": "serviceAccount:credit-reminder@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-control-mock"
+       }
+      },
+      {
+       "address": "module.control.google_service_account.account[\"function-builder\"]",
+       "mode": "managed",
+       "type": "google_service_account",
+       "values": {
+        "account_id": "function-builder",
+        "display_name": "AIVEN function-builder",
+        "member": "serviceAccount:function-builder@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-control-mock"
+       }
+      },
+      {
+       "address": "module.control.google_storage_bucket.functions",
+       "mode": "managed",
+       "type": "google_storage_bucket",
+       "values": {
+        "labels": null,
+        "name": "aiven-control-mock-functions",
+        "project": "aiven-control-mock"
+       }
+      },
+      {
+       "address": "module.control.google_storage_bucket.policies",
+       "mode": "managed",
+       "type": "google_storage_bucket",
+       "values": {
+        "labels": null,
+        "name": "aiven-control-mock-policies",
+        "project": "aiven-control-mock"
+       }
+      },
+      {
+       "address": "module.control.google_storage_bucket.snapshots",
+       "mode": "managed",
+       "type": "google_storage_bucket",
+       "values": {
+        "labels": null,
+        "name": "aiven-control-mock-snapshots",
+        "project": "aiven-control-mock",
+        "retention_policy": [
+         {
+          "is_locked": false,
+          "retention_period": "2592000"
+         }
+        ]
+       }
+      },
+      {
+       "address": "module.control.google_storage_bucket_iam_member.builder_reads_source",
+       "mode": "managed",
+       "type": "google_storage_bucket_iam_member",
+       "values": {
+        "member": "serviceAccount:function-builder@aiven-control-mock.iam.gserviceaccount.com",
+        "role": "roles/storage.objectViewer"
+       }
+      },
+      {
+       "address": "module.control.google_storage_bucket_iam_member.store[\"policies roles/storage.objectViewer control-ui\"]",
+       "mode": "managed",
+       "type": "google_storage_bucket_iam_member",
+       "values": {
+        "member": "serviceAccount:control-ui@aiven-control-mock.iam.gserviceaccount.com",
+        "role": "roles/storage.objectViewer"
+       }
+      },
+      {
+       "address": "module.control.google_storage_bucket_iam_member.store[\"policies roles/storage.objectViewer gateway\"]",
+       "mode": "managed",
+       "type": "google_storage_bucket_iam_member",
+       "values": {
+        "member": "serviceAccount:gateway@aiven-gateway-mock.iam.gserviceaccount.com",
+        "role": "roles/storage.objectViewer"
+       }
+      },
+      {
+       "address": "module.control.google_storage_bucket_iam_member.store[\"snapshots roles/storage.legacyBucketReader control-ui\"]",
+       "mode": "managed",
+       "type": "google_storage_bucket_iam_member",
+       "values": {
+        "member": "serviceAccount:control-ui@aiven-control-mock.iam.gserviceaccount.com",
+        "role": "roles/storage.legacyBucketReader"
+       }
+      },
+      {
+       "address": "module.control.google_storage_bucket_iam_member.store[\"snapshots roles/storage.objectCreator gateway\"]",
+       "mode": "managed",
+       "type": "google_storage_bucket_iam_member",
+       "values": {
+        "member": "serviceAccount:gateway@aiven-gateway-mock.iam.gserviceaccount.com",
+        "role": "roles/storage.objectCreator"
+       }
+      },
+      {
+       "address": "module.control.google_storage_bucket_object.function[\"budget-stop\"]",
+       "mode": "managed",
+       "type": "google_storage_bucket_object",
+       "values": {}
+      },
+      {
+       "address": "module.control.google_storage_bucket_object.function[\"credit-reminder\"]",
+       "mode": "managed",
+       "type": "google_storage_bucket_object",
+       "values": {}
+      }
+     ]
+    },
+    {
+     "address": "module.gateway",
+     "resources": [
+      {
+       "address": "module.gateway.google_firestore_database.gateway",
+       "mode": "managed",
+       "type": "google_firestore_database",
+       "values": {
+        "name": "gateway",
+        "project": "aiven-gateway-mock",
+        "type": "FIRESTORE_NATIVE"
+       }
+      },
+      {
+       "address": "module.gateway.google_firestore_field.expire_at[\"calls\"]",
+       "mode": "managed",
+       "type": "google_firestore_field",
+       "values": {
+        "project": "aiven-gateway-mock"
+       }
+      },
+      {
+       "address": "module.gateway.google_firestore_field.expire_at[\"runs\"]",
+       "mode": "managed",
+       "type": "google_firestore_field",
+       "values": {
+        "project": "aiven-gateway-mock"
+       }
+      },
+      {
+       "address": "module.gateway.google_project_iam_member.project[\"roles/billing.projectManager budget-stop\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:budget-stop@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-gateway-mock",
+        "role": "roles/billing.projectManager"
+       }
+      },
+      {
+       "address": "module.gateway.google_project_iam_member.project[\"roles/datastore.user gateway\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:gateway@aiven-gateway-mock.iam.gserviceaccount.com",
+        "project": "aiven-gateway-mock",
+        "role": "roles/datastore.user"
+       }
+      },
+      {
+       "address": "module.gateway.google_project_iam_member.project[\"roles/datastore.viewer control-ui\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:control-ui@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-gateway-mock",
+        "role": "roles/datastore.viewer"
+       }
+      },
+      {
+       "address": "module.gateway.google_project_service.api[\"artifactregistry.googleapis.com\"]",
+       "mode": "managed",
+       "type": "google_project_service",
+       "values": {
+        "project": "aiven-gateway-mock",
+        "service": "artifactregistry.googleapis.com"
+       }
+      },
+      {
+       "address": "module.gateway.google_project_service.api[\"drive.googleapis.com\"]",
+       "mode": "managed",
+       "type": "google_project_service",
+       "values": {
+        "project": "aiven-gateway-mock",
+        "service": "drive.googleapis.com"
+       }
+      },
+      {
+       "address": "module.gateway.google_project_service.api[\"firestore.googleapis.com\"]",
+       "mode": "managed",
+       "type": "google_project_service",
+       "values": {
+        "project": "aiven-gateway-mock",
+        "service": "firestore.googleapis.com"
+       }
+      },
+      {
+       "address": "module.gateway.google_project_service.api[\"iam.googleapis.com\"]",
+       "mode": "managed",
+       "type": "google_project_service",
+       "values": {
+        "project": "aiven-gateway-mock",
+        "service": "iam.googleapis.com"
+       }
+      },
+      {
+       "address": "module.gateway.google_project_service.api[\"logging.googleapis.com\"]",
+       "mode": "managed",
+       "type": "google_project_service",
+       "values": {
+        "project": "aiven-gateway-mock",
+        "service": "logging.googleapis.com"
+       }
+      },
+      {
+       "address": "module.gateway.google_project_service.api[\"run.googleapis.com\"]",
+       "mode": "managed",
+       "type": "google_project_service",
+       "values": {
+        "project": "aiven-gateway-mock",
+        "service": "run.googleapis.com"
+       }
+      },
+      {
+       "address": "module.gateway.google_project_service.api[\"sheets.googleapis.com\"]",
+       "mode": "managed",
+       "type": "google_project_service",
+       "values": {
+        "project": "aiven-gateway-mock",
+        "service": "sheets.googleapis.com"
+       }
+      },
+      {
+       "address": "module.gateway.google_service_account.gateway",
+       "mode": "managed",
+       "type": "google_service_account",
+       "values": {
+        "account_id": "gateway",
+        "display_name": "AIVEN gateway",
+        "member": "serviceAccount:gateway@aiven-gateway-mock.iam.gserviceaccount.com",
+        "project": "aiven-gateway-mock"
+       }
+      }
+     ]
+    }
+   ],
+   "resources": [
+    {
+     "address": "google_org_policy_policy.baseline[\"agents/iam.automaticIamGrantsForDefaultServiceAccounts\"]",
+     "mode": "managed",
+     "type": "google_org_policy_policy",
+     "values": {
+      "name": "projects/aiven-agents-mock/policies/iam.automaticIamGrantsForDefaultServiceAccounts"
+     }
+    },
+    {
+     "address": "google_org_policy_policy.baseline[\"agents/iam.disableServiceAccountKeyCreation\"]",
+     "mode": "managed",
+     "type": "google_org_policy_policy",
+     "values": {
+      "name": "projects/aiven-agents-mock/policies/iam.disableServiceAccountKeyCreation"
+     }
+    },
+    {
+     "address": "google_org_policy_policy.baseline[\"control/iam.automaticIamGrantsForDefaultServiceAccounts\"]",
+     "mode": "managed",
+     "type": "google_org_policy_policy",
+     "values": {
+      "name": "projects/aiven-control-mock/policies/iam.automaticIamGrantsForDefaultServiceAccounts"
+     }
+    },
+    {
+     "address": "google_org_policy_policy.baseline[\"control/iam.disableServiceAccountKeyCreation\"]",
+     "mode": "managed",
+     "type": "google_org_policy_policy",
+     "values": {
+      "name": "projects/aiven-control-mock/policies/iam.disableServiceAccountKeyCreation"
+     }
+    },
+    {
+     "address": "google_org_policy_policy.baseline[\"gateway/iam.automaticIamGrantsForDefaultServiceAccounts\"]",
+     "mode": "managed",
+     "type": "google_org_policy_policy",
+     "values": {
+      "name": "projects/aiven-gateway-mock/policies/iam.automaticIamGrantsForDefaultServiceAccounts"
+     }
+    },
+    {
+     "address": "google_org_policy_policy.baseline[\"gateway/iam.disableServiceAccountKeyCreation\"]",
+     "mode": "managed",
+     "type": "google_org_policy_policy",
+     "values": {
+      "name": "projects/aiven-gateway-mock/policies/iam.disableServiceAccountKeyCreation"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"artifactregistry.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "artifactregistry.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"billingbudgets.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "billingbudgets.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"cloudbilling.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "cloudbilling.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"cloudbuild.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "cloudbuild.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"cloudfunctions.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "cloudfunctions.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"cloudresourcemanager.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "cloudresourcemanager.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"cloudscheduler.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "cloudscheduler.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"eventarc.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "eventarc.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"firestore.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "firestore.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"iam.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "iam.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"logging.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "logging.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"monitoring.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "monitoring.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"orgpolicy.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "orgpolicy.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"pubsub.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "pubsub.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"run.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "run.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"serviceusage.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "serviceusage.googleapis.com"
+     }
+    },
+    {
+     "address": "google_project_service.control[\"storage.googleapis.com\"]",
+     "mode": "managed",
+     "type": "google_project_service",
+     "values": {
+      "project": "aiven-control-mock",
+      "service": "storage.googleapis.com"
+     }
+    }
+   ]
+  }
+ },
+ "resource_changes": [
+  {
+   "address": "google_org_policy_policy.baseline[\"agents/iam.automaticIamGrantsForDefaultServiceAccounts\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_org_policy_policy"
+  },
+  {
+   "address": "google_org_policy_policy.baseline[\"agents/iam.disableServiceAccountKeyCreation\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_org_policy_policy"
+  },
+  {
+   "address": "google_org_policy_policy.baseline[\"control/iam.automaticIamGrantsForDefaultServiceAccounts\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_org_policy_policy"
+  },
+  {
+   "address": "google_org_policy_policy.baseline[\"control/iam.disableServiceAccountKeyCreation\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_org_policy_policy"
+  },
+  {
+   "address": "google_org_policy_policy.baseline[\"gateway/iam.automaticIamGrantsForDefaultServiceAccounts\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_org_policy_policy"
+  },
+  {
+   "address": "google_org_policy_policy.baseline[\"gateway/iam.disableServiceAccountKeyCreation\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_org_policy_policy"
+  },
+  {
+   "address": "google_project_service.control[\"artifactregistry.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"billingbudgets.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"cloudbilling.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"cloudbuild.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"cloudfunctions.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"cloudresourcemanager.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"cloudscheduler.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"eventarc.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"firestore.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"iam.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"logging.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"monitoring.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"orgpolicy.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"pubsub.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"run.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"serviceusage.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "google_project_service.control[\"storage.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "module.agents.google_project_iam_member.project[\"roles/aiplatform.user agent-invoice-reminder\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
+   "address": "module.agents.google_project_iam_member.project[\"roles/billing.projectManager budget-stop\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
+   "address": "module.agents.google_project_service.api[\"aiplatform.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "module.agents.google_project_service.api[\"artifactregistry.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "module.agents.google_project_service.api[\"iam.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "module.agents.google_project_service.api[\"logging.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "module.agents.google_project_service.api[\"run.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "module.agents.google_service_account.agent[\"invoice-reminder\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_service_account"
+  },
+  {
+   "address": "module.control.data.archive_file.function[\"budget-stop\"]",
+   "change": {
+    "actions": [
+     "read"
+    ]
+   },
+   "mode": "data",
+   "type": "archive_file"
+  },
+  {
+   "address": "module.control.data.archive_file.function[\"credit-reminder\"]",
+   "change": {
+    "actions": [
+     "read"
+    ]
+   },
+   "mode": "data",
+   "type": "archive_file"
+  },
+  {
+   "address": "module.control.data.google_project.budget[\"aiven-agents-mock\"]",
+   "change": {
+    "actions": [
+     "read"
+    ]
+   },
+   "mode": "data",
+   "type": "google_project"
+  },
+  {
+   "address": "module.control.data.google_project.budget[\"aiven-control-mock\"]",
+   "change": {
+    "actions": [
+     "read"
+    ]
+   },
+   "mode": "data",
+   "type": "google_project"
+  },
+  {
+   "address": "module.control.data.google_project.budget[\"aiven-gateway-mock\"]",
+   "change": {
+    "actions": [
+     "read"
+    ]
+   },
+   "mode": "data",
+   "type": "google_project"
+  },
+  {
+   "address": "module.control.google_billing_budget.alert",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_billing_budget"
+  },
+  {
+   "address": "module.control.google_billing_budget.stop",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_billing_budget"
+  },
+  {
+   "address": "module.control.google_cloud_run_v2_service_iam_member.credit_reminder_invoker",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_cloud_run_v2_service_iam_member"
+  },
+  {
+   "address": "module.control.google_cloud_run_v2_service_iam_member.stop_invoker[\"budget-stop\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_cloud_run_v2_service_iam_member"
+  },
+  {
+   "address": "module.control.google_cloud_scheduler_job.credit_reminder",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_cloud_scheduler_job"
+  },
+  {
+   "address": "module.control.google_cloudfunctions2_function.credit_reminder",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_cloudfunctions2_function"
+  },
+  {
+   "address": "module.control.google_cloudfunctions2_function.stop[\"budget-stop\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_cloudfunctions2_function"
+  },
+  {
+   "address": "module.control.google_firestore_database.control",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_firestore_database"
+  },
+  {
+   "address": "module.control.google_logging_log_view_iam_member.audit_reader",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_logging_log_view_iam_member"
+  },
+  {
+   "address": "module.control.google_logging_metric.control_unreachable",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_logging_metric"
+  },
+  {
+   "address": "module.control.google_logging_project_bucket_config.audit",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_logging_project_bucket_config"
+  },
+  {
+   "address": "module.control.google_logging_project_exclusion.audit",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_logging_project_exclusion"
+  },
+  {
+   "address": "module.control.google_logging_project_sink.audit",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_logging_project_sink"
+  },
+  {
+   "address": "module.control.google_monitoring_alert_policy.alert_entries",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_monitoring_alert_policy"
+  },
+  {
+   "address": "module.control.google_monitoring_alert_policy.control_unreachable",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_monitoring_alert_policy"
+  },
+  {
+   "address": "module.control.google_monitoring_notification_channel.email",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_monitoring_notification_channel"
+  },
+  {
+   "address": "module.control.google_project_iam_member.project[\"roles/artifactregistry.writer function-builder\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
+   "address": "module.control.google_project_iam_member.project[\"roles/datastore.user control-ui\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
+   "address": "module.control.google_project_iam_member.project[\"roles/datastore.viewer gateway\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
+   "address": "module.control.google_project_iam_member.project[\"roles/logging.logWriter budget-stop\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
+   "address": "module.control.google_project_iam_member.project[\"roles/logging.logWriter control-ui\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
+   "address": "module.control.google_project_iam_member.project[\"roles/logging.logWriter credit-reminder\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
+   "address": "module.control.google_project_iam_member.project[\"roles/logging.logWriter function-builder\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
+   "address": "module.control.google_project_iam_member.project[\"roles/logging.logWriter gateway\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
+   "address": "module.control.google_pubsub_topic.stop[\"budget-stop\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_pubsub_topic"
+  },
+  {
+   "address": "module.control.google_pubsub_topic_iam_member.billing_publishes",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_pubsub_topic_iam_member"
+  },
+  {
+   "address": "module.control.google_service_account.account[\"budget-stop\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_service_account"
+  },
+  {
+   "address": "module.control.google_service_account.account[\"control-ui\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_service_account"
+  },
+  {
+   "address": "module.control.google_service_account.account[\"credit-reminder\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_service_account"
+  },
+  {
+   "address": "module.control.google_service_account.account[\"function-builder\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_service_account"
+  },
+  {
+   "address": "module.control.google_storage_bucket.functions",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_storage_bucket"
+  },
+  {
+   "address": "module.control.google_storage_bucket.policies",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_storage_bucket"
+  },
+  {
+   "address": "module.control.google_storage_bucket.snapshots",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_storage_bucket"
+  },
+  {
+   "address": "module.control.google_storage_bucket_iam_member.builder_reads_source",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_storage_bucket_iam_member"
+  },
+  {
+   "address": "module.control.google_storage_bucket_iam_member.store[\"policies roles/storage.objectViewer control-ui\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_storage_bucket_iam_member"
+  },
+  {
+   "address": "module.control.google_storage_bucket_iam_member.store[\"policies roles/storage.objectViewer gateway\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_storage_bucket_iam_member"
+  },
+  {
+   "address": "module.control.google_storage_bucket_iam_member.store[\"snapshots roles/storage.legacyBucketReader control-ui\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_storage_bucket_iam_member"
+  },
+  {
+   "address": "module.control.google_storage_bucket_iam_member.store[\"snapshots roles/storage.objectCreator gateway\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_storage_bucket_iam_member"
+  },
+  {
+   "address": "module.control.google_storage_bucket_object.function[\"budget-stop\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_storage_bucket_object"
+  },
+  {
+   "address": "module.control.google_storage_bucket_object.function[\"credit-reminder\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_storage_bucket_object"
+  },
+  {
+   "address": "module.gateway.google_firestore_database.gateway",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_firestore_database"
+  },
+  {
+   "address": "module.gateway.google_firestore_field.expire_at[\"calls\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_firestore_field"
+  },
+  {
+   "address": "module.gateway.google_firestore_field.expire_at[\"runs\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_firestore_field"
+  },
+  {
+   "address": "module.gateway.google_project_iam_member.project[\"roles/billing.projectManager budget-stop\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
+   "address": "module.gateway.google_project_iam_member.project[\"roles/datastore.user gateway\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
+   "address": "module.gateway.google_project_iam_member.project[\"roles/datastore.viewer control-ui\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
+   "address": "module.gateway.google_project_service.api[\"artifactregistry.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "module.gateway.google_project_service.api[\"drive.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "module.gateway.google_project_service.api[\"firestore.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "module.gateway.google_project_service.api[\"iam.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "module.gateway.google_project_service.api[\"logging.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "module.gateway.google_project_service.api[\"run.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "module.gateway.google_project_service.api[\"sheets.googleapis.com\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_service"
+  },
+  {
+   "address": "module.gateway.google_service_account.gateway",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_service_account"
+  }
+ ],
+ "terraform_version": "1.16.4"
+}
