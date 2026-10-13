@@ -8,6 +8,7 @@ policy that the file gives, and some of them set a field to a value that the ren
 
 `variant` reads that file with the real pipeline (`policy_of`), so its `sha256` is that of the new
 bytes: two versions with the same changes are the same file, and two with other changes are not.
+`another` is a policy of another agent, with the principal that agent has on the test platform.
 """
 
 from collections.abc import Callable
@@ -16,6 +17,8 @@ from typing import Any
 from aiven.policy.model import Policy
 from tests.support.bodies import BODY, policy_of
 from tests.support.frontmatter import edited
+from tests.support.policies import AGENTS_PROJECT
+from tests.support.rules import setting
 
 Change = Callable[[dict[str, Any]], object]
 
@@ -33,3 +36,13 @@ def variant_file(*changes: Change) -> bytes:
 def variant(*changes: Change) -> Policy:
     """The policy of `variant_file(*changes)`. Without changes it has the fields of the base."""
     return policy_of(variant_file(*changes))
+
+
+def principal_of(agent: str) -> str:
+    """The principal that a valid policy of `agent` has on the test platform."""
+    return f"agent-{agent}@{AGENTS_PROJECT}.iam.gserviceaccount.com"
+
+
+def another(agent: str, *changes: Change) -> Policy:
+    """A policy of another agent, with the principal of that agent and the changes."""
+    return variant(setting("agent", agent), setting("principal", principal_of(agent)), *changes)

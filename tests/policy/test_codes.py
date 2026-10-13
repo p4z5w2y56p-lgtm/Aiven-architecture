@@ -28,6 +28,8 @@ Rules for a mutation:
 - Use no URLs, links or HTML, except in the cases of E-BODY-HTML and E-BODY-LINK.
 - Find the target line by content (`line_of`), not by number.
 - E-FILENAME changes the path that the validator is given, not the bytes (see its own test).
+- The set cases (Task 1.6, `SET_CASES`) are about several files at once, so they are not a
+  mutation of one file: see the comment at the table.
 """
 
 import codecs
@@ -45,6 +47,8 @@ from aiven.policy.catalog import load_catalog
 from aiven.policy.constants import SECTIONS
 from aiven.policy.fileformat import decode_text
 from aiven.policy.findings import Finding, format_line, message
+from aiven.policy.model import Policy
+from aiven.policy.policyset import check_set
 from aiven.policy.validate import validate_file
 from tests.support import REPO_ROOT, gen
 from tests.support.bodies import rerendered
@@ -58,7 +62,9 @@ from tests.support.policies import (
     platform_config,
     valid_base,
 )
+from tests.support.rules import setting, with_tools
 from tests.support.spec_tables import code_spans, table_after
+from tests.support.variants import Change, principal_of, variant
 
 CFG = platform_config()
 CATALOG = load_catalog(REPO_ROOT / "catalog" / "catalog-v1.yaml")
@@ -888,6 +894,99 @@ CASES = [
 ]
 
 
+# Task 1.6: the checks across all policies (validator-spec 3.6 and 3.9). A set case is
+# (code, build, findings). `build()` makes the set: the (path, policy) pairs of its files, and the
+# previous signed policies by agent. The policies are versions of the valid base, made as files
+# through the real pipeline (tests/support/variants.py). `check_set` must give exactly `findings`,
+# in order, as (path, params), and all of that code: the valid set has no finding, so nothing else
+# may come with it. A finding is about a whole file, as a policy carries no line map.
+SetBuild = Callable[[], tuple[list[tuple[Path, Policy]], dict[str, Policy]]]
+
+COPY_PATH = Path("policies/invoice-copy.md")
+NUDGE_PATH = Path("policies/payment-nudge.md")
+AGENT = "invoice-reminder"
+FILES_OF_AGENT = "invoice-copy.md, invoice-reminder.md"
+
+
+def a_set(
+    *files: tuple[Path, tuple[Change, ...]], before: tuple[Change, ...] | None = None
+) -> SetBuild:
+    """The set of these files, each a path and the changes to the base that make its policy.
+
+    `before` are the changes that make the previous signed policy of invoice-reminder, `()` for
+    the base itself. Without it, the set has no previous policy.
+    """
+
+    def build():
+        items = [(path, variant(*changes)) for path, changes in files]
+        return items, ({} if before is None else {AGENT: variant(*before)})
+
+    return build
+
+
+def set_case(code: str, label: str, build: SetBuild, findings: list[tuple[Path, dict[str, str]]]):
+    return pytest.param(
+        code, build, [(str(p), params) for p, params in findings], id=f"{code} {label}"
+    )
+
+
+NEXT_VERSION = setting("version", 2)
+ONE_TOOL_MORE = with_tools("sheets.read", "gmail.draft", "gmail.send", "drive.read")
+SET_CASES = [
+    set_case(
+        "E-AGENT-DUPLICATE",
+        "a copy that has a principal of its own",
+        a_set(
+            (BASE_PATH, ()),
+            (COPY_PATH, (setting("principal", principal_of("invoice-copy")),)),
+        ),
+        [
+            (BASE_PATH, {"agent": AGENT, "files": FILES_OF_AGENT}),
+            (COPY_PATH, {"agent": AGENT, "files": FILES_OF_AGENT}),
+        ],
+    ),
+    set_case(
+        "E-PRINCIPAL-DUPLICATE",
+        "another agent with the principal of the first",
+        a_set((BASE_PATH, ()), (NUDGE_PATH, (setting("agent", "payment-nudge"),))),
+        [
+            (BASE_PATH, {"principal": principal_of(AGENT), "other": "payment-nudge.md"}),
+            (NUDGE_PATH, {"principal": principal_of(AGENT), "other": "invoice-reminder.md"}),
+        ],
+    ),
+    set_case(
+        "E-VERSION-ORDER",
+        "a version that skips one",
+        a_set((BASE_PATH, (setting("version", 3),)), before=()),
+        [(BASE_PATH, {"value": "3", "next": "2"})],
+    ),
+    set_case(
+        "E-VERSION-ORDER",
+        "the same version, with other content",
+        a_set((BASE_PATH, (setting("shadow.min_runs", 20),)), before=()),
+        [(BASE_PATH, {"value": "1", "next": "2"})],
+    ),
+    set_case(
+        "E-VERSION-ORDER",
+        "a new agent that does not start at 1",
+        a_set((BASE_PATH, (NEXT_VERSION,))),
+        [(BASE_PATH, {"value": "2", "next": "1"})],
+    ),
+    set_case(
+        "W-WIDENS",
+        "a tool is added, so shadow mode starts again",
+        a_set((BASE_PATH, (NEXT_VERSION, ONE_TOOL_MORE)), before=()),
+        [(BASE_PATH, {"changes": "tools: +drive.read", "restart_runs": "10"})],
+    ),
+    set_case(
+        "W-WIDENS",
+        "a limit is raised, with no restart",
+        a_set((BASE_PATH, (NEXT_VERSION, setting("limits.runs_per_day", 2))), before=()),
+        [(BASE_PATH, {"changes": "limits.runs_per_day: 1 -> 2"})],
+    ),
+]
+
+
 def test_valid_base_has_no_errors():
     # Today no wrapper is live, so the three tools give the three warnings of spec section 9, and
     # nothing else (that is how the template becomes a real policy: "only the three warnings").
@@ -918,6 +1017,30 @@ def test_mutation_yields_exactly_one_new_finding(code, mutation, expected_line, 
             text = text.replace(value, "")
         assert "{" not in text and "}" not in text
     assert format_line(finding).startswith(f"{finding.severity} {code} {BASE_PATH}")
+
+
+def test_a_valid_set_has_no_finding():
+    # What the set cases start from: a new agent at version 1, and the next version of a known one.
+    assert check_set([(BASE_PATH, variant())], {}) == []
+    assert check_set([(BASE_PATH, variant(NEXT_VERSION))], {AGENT: variant()}) == []
+
+
+@pytest.mark.parametrize(("code", "build", "findings"), SET_CASES)
+def test_set_case_yields_exactly_its_findings(code, build, findings):
+    items, previous = build()
+    found = check_set(items, previous)
+    assert [(f.code, f.path, f.params) for f in found] == [
+        (code, path, params) for path, params in findings
+    ]
+    for finding in found:
+        assert (finding.line, finding.column) == (None, None)
+        assert finding.severity == ("error" if code.startswith("E-") else "warning")
+        for lang in ("en", "nl"):
+            text = message(finding, lang)  # raises KeyError if the finding lacks a parameter
+            for value in finding.params.values():
+                text = text.replace(value, "")
+            assert "{" not in text and "}" not in text
+        assert format_line(finding).startswith(f"{finding.severity} {code} {finding.path}")
 
 
 def test_a_file_name_other_than_the_agent_yields_exactly_one_new_finding():
