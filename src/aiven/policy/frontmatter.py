@@ -45,8 +45,10 @@ What `load` returns is a `FrontMatter`:
   E-FIELD-UNKNOWN, E-FIELD-TYPE and E-LIST-DUPLICATE, in no particular order.
 
 The front matter starts on file line 2. Lines are counted by LF only, as everywhere in the
-validator, from the index of the character that a YAML mark points at. Only a YAML error becomes a
-finding (E-YAML); any other exception is a bug and goes up to the caller.
+validator, from the index of the character that a YAML mark points at. What ruamel raises for
+input it rejects becomes E-YAML: its YAML errors, and the ValueError, OverflowError and
+AssertionError that it raises for an escape that is no code point and for a `%YAML` version it does
+not know. Any other exception, and any from this module, is a bug and goes up to the caller.
 
 Findings carry text from the file in their params. `Finding` cleans them, so they are passed as
 they are. Nothing else here puts text of the file in a message, a log or a repr.
@@ -286,33 +288,55 @@ class _Reader:
         self.root: _Node | None = None
         self._open: list[_Open] = []
         self._documents = 0
+        self._last_index = 0  # where the last event that was taken starts
 
     def read(self) -> None:
-        """Read all events, or as many as can be trusted. A YAML error is one more problem."""
+        """Read all events, or as many as can be trusted. A YAML error is one more problem.
+
+        The events are pulled one at a time and handled apart (`_feed`), so that only what ruamel
+        raises is caught here, and an exception from this module itself goes up to the caller.
+        Besides YAML errors, ruamel raises a ValueError or an OverflowError for an escape that is
+        no code point, and an AssertionError for a `%YAML` version it does not know. They are
+        E-YAML as well.
+        """
         yaml = YAML(typ="safe", pure=True)  # pure: the same result with or without the C parser
         yaml.version = (1, 2)
         with closing(yaml.parse(self.text.source)) as events:
-            try:
-                for event in events:
-                    if not self._feed(event):
-                        break
-            except YAMLError as error:
-                self._syntax_problem(*_describe(error))
+            while True:
+                try:
+                    event = next(events, None)
+                except YAMLError as error:
+                    self._syntax_problem(*_describe(error))
+                    return
+                except (ValueError, OverflowError):
+                    self._rejected("invalid escape sequence")
+                    return
+                except AssertionError:
+                    self._rejected("unsupported YAML version")
+                    return
+                if event is None or not self._feed(event):
+                    return
+
+    def _rejected(self, detail: str) -> None:
+        """E-YAML for input that ruamel rejects without a position: at the last event it gave."""
+        self._syntax_problem(detail, self._last_index)
 
     def _feed(self, event: Any) -> bool:
-        """Take one event. False means stop: the nesting is too deep to go on."""
+        """Take one event. False means stop: it is too deep, or ruamel would have refused it."""
+        keep_going = True
         if isinstance(event, ScalarEvent):
             self._scalar(event)
         elif isinstance(event, AliasEvent):
             self._feature("alias", event.start_mark.index)
             self._add(_Node("scalar", self.text.line(event.start_mark.index)))
         elif isinstance(event, CollectionStartEvent):
-            return self._start(event)
+            keep_going = self._start(event)
         elif isinstance(event, CollectionEndEvent):
             self._add(self._open.pop().node)
         elif isinstance(event, DocumentStartEvent):
-            self._document(event)
-        return True
+            keep_going = self._document(event)
+        self._last_index = event.start_mark.index
+        return keep_going
 
     def _scalar(self, event: ScalarEvent) -> None:
         self._properties(event)
@@ -342,9 +366,17 @@ class _Reader:
         self._open.append(_Open(_Node(kind, self.text.line(index))))
         return True
 
-    def _document(self, event: DocumentStartEvent) -> None:
+    def _document(self, event: DocumentStartEvent) -> bool:
         """A document start. The file's own `---` opened the first document, so a marker in the
-        front matter always starts another one, and so does anything after a `...`."""
+        front matter always starts another one, and so does anything after a `...`.
+
+        False if the document says it is YAML of a version that ruamel does not know. Ruamel checks
+        that with an assert, which `python -O` removes, so it is judged here too: otherwise the
+        result would depend on how Python was started. It is then the same as when ruamel raises.
+        """
+        if event.version not in (None, (1, 1), (1, 2)):
+            self._rejected("unsupported YAML version")
+            return False
         self._documents += 1
         index = event.start_mark.index
         if event.explicit:
@@ -352,6 +384,7 @@ class _Reader:
                 self._feature("directive", self.text.start(row))
         if event.explicit or self._documents > 1:
             self._feature("second document", index)
+        return True
 
     def _directive_rows(self, marker_row: int) -> list[int]:
         """The rows of the directives above the `---` marker in `marker_row`, in file order.

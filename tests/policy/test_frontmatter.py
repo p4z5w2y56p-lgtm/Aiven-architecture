@@ -12,6 +12,8 @@ import dataclasses
 import json
 import random
 import re
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -434,6 +436,107 @@ def test_a_non_ascii_character_does_not_stop_the_field_checks():
     assert result.data["forbidden"][1] == lookalike
 
 
+# --- what ruamel rejects with an exception of its own (ruling R38)
+#
+# For some input ruamel does not raise a YAML error but a ValueError, an OverflowError (a code point
+# in an escape that Python cannot make) or an AssertionError (a `%YAML` version it does not know).
+# They are E-YAML too, at the place of the last event that was read. Python removes assert
+# statements under `-O`, so the version is also judged here, and the result is the same either way.
+
+REJECTED = {
+    "yaml 1.0": ("%YAML 1.0\n--- # c\na: 1\n", "unsupported YAML version", (2, 1)),
+    "yaml 1.3": ("%YAML 1.3\n--- # c\na: 1\n", "unsupported YAML version", (2, 1)),
+    "yaml 1.10": ("%YAML 1.10\n--- # c\na: 1\n", "unsupported YAML version", (2, 1)),
+    "yaml 1.0 after a document": (
+        "a: 1\n...\n%YAML 1.0\n--- b\n",
+        "unsupported YAML version",
+        (3, 1),
+    ),
+    "code point beyond Unicode": (
+        f'agent: "{BS}U00110000"\n',
+        "invalid escape sequence",
+        (2, 1),
+    ),
+    "code point beyond a C int": (
+        f'agent: "{BS}UFFFFFFFF"\n',
+        "invalid escape sequence",
+        (2, 1),
+    ),
+    "after other keys": (f'a: 1\nb: "{BS}U00110000"\n', "invalid escape sequence", (3, 1)),
+}
+
+
+@pytest.mark.parametrize(("front", "detail", "place"), REJECTED.values(), ids=REJECTED)
+def test_what_ruamel_rejects_with_an_exception_is_e_yaml(front, detail, place):
+    result = load(front, PATH)
+    assert [(f.code, f.params["detail"]) for f in result.findings] == [("E-YAML", detail)]
+    assert (only(result).line, only(result).column) == place
+    assert only(result).params["col"] == str(place[1])
+    assert (result.data, result.lines) == (None, {})
+
+
+@pytest.mark.parametrize("version", ["1.1", "1.2"])
+def test_the_yaml_versions_ruamel_knows_are_a_directive_and_not_a_rejection(version):
+    result = load(f"%YAML {version}\n--- # c\na: 1\n", PATH)
+    assert features(result) == [("directive", 2, 1), ("second document", 3, 1)]
+
+
+def test_features_found_before_a_rejection_are_kept():
+    result = load(f'a: &x 1\nb: "{BS}U00110000"\n', PATH)
+    assert places(result) == [("E-YAML-FEATURE", 2, 4), ("E-YAML", 3, 1)]
+
+
+def test_an_exception_from_the_loader_itself_is_not_taken_for_a_yaml_error(monkeypatch):
+    def broken(*args, **kwargs):
+        raise ValueError("a bug in the loader")
+
+    monkeypatch.setattr("aiven.policy.frontmatter.Finding", broken)
+    with pytest.raises(ValueError, match="a bug in the loader"):
+        load("a: &x 1\n", PATH)
+
+
+SAME_UNDER_O = [
+    *[front for front, _, _ in REJECTED.values()],
+    *[front for front, _ in FEATURES.values()],
+    *[front for front, *_ in SYNTAX_ERRORS.values()],
+    *[f"{line}\n" for line in ESCAPES.values()],
+    FRONT,
+]
+
+_DUMP = """
+import json, sys
+from aiven.policy.frontmatter import load
+if __debug__:
+    sys.exit("this must run under python -O")
+out = []
+for text in json.load(sys.stdin):
+    result = load(text, "policies/x.md")
+    out.append([[f.code, f.line, f.column, f.params] for f in result.findings] + [result.data])
+json.dump(out, sys.stdout)
+"""
+
+
+def dump(texts: list[str]) -> list:
+    """What `_DUMP` prints, computed here: findings as lists, and the data."""
+    out = []
+    for text in texts:
+        result = load(text, "policies/x.md")
+        out.append([[f.code, f.line, f.column, f.params] for f in result.findings] + [result.data])
+    return json.loads(json.dumps(out))
+
+
+def test_the_result_is_the_same_under_python_dash_o():
+    # Under -O the assert in ruamel that rejects `%YAML 1.0` is gone. It must not change the result.
+    done = subprocess.run(
+        [sys.executable, "-O", "-c", _DUMP],
+        input=json.dumps(SAME_UNDER_O),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(done.stdout) == dump(SAME_UNDER_O)
+
+
 # --- depth, size and safety
 
 DEEP = {
@@ -480,6 +583,8 @@ PIECES = [
     *"ab1:-[]{}&*!%#? \n\t\"'|>,.",
     *["<<", "---", "...", BS, "\x85", "\r", "@", "~"],
     *[f"{BS}x4f", f"{BS}n", f'{BS}"', f"{BS}u0435", f"{BS}uD800", f"{BS}U0001F600", f"{BS}\n"],
+    *[f"{BS}U00110000", f"{BS}UFFFFFFFF", "%YAML 1.0\n", "%YAML 1.3\n", "%YAML 1.10\n"],
+    *["%YAML 1.1\n", "%YAML 1.2\n", "%TAG ! tag:x,2000:\n"],
     *["TODO", "TBD", "FIXME", "REPLACE_ME_X"],
 ]
 # What a field is set to now and then: placeholders in the ways that decide what is reported.
@@ -487,6 +592,7 @@ VALUES = [
     *["TODO", "TBD", "'FIXME'", '"REPLACE_ME_X"', "300\n    TBD", "\n    TBD", "|\n    TODO"],
     *[f'"T{BS}x4fDO"', f'"TO{BS}\n    DO"'],  # TODO, written so that E-PLACEHOLDER misses it
     *[f'"drive.d{BS}u0435lete"', f'"a{BS}u202eb"'],  # a look-alike letter, an override
+    *[f'"{BS}U00110000"', f'"{BS}UFFFFFFFF"'],  # code points that ruamel cannot make
 ]
 FIELD_LINE = re.compile(r"\s*[a-z_]+:")
 
