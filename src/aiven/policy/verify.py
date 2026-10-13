@@ -15,7 +15,8 @@ stops at the first step that fails (rulings R43 and R56):
 5. The checks that are only possible at load run (3.10): the version against the active one
    (E-VERSION-ORDER), the wrappers (E-TOOL-NOT-LIVE) and the Drive folder (E-SCOPE-NOT-IN-SANDBOX).
    They run when step 4 gave a policy, also when it has errors, so that a report names everything.
-6. The policy is returned when no finding is an error. Warnings are fine.
+6. The policy is returned when no finding is an error. Warnings are fine. (A step 4 that gave no
+   policy and no error cannot be, and is E-INTERNAL if it ever happens.)
 
 The file is not decoded, parsed or checked before step 4: until then its bytes go to ssh-keygen and
 nowhere else. The gateway never parses what is not correctly signed, so a hostile file in the
@@ -74,6 +75,10 @@ class NotARegularFile(Exception):
     """The file of allowed signers is a folder, a pipe or a device. Only the name is ever shown."""
 
 
+class NoPolicy(Exception):
+    """The checks gave no policy and no error, which cannot be. Only the name is ever shown."""
+
+
 @dataclass(frozen=True)
 class ActiveVersion:
     """The version of an agent that is loaded now: its number and the hash of its file.
@@ -118,7 +123,9 @@ def verify(
     - Both callbacks are synchronous and answer `True` or `False`. Any other answer raises
       TypeError inside `verify`, so it is E-INTERNAL.
 
-    The policy is None when any finding is an error. See the module docstring.
+    The policy is None when any finding is an error. A result with no policy and no error cannot be
+    (a file gives no policy only for an error), and is E-INTERNAL if it ever happens. See the
+    module docstring.
     """
     where = str(path)
     if len(data) > MAX_FILE_BYTES:
@@ -137,10 +144,12 @@ def verify(
             findings += _tools_not_live(where, policy, checked.tool_lines, catalog, wrapper_live)
             findings += _folder_not_in_sandbox(where, policy, folder_check)
             findings.sort(key=report_order)
+        failed = any(found.severity == "error" for found in findings)
+        if policy is None and not failed:
+            raise NoPolicy  # a file gives no policy only for an error (review M5)
     except Exception as error:
         params = {"detail": type(error).__name__}
         return None, [Finding("E-INTERNAL", "error", where, params=params)]
-    failed = any(found.severity == "error" for found in findings)
     return (None if failed else policy), findings
 
 

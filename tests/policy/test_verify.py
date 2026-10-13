@@ -37,7 +37,7 @@ from aiven.policy import validate as validate_module
 from aiven.policy import verify as verify_module
 from aiven.policy.constants import MAX_FILE_BYTES, MAX_SCANNED_BYTES
 from aiven.policy.findings import Finding, format_line, message
-from aiven.policy.validate import report_order, validate_file, validate_policy
+from aiven.policy.validate import Validated, report_order, validate_file, validate_policy
 from aiven.policy.verify import ActiveVersion, verify
 from tests.support import gen
 from tests.support.bodies import policy_of, rerendered
@@ -992,6 +992,41 @@ def test_a_crash_in_the_checks_gives_e_internal_with_the_class_name_only(signer,
 def test_an_interrupt_is_not_swallowed(signer, which):
     with pytest.raises(KeyboardInterrupt):
         load(signer, BASE, **{which: raises(KeyboardInterrupt())})
+
+
+# --- no policy and no error cannot be (review M5)
+#
+# validate_policy gives a policy unless something is wrong, and what is wrong is an error. If it
+# ever gave neither, `(None, [])` or `(None, [a warning])` would read as "nothing to load, and
+# nothing wrong".
+
+
+ERROR = Finding("E-FIELD-MISSING", "error", str(BASE_PATH), params={"field": "shadow"})
+WARNING = Finding("W-SHADOW-LOW", "warning", str(BASE_PATH), 28, params={"value": "5"})
+
+
+def validates_as(monkeypatch, validated: Validated) -> None:
+    """Make verify get this result from validate_policy, whatever the file is."""
+    monkeypatch.setattr(verify_module, "validate_policy", lambda *args: validated)
+
+
+@pytest.mark.parametrize("findings", [[], [WARNING]], ids=["no finding", "only a warning"])
+def test_no_policy_and_no_error_is_e_internal(signer, monkeypatch, findings):
+    sig = signer.sign(BASE)
+    validates_as(monkeypatch, Validated(None, findings, {}))
+    assert verify_with(signer, BASE, sig) == (None, [internal("NoPolicy")])
+
+
+def test_no_policy_with_an_error_is_that_error_and_nothing_more(signer, monkeypatch):
+    sig = signer.sign(BASE)
+    validates_as(monkeypatch, Validated(None, [ERROR, WARNING], {}))
+    assert verify_with(signer, BASE, sig) == (None, [ERROR, WARNING])
+
+
+def test_a_policy_and_no_error_still_loads(signer, monkeypatch):
+    sig = signer.sign(BASE)
+    validates_as(monkeypatch, Validated(policy_of(BASE), [WARNING], {}))
+    assert verify_with(signer, BASE, sig) == (policy_of(BASE), [WARNING])
 
 
 # --- a callback must answer True or False (ruling R83)
