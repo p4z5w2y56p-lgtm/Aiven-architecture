@@ -62,3 +62,18 @@ variable "python_src" {
   description = "The folder that holds the package aiven: src in the repository."
   type        = string
 }
+
+variable "alert_email" {
+  description = "The address the alerts go to; the root module checks it."
+  type        = string
+}
+
+variable "credit_alert_date" {
+  description = "The day of the credit reminder, YYYY-MM-DD."
+  type        = string
+}
+
+variable "credit_expiry_date" {
+  description = "The day the promotional credit ends, YYYY-MM-DD."
+  type        = string
+}

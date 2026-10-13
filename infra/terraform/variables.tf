@@ -148,3 +148,40 @@ variable "budget_stop_drill" {
   type        = bool
   default     = false
 }
+
+# --- alerts and the credit reminder (gateway-design sections 10 and 14; setup step S3)
+
+variable "alert_email" {
+  description = "Where the alerts go: Matthijs's AIVEN address."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9._%+-]+@aivenstudios\\.com$", var.alert_email))
+    error_message = "The alerts go to an @aivenstudios.com address, in lower case."
+  }
+}
+
+variable "credit_alert_date" {
+  description = "The day of the credit reminder, YYYY-MM-DD: 2026-12-20."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", var.credit_alert_date)) && can(formatdate("YYYY", "${var.credit_alert_date}T00:00:00Z"))
+    error_message = "A date is YYYY-MM-DD, and a day that exists."
+  }
+}
+
+variable "credit_expiry_date" {
+  description = "The day the promotional credit ends, YYYY-MM-DD: 2027-01-04."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", var.credit_expiry_date)) && can(formatdate("YYYY", "${var.credit_expiry_date}T00:00:00Z"))
+    error_message = "A date is YYYY-MM-DD, and a day that exists."
+  }
+
+  validation {
+    condition     = !can(timecmp("${var.credit_alert_date}T00:00:00Z", "${var.credit_expiry_date}T00:00:00Z")) || timecmp("${var.credit_alert_date}T00:00:00Z", "${var.credit_expiry_date}T00:00:00Z") < 0
+    error_message = "The reminder comes before the credit ends: credit_alert_date is before credit_expiry_date."
+  }
+}

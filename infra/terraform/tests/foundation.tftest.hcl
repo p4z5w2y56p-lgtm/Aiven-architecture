@@ -15,6 +15,9 @@ variables {
   budget_currency     = "EUR"
   budget_alert_amount = 10
   budget_stop_amount  = 25
+  alert_email         = "alerts@aivenstudios.com"
+  credit_alert_date   = "2026-12-20"
+  credit_expiry_date  = "2027-01-04"
 }
 
 run "every_project_has_both_organisation_policies" {
@@ -263,4 +266,28 @@ run "the_stop_below_the_alert_is_refused" {
     budget_stop_amount = 10
   }
   expect_failures = [var.budget_stop_amount]
+}
+
+run "alerts_go_to_an_aivenstudios_address" {
+  command = plan
+  variables {
+    alert_email = "matthijs@gmail.com"
+  }
+  expect_failures = [var.alert_email]
+}
+
+run "a_reminder_day_that_does_not_exist_is_refused" {
+  command = plan
+  variables {
+    credit_alert_date = "2026-12-32"
+  }
+  expect_failures = [var.credit_alert_date]
+}
+
+run "the_reminder_after_the_credit_ended_is_refused" {
+  command = plan
+  variables {
+    credit_alert_date = "2027-01-05"
+  }
+  expect_failures = [var.credit_expiry_date]
 }

@@ -22,6 +22,9 @@ run "the_stores_of_the_control_project" {
     scratch_project     = "aiven-scratch-test"
     budget_stop_drill   = false
     python_src          = "../../src"
+    alert_email         = "alerts@aivenstudios.com"
+    credit_alert_date   = "2026-12-20"
+    credit_expiry_date  = "2027-01-04"
   }
 
   assert {

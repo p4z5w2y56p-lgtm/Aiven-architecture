@@ -17,6 +17,9 @@ variables {
   scratch_project     = "aiven-scratch-test"
   budget_stop_drill   = false
   python_src          = "../../src"
+  alert_email         = "alerts@aivenstudios.com"
+  credit_alert_date   = "2026-12-20"
+  credit_expiry_date  = "2027-01-04"
 }
 
 run "the_two_budgets_count_gross_cost" {

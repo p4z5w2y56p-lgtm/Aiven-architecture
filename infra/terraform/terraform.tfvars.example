@@ -14,5 +14,10 @@ budget_currency     = "EUR"
 budget_alert_amount = 10
 budget_stop_amount  = 25
 
+# Alerts, and the reminder before the promotional credit ends (setup step S3).
+alert_email        = "alerts@aivenstudios.com"
+credit_alert_date  = "2026-12-20"
+credit_expiry_date = "2027-01-04"
+
 # The agents, by agent ID (validator-spec 3.3). Each gets the service account agent-<id>.
 agents = ["invoice-reminder"]

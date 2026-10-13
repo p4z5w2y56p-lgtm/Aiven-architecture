@@ -111,6 +111,9 @@ module "control" {
   scratch_project     = var.scratch_project
   budget_stop_drill   = var.budget_stop_drill
   python_src          = "${path.root}/../../src"
+  alert_email         = var.alert_email
+  credit_alert_date   = var.credit_alert_date
+  credit_expiry_date  = var.credit_expiry_date
 
   depends_on = [google_org_policy_policy.baseline, google_project_service.control]
 }

@@ -23,5 +23,5 @@ output "stores" {
 
 output "functions" {
   description = "The names of the functions of this project."
-  value       = sort(keys(google_cloudfunctions2_function.stop))
+  value       = sort(concat(keys(google_cloudfunctions2_function.stop), [google_cloudfunctions2_function.credit_reminder.name]))
 }

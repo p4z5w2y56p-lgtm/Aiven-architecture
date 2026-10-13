@@ -32,7 +32,8 @@ before you go on.
 
 1. Copy `infra/terraform/terraform.tfvars.example` to `infra/terraform/terraform.tfvars`, and fill in
    the four project IDs, the billing account ID, the currency and the two budgets (10 and 25 in
-   EUR, 11 and 27 in USD), and the agent IDs.
+   EUR, 11 and 27 in USD), the address for the alerts (an @aivenstudios.com one), the two credit
+   dates (2026-12-20 and 2027-01-04), and the agent IDs.
 2. Copy `config/platform.example.yaml` to `config/platform.yaml`, and fill in the agents project,
    your address as the trusted author, and the gateway's account
    (`gateway@<gateway-project>.iam.gserviceaccount.com`).
@@ -113,6 +114,16 @@ What the plan must show, part by part:
     `budget-stop`, with `STOP_PROJECTS` the agents and gateway projects and `STOP_ENABLED=true`;
     Eventarc delivers the topic to it, again after a failure. `budget-stop` may invoke it, and has
     Project Billing Manager on the agents and gateway projects.
+- **Alerts and the credit reminder (Task 2.4)**
+  - An email channel to your alert address (Monitoring, then Alerting, then notification
+    channels, shows it).
+  - Alert policy "an audit entry with an alert": every entry of log `aiven-audit` with
+    `jsonPayload.alert=true`, and the functions' own log lines with `alert: true`.
+  - Alert policy "the gateway fails closed for more than a minute", on the log-based metric
+    `aiven/control-unreachable` (refusals with reason `CONTROL_UNREACHABLE` in the audit log).
+  - Function `credit-reminder` (as `credit-reminder`, internal only, `CREDIT_EXPIRY=2027-01-04`),
+    and Cloud Scheduler job `credit-reminder` at `0 9 20 12 *`, Europe/Amsterdam, with an OIDC
+    token of `credit-reminder`. Only `credit-reminder` may invoke the function.
 - Nowhere in the plan: a `google_service_account_key`, or `locked = true` / `is_locked = true`.
 
 `terraform show m2.tfplan` shows the plan again. Stop at anything that is not on this list.
@@ -129,7 +140,12 @@ part 2 is missing: do it, then plan and apply again. Nothing else is made before
 
 ## 6. After the apply: the drills
 
-1. **BD-1 and BD-2**, the budget stop, on the scratch project only: runbook `budget-stop.md`,
+1. **The alert path.** Run the credit reminder by hand:
+   `gcloud scheduler jobs run credit-reminder --location=europe-west4 --project=<control-project>`.
+   Within a few minutes the email "Google Cloud credit expires on 2027-01-04 ..." arrives. That
+   proves the function, the audit log, the alert policy and the email channel in one go. (After
+   2027-01-04 a run writes nothing; the yearly schedule then stays silent.)
+2. **BD-1 and BD-2**, the budget stop, on the scratch project only: runbook `budget-stop.md`,
    section Drill. Write down the time from publishing to the unlink, for the report.
 
 ## Later, and only when you confirm it: the audit log lock

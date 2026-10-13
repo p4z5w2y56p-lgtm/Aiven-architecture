@@ -18,7 +18,8 @@ locals {
 
   # Each function, by name: its module.
   functions = {
-    "budget-stop" = "aiven/functions/budget_stop.py"
+    "budget-stop"     = "aiven/functions/budget_stop.py"
+    "credit-reminder" = "aiven/functions/credit_reminder.py"
   }
 }
 
