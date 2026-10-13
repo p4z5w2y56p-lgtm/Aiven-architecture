@@ -56,3 +56,22 @@ jobs:
             ref=(--previous-ref "$BASE_SHA")
           fi
           uv run aiven-policy validate --config config/platform.yaml "${ref[@]}" "${policies[@]}"
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Terraform 1.16.4, checked against its SHA-256 (ruling R98)
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/terraform.zip" https://releases.hashicorp.com/terraform/1.16.4/terraform_1.16.4_linux_amd64.zip
+          echo "dc94af0eef1147718ad7c8daea792ed199e3e0492eec180d0adafa2a65a879df  $RUNNER_TEMP/terraform.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/terraform.zip" terraform -d "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # No backend and no credentials: CI never reaches Google Cloud (ruling R97). The providers must
+      # match the hashes in .terraform.lock.hcl, and terraform test runs on a mock provider.
+      - run: terraform -chdir=infra/terraform init -backend=false -input=false -lockfile=readonly
+      - run: terraform -chdir=infra/terraform fmt -check -recursive
+      - run: terraform -chdir=infra/terraform validate
+      - run: terraform -chdir=infra/terraform test
