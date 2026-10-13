@@ -44,7 +44,7 @@ from pathlib import Path
 import pytest
 
 from aiven.policy.catalog import load_catalog
-from aiven.policy.constants import SECTIONS
+from aiven.policy.constants import MAX_FILE_BYTES, SECTIONS
 from aiven.policy.fileformat import decode_text
 from aiven.policy.findings import Finding, format_line, message
 from aiven.policy.policyset import check_duplicates, check_history
@@ -1418,13 +1418,17 @@ def test_the_rules_report_alongside_the_findings_of_the_front_matter_in_one_sort
     ]
 
 
-# --- a file too large to read through (ruling R40)
+# --- a file too large to read through (rulings R40 and R93)
+#
+# The window is twice the size limit: a file over 64 KiB can never be signed, so what reading it
+# through would give is a longer list of findings and nothing else. A file of tabs is one finding
+# per byte: seconds at 128 KiB, and 53 seconds and a million findings at 1 MiB, the window that
+# R40 had.
 
 
-def test_a_file_over_a_mebibyte_is_not_read_through(monkeypatch):
-    # Read through, 2 MiB of tabs is one hidden-character finding per byte: minutes, and gigabytes.
+def test_a_file_over_twice_the_size_limit_is_not_read_through(monkeypatch):
     monkeypatch.setattr("aiven.policy.validate.decode_text", lambda _: pytest.fail("decoded"))
-    data = b"\t" * (2 * 1024 * 1024 - 1) + b"\n"
+    data = b"\t" * (2 * MAX_FILE_BYTES) + b"\n"  # 128 KiB and one byte of tabs
     started = time.perf_counter()
     findings = findings_of(data)
     assert time.perf_counter() - started < 1
@@ -1433,8 +1437,9 @@ def test_a_file_over_a_mebibyte_is_not_read_through(monkeypatch):
     ]
 
 
-def test_a_file_over_a_mebibyte_still_gets_the_checks_of_its_bytes_and_no_others():
-    data = b"ok TODO\n\xff\na\rb \t\n" + b"[" * 1_048_576  # a bad byte, a CR, no final newline
+def test_a_file_over_twice_the_size_limit_still_gets_the_checks_of_its_bytes_and_no_others():
+    # a bad byte, a CR, no final newline
+    data = b"ok TODO\n\xff\na\rb \t\n" + b"[" * (2 * MAX_FILE_BYTES)
     findings = findings_of(data)
     assert [(f.code, f.line) for f in findings] == [
         ("E-FILE-SIZE", None),
@@ -1442,6 +1447,19 @@ def test_a_file_over_a_mebibyte_still_gets_the_checks_of_its_bytes_and_no_others
         ("E-ENCODING", 2),
         ("E-LINE-ENDINGS", 3),
     ]  # no E-PLACEHOLDER, no E-HIDDEN-CHAR, no E-FM-MISSING: the text is not looked at
+
+
+def test_a_file_of_twice_the_size_limit_is_read_through_and_one_byte_more_is_not():
+    # The same edge as in the next test, at the real size and with nothing patched.
+    twice = 2 * MAX_FILE_BYTES
+
+    def file_of(size: int) -> bytes:
+        return b"TODO\n" + b"x" * (size - 6) + b"\n"
+
+    assert {"E-FILE-SIZE", "E-PLACEHOLDER", "E-FM-MISSING"} <= {
+        f.code for f in findings_of(file_of(twice))
+    }
+    assert [f.code for f in findings_of(file_of(twice + 1))] == ["E-FILE-SIZE"]
 
 
 def test_a_file_up_to_the_limit_gets_every_check_and_one_byte_more_does_not(monkeypatch):

@@ -152,12 +152,14 @@ MIN_SECTION_CHARS = 20
 # A policy file is at most 64 KiB (validator-spec 3.1, E-FILE-SIZE).
 MAX_FILE_BYTES = 64 * 1024
 
-# A file beyond this (1 MiB, 16 times the limit) is not read through. It is invalid by its size
-# alone, and checking it line by line would only cost time and memory: every hidden character,
-# placeholder or secret in it is a finding of its own, so a file of tabs is a million findings. Up
-# to this size a file is still checked in full, so that its author sees everything at once. Only
-# the checks of the bytes (E-FILE-SIZE, E-ENCODING, E-LINE-ENDINGS, E-FINAL-NEWLINE) still run.
-MAX_SCANNED_BYTES = 16 * MAX_FILE_BYTES
+# A file beyond this (128 KiB, twice the limit) is not read through. A file over the limit can never
+# be signed, so reading it through would only give a longer list of findings, and every hidden
+# character, placeholder or secret in it is a finding of its own: a file of tabs is one finding per
+# byte. That costs seconds at this size, and at 16 times the limit it was 53 seconds and about a
+# million findings (ruling R93, which amends R40). Up to this size a file is still checked in full,
+# so that its author sees everything at once. Beyond it only the checks of the bytes (E-FILE-SIZE,
+# E-ENCODING, E-LINE-ENDINGS, E-FINAL-NEWLINE) still run.
+MAX_SCANNED_BYTES = 2 * MAX_FILE_BYTES
 
 # A signature file (`<agent>.md.sig`) is at most this long (ruling R80). A real SSHSIG file is under
 # 1 KiB, but OpenSSH ignores blank lines after a signature, so a genuine one can be padded to any

@@ -235,8 +235,10 @@ def test_check_bytes_neither_decodes_nor_looks_at_lines(monkeypatch):
     ]
 
 
-def test_the_scan_limit_is_sixteen_times_the_size_limit_and_a_mebibyte():
-    assert constants.MAX_SCANNED_BYTES == 16 * constants.MAX_FILE_BYTES == 1_048_576
+def test_the_scan_limit_is_twice_the_size_limit_and_128_kib():
+    # Ruling R93. A file over the size limit can never be signed, so reading it through for
+    # every finding it has buys no one anything: the window is twice the limit.
+    assert constants.MAX_SCANNED_BYTES == 2 * constants.MAX_FILE_BYTES == 131_072
 
 
 # --- E-HIDDEN-CHAR
