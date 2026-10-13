@@ -549,6 +549,17 @@ MISORDERED = {
     "a free section behind the first": BASE_TEXT.replace(
         SIGNOFF, f"## Data and risks\n\n{AUTHOR}\n\n{SIGNOFF}"
     ),
+    # Ruling R69: a heading of level 1 closes the section above it, so what follows is the author's.
+    "a heading of level 1 behind the sign-off": BASE_TEXT + f"\n# Appendix\n\n{AUTHOR}\n",
+    "a heading of level 1 in setext style behind the sign-off": (
+        BASE_TEXT + f"\nAppendix\n========\n\n{AUTHOR}\n"
+    ),
+    "a heading of level 1 between the two": BASE_TEXT.replace(
+        SIGNOFF, f"# Note\n\n{AUTHOR}\n\n{SIGNOFF}"
+    ),
+    "a heading of level 1 behind the first section alone": (
+        BASE_TEXT[: BASE_TEXT.index(SIGNOFF)] + f"# Note\n\n{AUTHOR}\n"
+    ),
 }
 
 
@@ -568,19 +579,25 @@ def test_sections_that_are_not_the_last_two_are_not_rewritten_and_nothing_of_the
         f"### Notes\n\n{AUTHOR}\n",
         f"> ## Notes\n\n{AUTHOR}\n",
         f"- ## Notes\n\n{AUTHOR}\n",
+        f"> # Note\n\n{AUTHOR}\n",
+        f"- # Note\n\n{AUTHOR}\n",
         f"```\n{AUTHOR}\n",
         f"<!--\n{AUTHOR}\n",
     ],
     ids=[
         "text",
         "a heading of level 3",
-        "a heading in a quote",
+        "a heading of level 2 in a quote",
+        "one in a list",
+        "a heading of level 1 in a quote",
         "one in a list",
         "a fence",
         "a tag",
     ],
 )
-def test_what_follows_the_signoff_without_a_heading_of_level_2_is_part_of_it_and_is_replaced(tail):
+def test_what_follows_the_signoff_without_a_heading_of_level_1_or_2_is_part_of_it_and_is_replaced(
+    tail,
+):
     text = BASE_TEXT + "\n" + tail
     assert rewrite(text.encode(), POLICY, CATALOG) == BASE
 

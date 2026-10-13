@@ -28,7 +28,7 @@ from aiven.policy.catalog import Action, Catalog
 from aiven.policy.constants import GENERATED_SECTIONS, NAMESPACE, SIGNER_NAME, TIMEZONE
 from aiven.policy.fileformat import decode_text
 from aiven.policy.frontmatter import split
-from aiven.policy.markdown import find, headings, parse, sections
+from aiven.policy.markdown import find, headings, parse
 from aiven.policy.model import Limits, Policy, Scope
 
 # The class and the gate of a tool, by class.
@@ -107,8 +107,10 @@ def rewrite(data: bytes, p: Policy, catalog: Catalog) -> bytes:
     ValueError, with a message that holds nothing from the file, when that would take away more
     than the generated sections or would not be undone by the next `rewrite` (ruling R64):
 
-    - the `##` sections from the heading onward are not that one and the sign-off, or that one
-      alone (text behind the sign-off that has no `##` heading of its own is part of it);
+    - the headings of level 1 and 2 at the top level from the heading onward are not that one and
+      the sign-off, or that one alone (text behind the sign-off that has no heading of level 1 or 2
+      of its own is part of it: a `###`, a quoted `#`, plain text; a `#` closes the section and
+      what follows is the author's, ruling R69);
     - a line of the file is the heading but no heading, as in a fence that is never closed;
     - the sections would not be headings where they are added, as behind a comment that is open.
     """
@@ -246,9 +248,9 @@ def _section_start(data: bytes) -> int | None:
     changes no LF, and `decode_text` drops only a byte-order mark, which is inside the first line.
     A file without front matter has no body to cut out, and is searched whole.
 
-    ValueError for the two cases of `rewrite` that this decides: there is a heading and the `##`
-    sections from there are not the generated ones, or there is no heading and there is a line that
-    looks like it.
+    ValueError for the two cases of `rewrite` that this decides: there is a heading and the headings
+    of level 1 and 2 from there are not the generated sections (R64, and R69 for level 1), or there
+    is no heading and there is a line that looks like it.
     """
     text = decode_text(data)
     parts = split(text)
@@ -259,8 +261,15 @@ def _section_start(data: bytes) -> int | None:
         if any(line.strip() == _HEADING for line in body.split("\n")):
             raise ValueError(_NOT_A_HEADING)
         return None
-    onward = [other.name for other in sections(found) if other.index >= heading.index]
-    if onward not in ([GENERATED_SECTIONS[0]], list(GENERATED_SECTIONS)):
+    # The headings that close a section, at the top level from the heading onward: those of level 2,
+    # and those of level 1 too, for what follows one of them is not part of a generated section.
+    onward = [
+        (other.level, other.name)
+        for other in found
+        if other.top and other.level <= 2 and other.index >= heading.index
+    ]
+    first, second = GENERATED_SECTIONS
+    if onward not in ([(2, first)], [(2, first), (2, second)]):
         raise ValueError(_NOT_LAST)
     start = 0
     for _ in range(first_line - 1 + heading.row):
