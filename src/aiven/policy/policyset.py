@@ -72,7 +72,8 @@ def check_history(path: Path, policy: Policy, previous: Policy | None) -> list[F
     """E-VERSION-ORDER and W-WIDENS of one file, against the previous signed policy of its agent.
 
     `previous` is that policy, which must be of the same agent as `policy`, or None for a new agent:
-    then the file must be version 1. Call it only for a file whose history is known (see the module).
+    then the file must be version 1. Call it only for a file whose history is known (see the
+    module).
     """
     if previous is not None and previous.sha256 == policy.sha256:
         return []
