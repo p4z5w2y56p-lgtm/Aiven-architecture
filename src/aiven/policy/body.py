@@ -421,12 +421,16 @@ def _drift(
     (E-FINAL-NEWLINE's, ruling R15). The check relies on the five sections being right, each there
     once and in its place, and `check_body` runs it only then (ruling R58). A policy that cannot be
     rendered (a tool that is not one) has errors that say so, and no drift.
+
+    The line of a difference is never behind the last line of the file: a section that is cut short
+    is reported on the last line there is.
     """
     try:
         rendered = render_generated(p, catalog)
     except ValueError:
         return []
     tops = sections(found)
+    last_row = _last_row(lines)
     findings = []
     for name, text in zip(GENERATED_SECTIONS, rendered, strict=True):
         index = next((i for i, heading in enumerate(tops) if heading.name == name), None)
@@ -440,10 +444,15 @@ def _drift(
             have, want = _without_blank_ends(have), _without_blank_ends(want)
         differ = _first_difference(have, want)
         if differ is not None:
-            row = min(start + differ, len(lines) - 1)  # a file that ends early: its last line
+            row = min(start + differ, last_row)
             line = str(report.first_line + row)
             findings.append(report.at("E-BODY-DRIFT", row, section=name, diff_line=line))
     return findings
+
+
+def _last_row(lines: list[str]) -> int:
+    """The row of the last line of the file: the text behind its final LF is no line."""
+    return max(0, len(lines) - (2 if lines[-1] == "" else 1))
 
 
 def _without_blank_ends(lines: list[str]) -> list[str]:

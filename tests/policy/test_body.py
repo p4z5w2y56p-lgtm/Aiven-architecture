@@ -640,10 +640,28 @@ def test_the_last_section_is_compared_without_the_newlines_at_the_end_of_the_fil
 
 def test_a_last_section_that_is_cut_short_differs_on_the_line_behind_its_last_line():
     last = at("The signature is the separate file")
-    cut = BODY[: BODY.rindex("Signing means")]
+    cut = BODY[: BODY.rindex("Signing means")]  # a blank line is the last line of the file
     assert drift_of(cut) == [drift("Sign-off (generated)", last + 1)]
-    # With no LF at the end of the file there is no line behind the last one: it is the last.
+    # With nothing behind the last line (one LF at the end, or none) the difference is on that line.
+    assert drift_of(cut.rstrip("\n") + "\n") == [drift("Sign-off (generated)", last)]
     assert drift_of(cut.rstrip("\n")) == [drift("Sign-off (generated)", last)]
+
+
+def lines_of(body: str) -> int:
+    """The number of lines of the file: those of the front matter, and those of the body."""
+    return FIRST_LINE - 1 + len(body.split("\n")) - (1 if body.endswith("\n") else 0)
+
+
+@pytest.mark.parametrize("ending", ["", "\n", "\n\n", "\n\n\n"], ids=["no LF", "1", "2", "3"])
+def test_drift_never_points_behind_the_last_line_of_the_file(ending):
+    # Minor 3: a file of 103 lines had its difference on line 104. Every cut of the last section.
+    head = BODY[: BODY.index(SIGNOFF)]
+    signoff = BODY[BODY.index(SIGNOFF) :].rstrip("\n").split("\n")
+    for keep in range(1, len(signoff)):  # the heading, and then more of the section, but not all
+        body = head + "\n".join(signoff[:keep]) + ending
+        found = drift_of(body)
+        assert found, (keep, ending)
+        assert all(line <= lines_of(body) for _, _, line in found), (keep, ending)
 
 
 def test_a_section_that_is_not_there_is_not_compared():
