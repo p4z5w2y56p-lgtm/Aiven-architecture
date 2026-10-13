@@ -156,7 +156,7 @@ What the gateway does with each field:
 - Once the agent has finished `min_runs` shadow runs, Matthijs can sign it off in the control UI. Until then it stays in shadow, and nothing promotes it automatically. The sign-off is logged with the policy hash.
 - A version that adds a tool or raises `max_class` puts the agent back in shadow for `min_runs` runs.
 - W-SHADOW-LOW fires when `min_runs` is below 10.
-- W-WIDENS needs the previous signed version. It lists what the new version widens (tools, `max_class`, a limit, scope, `strict` to `taint`, a lower `min_runs`) and says whether shadow mode restarts.
+- W-WIDENS needs the previous signed version. It lists what the new version widens (tools, `max_class`, a limit, scope, `strict` to `taint`, a lower `min_runs`) and says whether shadow mode restarts. An address added inside an `@domain` the previous version already listed gives no new reach, so it is not a widening.
 
 ### 3.7 Body
 
