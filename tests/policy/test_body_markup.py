@@ -426,6 +426,38 @@ def test_what_is_rendered_gives_no_second_finding_on_a_line_where_the_lines_gave
     assert [f.line for f in only(run(body), "E-BODY-LINK")] == [at(PURPOSE, body)]
 
 
+def test_a_url_behind_a_code_span_over_two_lines_is_one_finding_on_its_own_line():
+    # Ruling R70: the rendered text puts what stands behind such a code span one line early (the
+    # parser does not see the line break in the span). The paragraph has its URL as it is written,
+    # and then the rendered text adds nothing to it.
+    text = "See `a\nb` https://evil.test"
+    for body in (purpose_with(text), after_purpose(text)):
+        assert [f.line for f in only(run(body), "E-BODY-LINK")] == [at("b` https", body)]
+
+
+def test_a_paragraph_with_a_url_as_it_is_written_gets_nothing_from_the_rendered_text():
+    body = purpose_with("See https://a.test\nand www&#46;b.test here")
+    assert [f.line for f in only(run(body), "E-BODY-LINK")] == [at("See https", body)]
+
+
+def test_a_url_that_is_built_behind_a_code_span_over_two_lines_is_one_finding():
+    body = purpose_with("See `a\nb` www&#46;evil.test")
+    assert len(only(run(body), "E-BODY-LINK")) == 1  # (on the line before, as the parser counts)
+
+
+def test_each_paragraph_and_each_row_of_a_table_has_its_own_scan_of_the_rendered_text():
+    body = after_purpose("https://a.test\n\nwww&#46;b.test")
+    assert [f.line for f in only(run(body), "E-BODY-LINK")] == [
+        at("https://a.test", body),
+        at("www&#46;b", body),
+    ]
+    body = after_purpose(f"{HEAD}| www&#46;a.test | 1 |\n| 2 | www&#46;b.test |")
+    assert [f.line for f in only(run(body), "E-BODY-LINK")] == [
+        at("| www&#46;a", body),
+        at("| 2 | www&#46;b", body),
+    ]
+
+
 def test_a_row_of_a_table_gets_one_finding_for_the_urls_that_are_built_in_its_cells():
     body = after_purpose(f"{HEAD}| www&#46;a.test | www&#46;b.test |")
     assert [f.line for f in only(run(body), "E-BODY-LINK")] == [at("| www&#46;a", body)]

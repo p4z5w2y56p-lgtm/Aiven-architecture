@@ -305,8 +305,10 @@ def _inline(report: _Report, inline: Token, written: set[int]) -> list[Finding]:
     The text that the reader gets is not the text that is written (a reference or an escape is
     decoded). So a character that a reference made and that is hidden is HTML (what is written is
     E-HIDDEN-CHAR's), and a URL in the rendered text is a link, also when markup or a code span
-    cuts it in pieces. A row where a URL was found as it is written (`written`) has had its finding:
-    the rendered text adds one more finding for a row, at most, and none to such a row.
+    cuts it in pieces. A paragraph with a row where a URL was found as it is written (`written`)
+    has had its finding, and the rendered text adds none to it (ruling R70): behind a code span
+    over lines its rows are a line off, and it would report the same URL a second time. Else the
+    rendered text adds one finding for a row, at most.
     """
     findings = []
     shown: dict[int, list[str]] = {}
@@ -319,8 +321,13 @@ def _inline(report: _Report, inline: Token, written: set[int]) -> list[Finding]:
             findings.append(report.at("E-BODY-HTML", row))
         if token.type in ("text", "code_inline"):
             shown.setdefault(row, []).append(_shown(token.content))
-    for row, parts in shown.items():
-        if row not in written and any(True for _ in _urls("".join(parts))):
+    if any(row in written for row in range(inline.map[0], inline.map[1])):
+        return findings
+    for (
+        row,
+        parts,
+    ) in shown.items():  # (a row of the paragraph, and so none of them is in `written`)
+        if any(True for _ in _urls("".join(parts))):
             findings.append(report.at("E-BODY-LINK", row))
             written.add(row)
     return findings
