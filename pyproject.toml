@@ -19,6 +19,11 @@ dev = [
     "pytest-cov",
     "ruff",
 ]
+functions = [
+    "functions-framework==3.10.2",
+    "google-cloud-billing==1.20.0",
+    "google-cloud-logging==3.16.3",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -38,3 +43,11 @@ src = ["src", "."]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.uv]
+# A release is taken once it is two weeks old (supply chain; ruling R131). The two dev tools that M1
+# locked keep their versions. A later task that needs a newer release moves the date on purpose.
+exclude-newer = "2026-09-29T00:00:00Z"
+exclude-newer-package = { ruff = "2026-10-12T00:00:00Z", iniconfig = "2026-10-12T00:00:00Z" }
+# The functions' libraries come with `uv sync`, for their tests.
+default-groups = ["dev", "functions"]

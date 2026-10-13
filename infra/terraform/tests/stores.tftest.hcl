@@ -9,9 +9,19 @@ run "the_stores_of_the_control_project" {
   }
 
   variables {
-    project        = "aiven-control-test"
-    region         = "europe-west4"
-    gateway_member = "serviceAccount:gateway@aiven-gateway-test.iam.gserviceaccount.com"
+    project             = "aiven-control-test"
+    region              = "europe-west4"
+    gateway_member      = "serviceAccount:gateway@aiven-gateway-test.iam.gserviceaccount.com"
+    billing_account     = "01ABCD-23EF45-6789AB"
+    budget_currency     = "EUR"
+    budget_alert_amount = 10
+    budget_stop_amount  = 25
+    budget_projects     = ["aiven-agents-test", "aiven-gateway-test", "aiven-control-test"]
+    stop_projects       = ["aiven-agents-test", "aiven-gateway-test"]
+    budget_stop_enabled = true
+    scratch_project     = "aiven-scratch-test"
+    budget_stop_drill   = false
+    python_src          = "../../src"
   }
 
   assert {

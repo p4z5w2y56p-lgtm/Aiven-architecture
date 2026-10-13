@@ -116,6 +116,10 @@ AGENT_ID_PATTERN = "[a-z][a-z0-9]*(-[a-z0-9]+)*"
 # The shape of a Drive folder ID (validator-spec 3.3, scope.drive_folder_id), for fullmatch.
 DRIVE_FOLDER_ID_PATTERN = "[A-Za-z0-9_-]{10,100}"
 
+# Google Cloud project IDs: 6 to 30 lowercase letters, digits and hyphens; they start with a letter
+# and do not end with a hyphen. Used with fullmatch.
+PROJECT_ID_PATTERN = "[a-z][a-z0-9-]{4,28}[a-z0-9]"
+
 # The tools that need a scope field (validator-spec 3.3, E-SCOPE-MISSING): exact action ids, or
 # `namespace.*`. The folder path is needed with the folder ID. A field that no listed tool needs
 # is unused (W-SCOPE-UNUSED).

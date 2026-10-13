@@ -23,3 +23,6 @@ dist/
 *.tfstate.*
 *.tfplan
 crash.log
+
+# The zips of the functions that Terraform builds.
+.build/

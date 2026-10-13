@@ -8,6 +8,9 @@ locals {
     "control-ui"      = "The control UI: kill switches, decisions, sign-offs and taint clears; it reads the audit log."
     "budget-stop"     = "The budget stop: unlinks billing from the agents and gateway projects, and writes audit entries."
     "credit-reminder" = "The credit reminder: one audit entry with an alert, before the credit runs out."
+    # The organisation policy leaves Google's default build account without roles, so the functions
+    # are built with an account of their own (ruling R134).
+    "function-builder" = "Builds the functions budget-stop and credit-reminder: reads their source, writes their image and build logs."
   }
 
   # Written from the account ID, the way Google makes the email (see modules/agents).
@@ -44,6 +47,16 @@ locals {
     "roles/datastore.viewer gateway" = {
       role   = "roles/datastore.viewer"
       member = var.gateway_member
+    }
+    # The build of a function writes its log and its image; it reads the source from its bucket
+    # (functions.tf).
+    "roles/logging.logWriter function-builder" = {
+      role   = "roles/logging.logWriter"
+      member = local.members["function-builder"]
+    }
+    "roles/artifactregistry.writer function-builder" = {
+      role   = "roles/artifactregistry.writer"
+      member = local.members["function-builder"]
     }
   }
 }

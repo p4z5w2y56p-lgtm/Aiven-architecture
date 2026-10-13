@@ -5,7 +5,14 @@
 agents_project  = "aiven-agents-example"
 gateway_project = "aiven-gateway-example"
 control_project = "aiven-control-example"
+scratch_project = "aiven-scratch-example"
 region          = "europe-west4"
+
+# Budgets, gross cost per month (setup step S2): 10 and 25 in EUR, 11 and 27 in USD.
+billing_account     = "01ABCD-23EF45-6789AB"
+budget_currency     = "EUR"
+budget_alert_amount = 10
+budget_stop_amount  = 25
 
 # The agents, by agent ID (validator-spec 3.3). Each gets the service account agent-<id>.
 agents = ["invoice-reminder"]

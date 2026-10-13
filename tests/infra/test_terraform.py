@@ -90,7 +90,7 @@ def test_the_project_id_rule_is_the_validators():
 
     text = (TERRAFORM / "variables.tf").read_text(encoding="utf-8")
     rules = re.findall(r'can\(regex\("\^(.*?)\$", var\.(\w+)_project\)\)', text)
-    assert sorted(name for _, name in rules) == ["agents", "control", "gateway"]
+    assert sorted(name for _, name in rules) == ["agents", "control", "gateway", "scratch"]
     assert {rule for rule, _ in rules} == {PROJECT_ID}
 
 

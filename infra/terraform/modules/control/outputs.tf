@@ -20,3 +20,8 @@ output "stores" {
     firestore        = google_firestore_database.control.name
   }
 }
+
+output "functions" {
+  description = "The names of the functions of this project."
+  value       = sort(keys(google_cloudfunctions2_function.stop))
+}

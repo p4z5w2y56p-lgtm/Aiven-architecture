@@ -23,13 +23,16 @@ before you go on.
   shasum -a 256 terraform_1.16.4_darwin_arm64.zip   # must print the hash in the table
   ```
 
-- The IDs from setup steps S1 to S4: the organisation ID (`gcloud organizations list`), and the
-  project IDs of agents, gateway, control and scratch.
+- The IDs from setup steps S1 to S4: the organisation ID (`gcloud organizations list`), the
+  billing account ID (`gcloud billing accounts list`) and its currency, and the project IDs of
+  agents, gateway, control and scratch.
+- Billing Account Administrator on the billing account, for the budgets.
 
 ## 1. The values (IDs and addresses only)
 
 1. Copy `infra/terraform/terraform.tfvars.example` to `infra/terraform/terraform.tfvars`, and fill in
-   the three project IDs and the agent IDs.
+   the four project IDs, the billing account ID, the currency and the two budgets (10 and 25 in
+   EUR, 11 and 27 in USD), and the agent IDs.
 2. Copy `config/platform.example.yaml` to `config/platform.yaml`, and fill in the agents project,
    your address as the trusted author, and the gateway's account
    (`gateway@<gateway-project>.iam.gserviceaccount.com`).
@@ -86,10 +89,10 @@ What the plan must show, part by part:
     `iam.automaticIamGrantsForDefaultServiceAccounts`, each `enforce = "TRUE"`.
   - The APIs: 17 in control, 5 in agents, 7 in gateway. Drive, Sheets and Gmail are never among
     those of agents.
-  - The service accounts: `gateway`, `control-ui`, `budget-stop`, `credit-reminder`, and
-    `agent-<id>` for each agent.
-  - Ten roles on the projects, plus one `aiplatform.user` per agent; every member is written out
-    in full. No role is granted to a person.
+  - The service accounts: `gateway`, `control-ui`, `budget-stop`, `credit-reminder`,
+    `function-builder` (it builds the two functions), and `agent-<id>` for each agent.
+  - Twelve roles on the projects, plus one `aiplatform.user` per agent; every member is written
+    out in full. No role is granted to a person.
 - **Stores (Task 2.2)**
   - Buckets `<control>-policies` (versioned) and `<control>-snapshots` (retention 30 days, not
     locked; deleted at 30 days). Both in europe-west4, uniform access, public access prevented.
@@ -100,6 +103,16 @@ What the plan must show, part by part:
     protection on. Runs and calls expire by their field `expire_at`.
   - Roles on the stores: the gateway reads the policies and may only add snapshots; the control
     UI reads the policies and the audit log, and lists the snapshots.
+- **Budgets and the budget stop (Task 2.3)**
+  - Budgets `aiven-alert` (10) and `aiven-stop` (25) in your currency, both
+    `EXCLUDE_ALL_CREDITS`, per month, over the agents, gateway and control projects. The alert has
+    thresholds 0.5, 0.9 and 1.0; the stop has 1.0 and topic `budget-stop`.
+  - Topic `budget-stop`, which `billing-budget-alert@system.gserviceaccount.com` may publish to.
+  - Bucket `<control>-functions` with the zip of the function, named by its SHA-256.
+  - Function `budget-stop`: Python 3.12, europe-west4, internal only, one instance, as
+    `budget-stop`, with `STOP_PROJECTS` the agents and gateway projects and `STOP_ENABLED=true`;
+    Eventarc delivers the topic to it, again after a failure. `budget-stop` may invoke it, and has
+    Project Billing Manager on the agents and gateway projects.
 - Nowhere in the plan: a `google_service_account_key`, or `locked = true` / `is_locked = true`.
 
 `terraform show m2.tfplan` shows the plan again. Stop at anything that is not on this list.
@@ -113,6 +126,11 @@ terraform output service_accounts
 
 If the apply stops at an organisation policy with `Permission 'orgpolicy.policies.create' denied`,
 part 2 is missing: do it, then plan and apply again. Nothing else is made before the policies.
+
+## 6. After the apply: the drills
+
+1. **BD-1 and BD-2**, the budget stop, on the scratch project only: runbook `budget-stop.md`,
+   section Drill. Write down the time from publishing to the unlink, for the report.
 
 ## Later, and only when you confirm it: the audit log lock
 

@@ -24,3 +24,8 @@ output "stores" {
   description = "The names of the stores of the control and gateway projects."
   value       = merge(module.control.stores, { gateway_firestore = module.gateway.firestore })
 }
+
+output "functions" {
+  description = "The functions of the control project."
+  value       = module.control.functions
+}

@@ -22,13 +22,11 @@ from ruamel.yaml.constructor import DuplicateKeyError
 from ruamel.yaml.error import YAMLError
 
 from aiven.policy.addresses import is_address
-from aiven.policy.constants import DRIVE_FOLDER_ID_PATTERN
+from aiven.policy.constants import DRIVE_FOLDER_ID_PATTERN, PROJECT_ID_PATTERN
 
 # Every pattern is used with fullmatch: `$` would accept a trailing newline, and a YAML block
 # scalar can end in one.
-# Google Cloud project IDs: 6 to 30 lowercase letters, digits and hyphens; start with a letter,
-# do not end with a hyphen.
-PROJECT_ID = r"[a-z][a-z0-9-]{4,28}[a-z0-9]"
+PROJECT_ID = PROJECT_ID_PATTERN
 PROJECT_ID_RE = re.compile(PROJECT_ID)
 SERVICE_ACCOUNT_RE = re.compile(rf"{PROJECT_ID}@{PROJECT_ID}\.iam\.gserviceaccount\.com")
 # Drive and folder IDs share one alphabet (validator-spec 3.3, scope.drive_folder_id).

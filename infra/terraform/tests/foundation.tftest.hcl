@@ -3,11 +3,18 @@
 
 mock_provider "google" {}
 
+mock_provider "archive" {}
+
 variables {
-  agents_project  = "aiven-agents-test"
-  gateway_project = "aiven-gateway-test"
-  control_project = "aiven-control-test"
-  agents          = ["invoice-reminder", "payment-nudge"]
+  agents_project      = "aiven-agents-test"
+  gateway_project     = "aiven-gateway-test"
+  control_project     = "aiven-control-test"
+  scratch_project     = "aiven-scratch-test"
+  agents              = ["invoice-reminder", "payment-nudge"]
+  billing_account     = "01ABCD-23EF45-6789AB"
+  budget_currency     = "EUR"
+  budget_alert_amount = 10
+  budget_stop_amount  = 25
 }
 
 run "every_project_has_both_organisation_policies" {
@@ -41,8 +48,9 @@ run "the_service_accounts_of_gateway_design_section_3" {
       "control-ui"             = "control-ui@aiven-control-test.iam.gserviceaccount.com"
       "budget-stop"            = "budget-stop@aiven-control-test.iam.gserviceaccount.com"
       "credit-reminder"        = "credit-reminder@aiven-control-test.iam.gserviceaccount.com"
+      "function-builder"       = "function-builder@aiven-control-test.iam.gserviceaccount.com"
     }
-    error_message = "One account per agent, and the gateway, control UI, budget stop and credit reminder."
+    error_message = "One account per agent; the gateway, control UI, budget stop and credit reminder; and the build of the functions (ruling R134)."
   }
 }
 
@@ -62,13 +70,15 @@ run "the_roles_on_the_projects_are_exactly_those_of_gateway_design_section_3" {
       "aiven-control-test roles/logging.logWriter serviceAccount:control-ui@aiven-control-test.iam.gserviceaccount.com",
       "aiven-control-test roles/logging.logWriter serviceAccount:budget-stop@aiven-control-test.iam.gserviceaccount.com",
       "aiven-control-test roles/logging.logWriter serviceAccount:credit-reminder@aiven-control-test.iam.gserviceaccount.com",
+      "aiven-control-test roles/logging.logWriter serviceAccount:function-builder@aiven-control-test.iam.gserviceaccount.com",
+      "aiven-control-test roles/artifactregistry.writer serviceAccount:function-builder@aiven-control-test.iam.gserviceaccount.com",
     ])
     error_message = "The roles on the three projects differ from gateway-design section 3."
   }
 
   assert {
-    condition     = length(output.project_iam) == 10 + 2
-    error_message = "Ten roles, and one per agent, each granted once (docs/runbooks/m2-apply.md, part 4)."
+    condition     = length(output.project_iam) == 12 + 2
+    error_message = "Twelve roles, and one per agent, each granted once (docs/runbooks/m2-apply.md, part 4)."
   }
 }
 
@@ -124,8 +134,8 @@ run "no_agents_means_no_agent_accounts" {
   }
 
   assert {
-    condition     = keys(output.service_accounts) == ["budget-stop", "control-ui", "credit-reminder", "gateway"]
-    error_message = "Without agents, only the four platform accounts exist."
+    condition     = keys(output.service_accounts) == ["budget-stop", "control-ui", "credit-reminder", "function-builder", "gateway"]
+    error_message = "Without agents, only the five platform accounts exist."
   }
 
   assert {
@@ -213,4 +223,44 @@ run "the_same_project_twice_is_refused" {
     control_project = "aiven-gateway-test"
   }
   expect_failures = [var.control_project]
+}
+
+run "the_scratch_project_is_none_of_the_three" {
+  command = plan
+  variables {
+    scratch_project = "aiven-gateway-test"
+  }
+  expect_failures = [var.scratch_project]
+}
+
+run "a_billing_account_in_lower_case_is_refused" {
+  command = plan
+  variables {
+    billing_account = "01abcd-23ef45-6789ab"
+  }
+  expect_failures = [var.billing_account]
+}
+
+run "a_currency_other_than_eur_or_usd_is_refused" {
+  command = plan
+  variables {
+    budget_currency = "GBP"
+  }
+  expect_failures = [var.budget_currency]
+}
+
+run "a_budget_with_cents_is_refused" {
+  command = plan
+  variables {
+    budget_alert_amount = 10.5
+  }
+  expect_failures = [var.budget_alert_amount]
+}
+
+run "the_stop_below_the_alert_is_refused" {
+  command = plan
+  variables {
+    budget_stop_amount = 10
+  }
+  expect_failures = [var.budget_stop_amount]
 }

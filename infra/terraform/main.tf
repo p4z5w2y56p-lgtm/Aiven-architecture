@@ -101,5 +101,16 @@ module "control" {
   region         = var.region
   gateway_member = module.gateway.members["gateway"]
 
+  billing_account     = var.billing_account
+  budget_currency     = var.budget_currency
+  budget_alert_amount = var.budget_alert_amount
+  budget_stop_amount  = var.budget_stop_amount
+  budget_projects     = [var.agents_project, var.gateway_project, var.control_project]
+  stop_projects       = [var.agents_project, var.gateway_project]
+  budget_stop_enabled = var.budget_stop_enabled
+  scratch_project     = var.scratch_project
+  budget_stop_drill   = var.budget_stop_drill
+  python_src          = "${path.root}/../../src"
+
   depends_on = [google_org_policy_policy.baseline, google_project_service.control]
 }
