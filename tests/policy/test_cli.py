@@ -723,6 +723,10 @@ def test_git_is_run_with_a_list_of_arguments_and_no_shell(repo, monkeypatch):
         assert kwargs.get("timeout")  # a git that hangs cannot hold up the build
     shows = [args[0] for args, _ in calls if args[0][1] == "show"]
     assert shows == [["git", "show", "HEAD:policies/invoice-reminder.md"]]
+    listings = [args[0] for args, _ in calls if args[0][1] == "ls-tree"]
+    assert listings
+    for argv in listings:  # a path stands after `--`, so that nothing it says can be an option
+        assert argv[-2:] == ["--", "policies/invoice-reminder.md"]
 
 
 def test_the_path_given_to_git_is_relative_to_the_repository(repo, monkeypatch):
