@@ -22,8 +22,7 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check
       - run: uv run ruff format --check
-      - run: uv run pytest -q
-      - run: uv run pytest tests/policy --cov=aiven.policy --cov-branch --cov-fail-under=95
+      - run: uv run pytest --cov=aiven.policy --cov-branch --cov-fail-under=95
       - name: Template self-test (validator-spec section 9)
         run: |
           # The template has errors of its own, so the validator must exit 1. Exit 0 would mean
