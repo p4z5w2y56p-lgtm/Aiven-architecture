@@ -19,10 +19,11 @@ that is missing on the first line of the body, and then the first heading that i
 five sections have it. A heading is a heading wherever it stands, in a quote or a list too.
 
 E-BODY-HTML and E-BODY-LINK also cover text that the reader never sees, because a parser keeps
-it from them: a link reference definition shows nothing, and markdown-it drops everything that is
-nested in more than 19 quotes or lists. A line of the body that no block of the parser holds is
-such text. The definitions are links, and the rest is reported as HTML: "a policy may not contain
-text the reader cannot see".
+it from them: a link reference definition shows nothing, and markdown-it drops what is nested 20
+levels deep (a quote is one level, a list and its item are two, so 10 lists inside each other do
+it). From a list that deep it drops all that follows in the document. A line of the body that no
+block of the parser holds is such text. The definitions are links, and the rest is reported as
+HTML: "a policy may not contain text the reader cannot see".
 
 A URL is found in the lines of the body and not in its tokens, so one in a code span or a code block
 counts as well (ruling R46): a policy must be complete on its own.
@@ -36,7 +37,7 @@ text of the file in a message, a log or a repr.
 """
 
 import re
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from itertools import zip_longest
 from pathlib import Path
 
@@ -199,14 +200,17 @@ def _bullets(section: list[Token]) -> Iterator[tuple[int, str, bool]]:
     """(row, name, explains) of each list item whose paragraph starts with a code span.
 
     The item explains the tool of that name when the text behind the code span starts with a colon
-    and has a reason after it. A list item of any depth counts, an ordered one too.
+    and has a reason after it. A list item of any depth counts, an ordered one too. A section can
+    end inside an item, at a heading in it, and then the item has no paragraph to look at.
     """
     for index, token in enumerate(section):
         if token.type != "list_item_open" or not token.map:
             continue
-        block, inline = section[index + 1 : index + 3]
-        children = inline.children or []
-        if block.type == "paragraph_open" and children and children[0].type == "code_inline":
+        first = section[index + 1 : index + 3]
+        if len(first) < 2 or first[0].type != "paragraph_open":
+            continue
+        children = first[1].children or []
+        if children and children[0].type == "code_inline":
             rest = _plain(children[1:])
             yield token.map[0], children[0].content, rest.startswith(":") and bool(rest[1:].strip())
 
@@ -265,7 +269,7 @@ def _inline_tokens(tokens: list[Token]) -> Iterator[tuple[Token, int]]:
             yield from _walk(token.children or [], token.map[0])
 
 
-def _walk(children: list[Token], row: int) -> Iterator[tuple[Token, int]]:
+def _walk(children: list[Token], row: int) -> Generator[tuple[Token, int], None, int]:
     """The tokens of a paragraph (and of the alt text of an image) with their rows.
 
     The row moves down at a break, and over the lines of a tag. It returns the row it ends on.

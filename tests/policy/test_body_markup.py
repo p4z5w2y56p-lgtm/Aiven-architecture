@@ -146,6 +146,11 @@ def test_the_line_of_a_token_in_a_paragraph_of_several_lines_is_its_own():
     )
 
 
+def test_the_lines_of_the_alt_text_of_an_image_are_counted_too():
+    body = edited(END, "![alt\ntext](x) and <b>")
+    assert [f.line for f in only(run(body), "E-BODY-HTML")] == [at("text](x)", body)]
+
+
 def test_a_tag_that_goes_over_lines_counts_the_lines_it_has():
     body = edited(END, '<a\nhref="x">t</a>\nlast <b>')
     assert [f.line for f in only(run(body), "E-BODY-HTML")] == [
@@ -183,6 +188,9 @@ def test_a_link_or_an_image_is_one_finding_on_its_line(link):
         "https://www.example.test",
         "see:https://x",
         "(https://x)",
+        "a-://x",
+        "a+://x",
+        "a.://x",
     ],
 )
 def test_a_url_is_one_finding_on_its_line(url):
@@ -225,6 +233,12 @@ def test_every_url_is_a_finding_and_a_url_with_www_in_it_is_still_one():
         at("line https", body),
         at("next line", body),
     ]
+
+
+def test_a_url_at_the_start_of_a_line_is_found_also_with_a_scheme_of_one_letter():
+    for url in ("https://example.test", "x://y"):
+        body = after_purpose(url)
+        assert places(run(body)) == [("E-BODY-LINK", at(url, body))]
 
 
 def test_a_url_in_a_link_is_the_link_and_the_url():
@@ -288,11 +302,25 @@ def test_a_definition_in_a_list_or_a_quote_is_found(prefix):
     assert places(run(body)) == [("E-BODY-LINK", at("[r]: /x", body))]
 
 
-def test_text_nested_in_more_than_19_quotes_is_dropped_by_the_parser_and_is_reported():
-    deep = "> " * 25 + "<!-- hidden -->"
+def test_text_nested_in_20_quotes_is_dropped_by_the_parser_and_is_reported():
+    deep = "> " * 20 + "<!-- hidden -->"
     body = after_purpose(deep)
     assert places(run(body)) == [("E-BODY-HTML", at(deep, body))]
-    assert run(after_purpose("> " * 18 + "text")) == []
+    assert run(after_purpose("> " * 19 + "text")) == []
+
+
+@pytest.mark.parametrize("mark", ["- ", "1. "], ids=["bullets", "numbers"])
+def test_text_nested_in_10_lists_is_dropped_with_the_rest_of_the_document_and_all_is_reported(mark):
+    # A list and its item are two levels. The parser drops, from the 20th level on, all that follows
+    # in the document, the generated sections too: every line of it is reported.
+    deep = mark * 10 + "<!-- hidden -->"
+    body = after_purpose(deep)
+    hidden = [f.line for f in only(run(body), "E-BODY-HTML")]
+    last = FIRST_LINE + body.count("\n")
+    assert hidden[0] == at(deep, body)
+    assert hidden[-1] == last - 1  # the last line of the file is empty
+    assert len(hidden) > 40
+    assert run(after_purpose(mark * 9 + "text")) == []
 
 
 def test_every_line_that_is_dropped_is_reported_and_one_that_is_kept_is_not():
@@ -437,10 +465,14 @@ PIECES = [
 ]
 
 
+MARKS = ["", "", "", "", "- ", "> ", "1. ", "  ", "- - ", "> > ", "    "]
+
+
 def test_a_random_body_never_raises_and_every_finding_can_be_printed_on_a_line_of_the_file():
     rng = random.Random(20261014)
-    for number in range(300):
-        body = "\n".join(rng.choice(PIECES) for _ in range(rng.randint(0, 60)))
+    for number in range(500):
+        lines = [rng.choice(MARKS) + rng.choice(PIECES) for _ in range(rng.randint(0, 60))]
+        body = "\n".join(lines)
         last = FIRST_LINE + body.count("\n")
         for policy in (POLICY, None):
             for finding in run(body, policy=policy):

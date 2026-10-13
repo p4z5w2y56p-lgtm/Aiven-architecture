@@ -12,7 +12,6 @@ Lines are the lines of the file: the body starts on `FIRST_LINE`, the line after
 from pathlib import Path
 
 from aiven.policy.body import check_body
-
 from aiven.policy.fileformat import decode_text
 from aiven.policy.findings import Finding
 from aiven.policy.frontmatter import load, split

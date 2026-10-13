@@ -9,8 +9,8 @@ text that is hidden from the reader are in test_body_markup.py.
 from dataclasses import replace
 
 import pytest
-from aiven.policy.body import check_body
 
+from aiven.policy.body import check_body
 from aiven.policy.fileformat import decode_text
 from aiven.policy.findings import Finding, format_line, message
 from aiven.policy.frontmatter import split
@@ -245,6 +245,11 @@ def test_a_heading_of_level_3_to_6_anywhere_else_is_reported_on_its_line(level, 
     assert [f.line for f in sections_of(body)] == [at(heading, body)]
 
 
+def test_a_heading_of_level_3_is_reported_too_when_there_is_no_section_to_be_in():
+    body = body_of() + "\n### Lonely\n"
+    assert sorted(f.line for f in sections_of(body)) == [FIRST_LINE, at("### Lonely", body)]
+
+
 def test_a_heading_of_level_3_after_the_last_section_is_reported_too():
     body = body_of(*SECTION_NAMES) + "\n### Late\n"
     assert [f.line for f in sections_of(body)] == [at("### Late", body)]
@@ -403,6 +408,7 @@ BULLET = next(line for line in BODY.split("\n") if line.startswith(DRAFT_BULLET)
         "- `gmail.draft `: writes drafts",
         "- `gmail.draft` and `gmail.send`: write drafts",
         "- Writes drafts: `gmail.draft`",
+        "- `gmail.draft`: ` `",
         "`gmail.draft`: writes drafts",
         "- \\`gmail.draft`: writes drafts",
     ],
@@ -484,10 +490,24 @@ def test_a_tool_entry_that_failed_its_own_rules_is_never_unexplained(tool):
     assert tools_of(BODY, policy=replace(POLICY, tools=(*POLICY.tools, tool))) == []
 
 
+def test_a_list_item_that_starts_with_a_heading_is_no_bullet():
+    body = added_after("- `gmail.send`: sends", "- ### `drive.read`: a heading, not a bullet")
+    assert tools_of(body) == []
+
+
 def test_a_bullet_for_a_tool_entry_that_failed_its_rules_is_not_extra_because_it_is_in_tools():
     policy = replace(POLICY, tools=(*POLICY.tools, "drive.reed"))
     body = added_after("- `gmail.send`: sends", "- `drive.reed`: a typo")
     assert tools_of(body, policy=policy) == []
+
+
+@pytest.mark.parametrize("marks", ["- ", "1. ", "> - ", "- - ", "* "])
+def test_a_heading_in_a_list_item_ends_the_section_there_and_is_an_extra_section(marks):
+    # The section ends in the middle of the list item, which has no paragraph to look at.
+    body = added_after("- `gmail.send`: sends", f"{marks}## Nested")
+    found = run(body)
+    assert [f.line for f in only(found, "E-BODY-SECTIONS")] == [at("## Nested", body)]
+    assert tools_of(body) == []
 
 
 def test_the_tools_are_not_judged_without_why_each_tool_or_without_a_policy():
@@ -665,6 +685,14 @@ def test_a_warning_does_not_stop_drift_so_a_value_that_is_not_rendered_again_is_
     found = validate(data)
     assert "W-SHADOW-LOW" in codes(found)
     assert body_codes(found) == ["E-BODY-DRIFT"]
+
+
+def test_an_error_that_load_found_stops_drift_too():
+    # An unknown field is no obstacle to a policy, and it is an error of the front matter all the same.
+    data = BASE.replace(b"min_runs: 10", b"min_runs: 5\nunknown: 1", 1)
+    found = validate(data)
+    assert {"E-FIELD-UNKNOWN", "W-SHADOW-LOW"} <= set(codes(found))
+    assert body_codes(found) == []
 
 
 def test_an_error_in_the_front_matter_stops_drift():

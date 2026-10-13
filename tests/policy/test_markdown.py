@@ -54,6 +54,7 @@ def test_find_gives_the_first_heading_of_level_two_with_the_name():
     assert find(found, "Name", top=True).row == 4
     assert find(found, "Other") is None
     assert find(headings(parse("# Name\n")), "Name") is None  # level 1 is not a section
+    assert find(headings(parse("### Name\n\n## Name\n")), "Name").row == 2  # nor level 3
 
 
 def test_a_cr_is_no_line_end_so_that_a_row_is_a_line_of_the_file():

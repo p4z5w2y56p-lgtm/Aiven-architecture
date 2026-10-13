@@ -15,6 +15,7 @@ from dataclasses import replace
 
 import pytest
 
+from aiven.policy.catalog import Action
 from aiven.policy.constants import POLICY_CLASSES
 from aiven.policy.model import Limits, Scope
 from aiven.policy.render import render_generated, rewrite
@@ -281,6 +282,18 @@ def test_a_tool_that_is_not_an_action_to_grant_raises_value_error_without_its_na
         rewrite(BASE, policy, CATALOG)
 
 
+def test_an_action_without_an_undo_text_or_of_a_class_that_is_not_granted_raises_value_error():
+    # The loader of the catalog makes no such action, but a catalog that is made by hand can.
+    actions = {
+        "ops.run": Action("ops.run", "R1", "drive"),
+        "ops.wipe": Action("ops.wipe", "R4", "drive", "undo it."),
+    }
+    catalog = replace(CATALOG, actions={**CATALOG.actions, **actions})
+    for tool in actions:
+        with pytest.raises(ValueError):
+            render_generated(replace(POLICY, tools=("sheets.read", tool)), catalog)
+
+
 def test_a_mode_that_is_neither_strict_nor_taint_raises_value_error_without_its_value():
     with pytest.raises(ValueError) as raised:
         render_generated(replace(POLICY, untrusted_input="zz-mode"), CATALOG)
@@ -380,6 +393,24 @@ def test_a_heading_in_setext_style_is_the_section_too():
 def test_a_file_without_front_matter_is_searched_whole():
     data = b"Some text.\n"
     assert rewrite(data, POLICY, CATALOG) == data + b"\n" + SECTIONS.encode()
+    broken = BASE.replace(b"---\n", b"--- \n", 1)  # the first line is not the delimiter
+    cut = broken.index(ENFORCED.encode())
+    assert rewrite(broken, POLICY, CATALOG) == broken[:cut] + SECTIONS.encode()
+
+
+def test_a_file_without_anything_is_just_the_sections():
+    assert rewrite(b"", POLICY, CATALOG) == SECTIONS.encode()
+
+
+def test_a_heading_in_the_front_matter_is_a_comment_and_not_the_section():
+    # In YAML it is a comment, and in Markdown it is the heading: only the body is searched.
+    comment = (
+        b"# AIVEN policy, schema v1. The gateway enforces this block; the body below explains it."
+    )
+    data = BASE.replace(comment, ENFORCED.encode(), 1)
+    cut = data.rindex(ENFORCED.encode())
+    assert data.index(ENFORCED.encode()) < cut
+    assert rewrite(data, POLICY, CATALOG) == data[:cut] + SECTIONS.encode()
 
 
 def test_the_euro_sign_is_written_as_utf8():
