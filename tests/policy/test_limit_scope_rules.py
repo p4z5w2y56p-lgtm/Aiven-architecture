@@ -437,6 +437,18 @@ def test_a_path_is_matched_as_a_whole():
     assert [code for code, _ in run.places()] == ["E-SCOPE-SANDBOX"]
 
 
+def test_a_folder_name_is_on_one_line():
+    # A literal block scalar can hold a line break, and then one folder name would be split over
+    # two lines of the file (ruling R54). The signer must read one path on one line.
+    old = f"drive_folder_path: {ROOT} / Invoices"
+    split = run_front(swap(old, f"drive_folder_path: |-\n    {ROOT} / Invoices\n    2026"))
+    assert split.places() == [("E-SCOPE-SANDBOX", split.line("drive_folder_path:"))]
+    # A folded scalar joins its lines with a space, so that is one name on one line: fine.
+    folded = run_front(swap(old, f"drive_folder_path: >-\n    {ROOT} / Invoices\n    2026"))
+    assert folded.places() == []
+    assert folded.policy.scope.drive_folder_path == f"{ROOT} / Invoices 2026"
+
+
 @pytest.mark.parametrize("placeholder", ["TODO", f"{ROOT} / REPLACE_ME_FOLDER"])
 def test_a_path_that_holds_a_placeholder_is_not_checked(placeholder):
     assert check(scope(drive_folder_path=placeholder)).places() == []

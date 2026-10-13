@@ -7,7 +7,7 @@ W-LIMIT-UNUSED when a limit is above 0 and no tool uses it. One finding for each
 conflict the tool is the first, in the order of the file, that needs the limit.
 
 Scope: `drive_folder_id` must have the shape of a Drive ID (E-FIELD-TYPE) and `drive_folder_path`
-must be the Sandbox drive or a folder in it (E-SCOPE-SANDBOX). Each entry of `email_to` is judged
+must be the Sandbox drive or a folder in it, each name on one line (E-SCOPE-SANDBOX). Each entry of `email_to` is judged
 alone: malformed, upper case or wild is E-SCOPE-EMAIL; a domain of a public mail service is
 E-SCOPE-EMAIL-PUBLIC; anything else that is not `aivenstudios.com` itself is
 E-SCOPE-EMAIL-EXTERNAL (a subdomain is another domain). The list has 1 to 50 entries (E-RANGE).
@@ -46,8 +46,9 @@ SPEND = "spend_eur_per_run"
 
 # Every pattern is used with fullmatch: `$` would accept a trailing newline.
 _FOLDER_ID = re.compile(DRIVE_FOLDER_ID_PATTERN)
-# A folder name has no `/`, and no whitespace at either end. Parts are joined by " / ".
-_FOLDER_NAME = r"[^/\s](?:[^/]*[^/\s])?"
+# A folder name has no `/`, no line break, and no whitespace at either end. Parts are joined by
+# " / ". A line break could only come from a block scalar, and the signer reads a path on one line.
+_FOLDER_NAME = r"[^/\s](?:[^/\r\n]*[^/\s])?"
 _FOLDER_PATH = re.compile(rf"{re.escape(DRIVE_ROOT)}(?: / {_FOLDER_NAME})*")
 # An address is `local@domain` or `@domain`, in lower case.
 _LOCAL_PART = re.compile(r"[a-z0-9._%+-]+")
