@@ -1,17 +1,19 @@
 """Widening (validator-spec section 3.6): what a new version allows that the previous one did not.
 
-`widening(prev, new)` compares two policies of the same agent. It gives one string for each way in
-which `new` gives the agent more room, in this order, and whether shadow mode starts again:
+`widening(prev, new)` compares two policies of the same agent. It gives one string for each field
+in which `new` gives the agent more room, in this order, and whether shadow mode starts again
+(ruling R73: a field never gives more than one string, so that the list stays short):
 
-1. each tool that `new` has and `prev` has not, in the order of `new`: `tools: +<tool>`;
+1. the tools that `new` has and `prev` has not, in the order of `new`, each with a plus sign and
+   separated by spaces: `tools: +<tool> +<tool>`;
 2. a higher `max_class`: `max_class: R0 -> R1`;
 3. each of `emails_per_day`, `records_per_run`, `max_runtime_s` and `runs_per_day` that rose, in
    that order: `limits.<name>: 10 -> 20`. The spend is not one of them: it must be 0
    (E-LIMIT-SPEND);
 4. in the scope, in this order: a folder ID that is set and is not the old one
    (`scope.drive_folder_id: changed`), a folder path that is neither the old path nor a folder
-   inside it (`scope.drive_folder_path: changed`), and each `email_to` entry that the old list does
-   not have (`scope.email_to: +<entry>`);
+   inside it (`scope.drive_folder_path: changed`), and the `email_to` entries that the old list
+   does not have, grouped like the tools (`scope.email_to: +<entry> +<entry>`);
 5. `untrusted_input` from `strict` to `taint`: `untrusted_input: strict -> taint`;
 6. a lower `shadow.min_runs`: `shadow.min_runs: 10 -> 5`.
 
@@ -24,7 +26,8 @@ E-PLACEHOLDER, so such a class is not ranked here. The other fields are compared
 values are.
 
 The strings are plain ASCII (`->`), and `check_set` joins them with `; ` for W-WIDENS. They hold
-text from the file (tools, folder IDs, addresses): the `Finding` that quotes them cleans them.
+text from the file (tools, addresses): the `Finding` that quotes them cleans them, and shows up to
+2,000 characters of the whole list.
 """
 
 from aiven.policy.constants import POLICY_CLASSES
@@ -38,7 +41,7 @@ def widening(prev: Policy, new: Policy) -> tuple[list[str], bool]:
     """The changes that give the agent more room in `new`, and whether shadow mode starts again."""
     added = [tool for tool in new.tools if tool not in prev.tools]
     raised = _raised(prev.max_class, new.max_class)
-    changes = [f"tools: +{tool}" for tool in added]
+    changes = [_grouped("tools", added)] if added else []
     if raised:
         changes.append(f"max_class: {prev.max_class} -> {new.max_class}")
     changes += _limits(prev, new)
@@ -80,8 +83,15 @@ def _scope(prev: Policy, new: Policy) -> list[str]:
     path = now.drive_folder_path
     if path is not None and not _inside(path, old.drive_folder_path):
         changes.append("scope.drive_folder_path: changed")
-    changes += [f"scope.email_to: +{entry}" for entry in now.email_to if entry not in old.email_to]
+    added = [entry for entry in now.email_to if entry not in old.email_to]
+    if added:
+        changes.append(_grouped("scope.email_to", added))
     return changes
+
+
+def _grouped(field: str, added: list[str]) -> str:
+    """The string of one field that gains entries: `tools: +a +b`."""
+    return f"{field}: " + " ".join(f"+{entry}" for entry in added)
 
 
 def _inside(path: str, root: str | None) -> bool:

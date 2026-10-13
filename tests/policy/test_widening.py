@@ -63,9 +63,10 @@ def test_a_lower_min_runs_widens_without_restart():
     assert widening(PREV, new) == (["shadow.min_runs: 10 -> 5"], False)
 
 
-def test_added_tools_are_listed_in_the_order_of_the_new_policy():
+def test_added_tools_are_one_change_in_the_order_of_the_new_policy():
+    # A field gives at most one string (ruling R73): the tools are joined by spaces, each with a +.
     new = variant(with_tools("gmail.send", "drive.read", "sheets.read", "drive.create"))
-    assert widening(PREV, new) == (["tools: +drive.read", "tools: +drive.create"], True)
+    assert widening(PREV, new) == (["tools: +drive.read +drive.create"], True)
 
 
 def test_a_tool_that_moves_is_not_added():
@@ -127,16 +128,16 @@ def test_a_drive_scope_where_there_was_none_widens_with_its_tool():
     )
 
 
-def test_every_new_address_widens_in_the_order_of_the_new_list():
-    before = variant(setting("scope.email_to", ["@aivenstudios.com", "a@aivenstudios.com"]))
+def test_new_addresses_are_one_change_in_the_order_of_the_new_list():
+    before = variant(setting("scope.email_to", ["a@aivenstudios.com"]))
     after = variant(
         setting(
             "scope.email_to",
-            ["c@aivenstudios.com", "a@aivenstudios.com", "@aivenstudios.com", "b@aivenstudios.com"],
+            ["c@aivenstudios.com", "a@aivenstudios.com", "b@aivenstudios.com"],
         )
     )
     assert widening(before, after) == (
-        ["scope.email_to: +c@aivenstudios.com", "scope.email_to: +b@aivenstudios.com"],
+        ["scope.email_to: +c@aivenstudios.com +b@aivenstudios.com"],
         False,
     )
 
@@ -216,7 +217,7 @@ BEFORE = variant(
     setting("limits.records_per_run", 0),
     setting("limits.max_runtime_s", 60),
     setting("scope.drive_folder_id", "0FolderBeforeId1234"),
-    setting("scope.email_to", ["@aivenstudios.com"]),
+    setting("scope.email_to", ["z@aivenstudios.com"]),
 )
 AFTER = variant(
     with_tools("gmail.send", "sheets.read", "drive.read", "gmail.draft", max_class="R2"),
@@ -226,20 +227,18 @@ AFTER = variant(
     setting("limits.max_runtime_s", 600),
     setting("limits.runs_per_day", 2),
     setting("scope.drive_folder_path", SANDBOX),
-    setting("scope.email_to", ["@aivenstudios.com", "b@aivenstudios.com", "a@aivenstudios.com"]),
+    setting("scope.email_to", ["z@aivenstudios.com", "b@aivenstudios.com", "a@aivenstudios.com"]),
     setting("shadow.min_runs", 5),
 )
 
 
 def test_changes_come_in_a_fixed_order():
     # Tools (in the order of the new policy), max_class, the limits in the order of the file,
-    # the scope (folder ID, folder path, addresses), the mode, min_runs.
+    # the scope (folder ID, folder path, addresses), the mode, min_runs: one string for a field.
     changes, restart = widening(BEFORE, AFTER)
     assert restart is True
     assert changes == [
-        "tools: +gmail.send",
-        "tools: +drive.read",
-        "tools: +gmail.draft",
+        "tools: +gmail.send +drive.read +gmail.draft",
         "max_class: R0 -> R2",
         "limits.emails_per_day: 0 -> 20",
         "limits.records_per_run: 0 -> 30",
@@ -247,15 +246,21 @@ def test_changes_come_in_a_fixed_order():
         "limits.runs_per_day: 1 -> 2",
         "scope.drive_folder_id: changed",
         "scope.drive_folder_path: changed",
-        "scope.email_to: +b@aivenstudios.com",
-        "scope.email_to: +a@aivenstudios.com",
+        "scope.email_to: +b@aivenstudios.com +a@aivenstudios.com",
         "untrusted_input: strict -> taint",
         "shadow.min_runs: 10 -> 5",
     ]
 
 
+def test_a_field_gives_at_most_one_change():
+    changes, _ = widening(BEFORE, AFTER)
+    assert len(changes) == 11
+    fields = [change.split(":")[0] for change in changes]
+    assert len(set(fields)) == len(fields)
+
+
 def test_the_changes_are_plain_ascii_text():
     changes, _ = widening(BEFORE, AFTER)
-    assert len(changes) == 14
+    assert changes
     assert all(type(change) is str and change.isascii() for change in changes)
     assert all(change.isprintable() for change in changes)

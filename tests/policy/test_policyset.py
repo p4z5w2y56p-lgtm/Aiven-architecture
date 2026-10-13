@@ -253,6 +253,61 @@ def test_a_wrong_version_does_not_hide_a_widening():
     assert [f.code for f in found] == ["E-VERSION-ORDER", "W-WIDENS"]
 
 
+# --- the whole list of changes is shown (ruling R73)
+
+ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
+
+
+def test_a_widening_of_every_kind_is_shown_whole_in_the_line_and_in_both_languages():
+    # 20 tools and 10 addresses are added, and every other field is widened: the list is some 700
+    # characters, which the cut at 200 used to shorten. The strings are written out here, not made
+    # by `widening`, so that the test is about what is shown.
+    tools = [f"agentbuilder.tool{number:02d}" for number in range(20)]
+    addresses = [f"person{number}@aivenstudios.com" for number in range(10)]
+    before = variant(
+        with_tools("sheets.read", max_class="R0"),
+        setting("limits.emails_per_day", 0),
+        setting("limits.records_per_run", 0),
+        setting("limits.max_runtime_s", 60),
+        setting("scope.email_to", ["z@aivenstudios.com"]),
+    )
+    new = variant(
+        setting("version", 2),
+        with_tools(*tools, max_class="R2"),
+        setting("untrusted_input", "taint"),
+        setting("limits.emails_per_day", 50),
+        setting("limits.records_per_run", 200),
+        setting("limits.max_runtime_s", 900),
+        setting("limits.runs_per_day", 10),
+        setting("scope.drive_folder_id", "0AnotherFolderId1234"),
+        setting("scope.drive_folder_path", "AIVEN Architecture Sandbox"),
+        setting("scope.email_to", ["z@aivenstudios.com", *addresses]),
+        setting("shadow.min_runs", 5),
+    )
+    changes = "; ".join(
+        [
+            "tools: " + " ".join(f"+{tool}" for tool in tools),
+            "max_class: R0 -> R2",
+            "limits.emails_per_day: 0 -> 50",
+            "limits.records_per_run: 0 -> 200",
+            "limits.max_runtime_s: 60 -> 900",
+            "limits.runs_per_day: 1 -> 10",
+            "scope.drive_folder_id: changed",
+            "scope.drive_folder_path: changed",
+            "scope.email_to: " + " ".join(f"+{address}" for address in addresses),
+            "untrusted_input: strict -> taint",
+            "shadow.min_runs: 10 -> 5",
+        ]
+    )
+    assert 600 < len(changes) < 2000
+    (found,) = check_set(files(("invoice-reminder.md", new)), {AGENT: before})
+    assert found.params == {"changes": changes, "restart_runs": "5"}
+    for text in (format_line(found), message(found, "en"), message(found, "nl")):
+        assert changes in text
+        assert ELLIPSIS not in text
+    assert format_line(found).endswith(f"{changes}. Shadow mode starts again for 5 runs.")
+
+
 # --- the findings together
 
 
