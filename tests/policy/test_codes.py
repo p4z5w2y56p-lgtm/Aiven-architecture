@@ -1083,7 +1083,6 @@ def test_a_valid_set_has_no_finding():
     second = variant_file(NEXT_VERSION, render=True)
     for data in (first, second):
         assert {f.code for f in findings_of(data)} == {"W-TOOL-NOT-LIVE"}
-    for data in (first, second):
         assert check_duplicates([(BASE_PATH, policy_of(data))]) == []
     assert check_history(BASE_PATH, policy_of(first), None) == []
     assert check_history(BASE_PATH, policy_of(second), policy_of(first)) == []
