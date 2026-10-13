@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from aiven.policy.content import _SHOWN as SHOWN
 from aiven.policy.findings import format_line, message
 from aiven.policy.model import Policy
 from aiven.policy.policyset import check_set
@@ -309,7 +310,7 @@ def test_a_widening_of_every_kind_is_shown_whole_in_the_line_and_in_both_languag
             "shadow.min_runs: 10 -> 5",
         ]
     )
-    assert 900 < len(changes) < 2000
+    assert 900 < len(changes) < SHOWN  # well beyond the old cut of 200, and within the cut
     (found,) = check_set(files(("invoice-reminder.md", new)), {AGENT: before})
     assert found.params == {"changes": changes, "restart_runs": "5"}
     for text in (format_line(found), message(found, "en"), message(found, "nl")):

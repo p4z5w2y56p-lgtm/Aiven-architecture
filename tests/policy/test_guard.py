@@ -14,6 +14,7 @@ from dataclasses import replace
 
 import pytest
 
+from aiven.policy.content import _SHOWN as SHOWN
 from aiven.policy.content import escape_unprintable, is_sensitive, safe_text
 from aiven.policy.findings import Finding, format_line, message
 from tests.support import gen
@@ -23,7 +24,9 @@ from tests.support.policies import AGENTS_PROJECT, FOLDER_ID
 
 ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 HIDDEN = "[hidden]"
-SHOWN = 2_000  # what a finding shows of a value, at most (ruling R73; it was 200)
+# SHOWN, imported above, is what a finding shows of a value, at most. The lengths in these tests are
+# built from it and never from a number, so that they still test the cut when the cut changes: the
+# calibration for 200 characters stopped testing anything when ruling R73 made it 2,000.
 
 # Characters that are not printable, and how the guard writes them.
 UNPRINTABLE = {
@@ -96,17 +99,20 @@ def test_a_value_that_scan_flags_is_replaced_by_a_marker(value):
     assert safe_text(value) == HIDDEN
     assert safe_text(f"before {value} after") == HIDDEN
     assert safe_text(f"an earlier line\n{value}") == HIDDEN
-    assert safe_text("x" * 500 + " " + value) == HIDDEN  # even beyond what would be shown
+    # The whole value is judged, and not the part that is shown: the secret stands partly inside
+    # the window that is shown, and well beyond it.
+    for filler in (SHOWN - 5, SHOWN + 500):
+        assert safe_text("x" * filler + " " + value) == HIDDEN
 
 
 def test_escape_unprintable_neither_hides_nor_cuts():
     iban = gen.valid_iban()
     assert escape_unprintable(iban) == iban
-    assert escape_unprintable("x" * 1000) == "x" * 1000
+    assert escape_unprintable("x" * (SHOWN + 500)) == "x" * (SHOWN + 500)
 
 
-def test_a_long_value_is_cut_to_2000_characters_ending_in_an_ellipsis():
-    assert safe_text("x" * 10_000) == "x" * (SHOWN - 1) + ELLIPSIS
+def test_a_long_value_is_cut_ending_in_an_ellipsis():
+    assert safe_text("x" * (SHOWN * 5)) == "x" * (SHOWN - 1) + ELLIPSIS
     assert safe_text("x" * (SHOWN + 1)) == "x" * (SHOWN - 1) + ELLIPSIS
     assert safe_text("x" * SHOWN) == "x" * SHOWN
     assert safe_text("x" * (SHOWN - 1)) == "x" * (SHOWN - 1)
@@ -119,12 +125,17 @@ def test_a_value_of_a_few_hundred_characters_is_shown_in_full():
 
 
 def test_escapes_count_toward_the_cut():
-    assert safe_text("\n" * 1000) == ("\\u000a" * 1000)[: SHOWN - 1] + ELLIPSIS
+    # Half as many newlines as the cut shows are fewer than it, and their escapes are six times
+    # as many characters.
+    count = SHOWN // 2
+    assert safe_text("\n" * count) == ("\\u000a" * count)[: SHOWN - 1] + ELLIPSIS
 
 
 @pytest.mark.parametrize(
     "text",
-    [char for char, _ in UNPRINTABLE.values()] + PRINTABLE + ["x" * 1000, "\n" * 100, HIDDEN],
+    [char for char, _ in UNPRINTABLE.values()]
+    + PRINTABLE
+    + ["x" * (SHOWN + 500), "\n" * SHOWN, HIDDEN],
 )
 def test_cleaning_twice_changes_nothing_for_ordinary_text(text):
     once = safe_text(text)
@@ -348,11 +359,11 @@ def test_hidden_characters_in_a_param_and_a_path_come_out_escaped():
     assert finding.path == "dir/a\\u3164b.md"
 
 
-def test_a_long_param_is_cut_to_2000_characters():
-    finding = Finding("E-INTERNAL", "error", "a.md", params={"detail": "y" * 5000})
+def test_a_long_param_is_cut():
+    finding = Finding("E-INTERNAL", "error", "a.md", params={"detail": "y" * (SHOWN + 1000)})
     assert finding.params == {"detail": "y" * (SHOWN - 1) + ELLIPSIS}
-    short = Finding("E-INTERNAL", "error", "a.md", params={"detail": "y" * 1000})
-    assert short.params == {"detail": "y" * 1000}
+    fits = Finding("E-INTERNAL", "error", "a.md", params={"detail": "y" * SHOWN})
+    assert fits.params == {"detail": "y" * SHOWN}
 
 
 @pytest.mark.parametrize("value", SENSITIVE.values(), ids=SENSITIVE)
@@ -376,7 +387,7 @@ def test_only_the_params_that_need_it_are_changed():
 
 
 def test_a_path_is_escaped_but_neither_hidden_nor_cut():
-    name = "x" * 300
+    name = "x" * (SHOWN + 100)
     finding = Finding("E-FINAL-NEWLINE", "error", "policies/a\nb\U0000202e" + name + ".md")
     assert finding.path == "policies/a\\u000ab\\u202e" + name + ".md"
     assert format_line(finding).splitlines() == [format_line(finding)]
@@ -398,8 +409,8 @@ def test_a_param_changed_after_the_finding_was_made_is_cleaned_when_it_is_shown(
         message(finding, "en") == "Placeholder [hidden] is still there. Fill it in before signing."
     )
 
-    finding.params["token"] = "x\ny\U00003164" + "z" * 3000  # escaped, then cut to 2000
-    cleaned = ("x\\u000ay\\u3164" + "z" * 3000)[: SHOWN - 1] + ELLIPSIS
+    finding.params["token"] = "x\ny\U00003164" + "z" * (SHOWN + 1000)  # escaped, then cut
+    cleaned = ("x\\u000ay\\u3164" + "z" * (SHOWN + 1000))[: SHOWN - 1] + ELLIPSIS
     assert (
         message(finding, "en")
         == f"Placeholder {cleaned} is still there. Fill it in before signing."
@@ -407,7 +418,7 @@ def test_a_param_changed_after_the_finding_was_made_is_cleaned_when_it_is_shown(
 
 
 def test_cleaning_a_finding_again_changes_nothing():
-    finding = Finding("E-INTERNAL", "error", "a\nb.md", 2, 3, {"detail": "p\nq" * 300})
+    finding = Finding("E-INTERNAL", "error", "a\nb.md", 2, 3, {"detail": "p\nq" * SHOWN})
     assert replace(finding) == finding
     assert hash(replace(finding)) == hash(finding)
     again = Finding(
