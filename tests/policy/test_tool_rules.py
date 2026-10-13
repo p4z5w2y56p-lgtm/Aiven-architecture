@@ -404,6 +404,14 @@ def test_forbidding_a_name_inside_a_reserved_namespace_is_fine(name):
     assert check(add_forbidden(name)).places() == []
 
 
+def test_a_namespace_item_matches_when_only_a_reserved_name_lies_in_it():
+    # "A namespace.* matches when any catalog id or reserved entry lies in that namespace": here
+    # the only thing in the namespace is the reserved name, and no action of the catalog.
+    catalog = replace(CATALOG, reserved=(*CATALOG.reserved, "ops.wipe"))
+    assert check(add_forbidden("ops.*")).codes() == ["E-FORBIDDEN-UNKNOWN"]
+    assert check(add_forbidden("ops.*"), catalog=catalog).codes() == []
+
+
 def test_the_catalog_in_use_decides_what_is_known():
     catalog = catalog_with(Action("sheets.share", "R3", "drive"))
     assert check(add_forbidden("sheets.share")).codes() == ["E-FORBIDDEN-UNKNOWN"]
