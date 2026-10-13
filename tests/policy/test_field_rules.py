@@ -156,7 +156,7 @@ def test_a_number_on_its_floor_or_its_ceiling_is_not_e_range(path, value):
 
 
 def test_a_number_that_is_far_too_large_is_one_e_range():
-    # The longest integer that load keeps has 4300 digits. The finding shows it cut to 200, or
+    # The longest integer that load keeps has 4300 digits. The finding shows it cut (to 2000), or
     # hides it: a long run of digits can look like a card number.
     run = check(setting("limits.runs_per_day", 10**4299))
     assert run.places() == [("E-RANGE", run.line("runs_per_day:"))]

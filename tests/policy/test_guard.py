@@ -23,6 +23,7 @@ from tests.support.policies import AGENTS_PROJECT, FOLDER_ID
 
 ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 HIDDEN = "[hidden]"
+SHOWN = 2_000  # what a finding shows of a value, at most (ruling R73; it was 200)
 
 # Characters that are not printable, and how the guard writes them.
 UNPRINTABLE = {
@@ -104,15 +105,21 @@ def test_escape_unprintable_neither_hides_nor_cuts():
     assert escape_unprintable("x" * 1000) == "x" * 1000
 
 
-def test_a_long_value_is_cut_to_200_characters_ending_in_an_ellipsis():
-    assert safe_text("x" * 1000) == "x" * 199 + ELLIPSIS
-    assert safe_text("x" * 201) == "x" * 199 + ELLIPSIS
-    assert safe_text("x" * 200) == "x" * 200
-    assert safe_text("x" * 199) == "x" * 199
+def test_a_long_value_is_cut_to_2000_characters_ending_in_an_ellipsis():
+    assert safe_text("x" * 10_000) == "x" * (SHOWN - 1) + ELLIPSIS
+    assert safe_text("x" * (SHOWN + 1)) == "x" * (SHOWN - 1) + ELLIPSIS
+    assert safe_text("x" * SHOWN) == "x" * SHOWN
+    assert safe_text("x" * (SHOWN - 1)) == "x" * (SHOWN - 1)
+
+
+def test_a_value_of_a_few_hundred_characters_is_shown_in_full():
+    # The cut used to be at 200. A long list of changes (W-WIDENS) must not lose its end.
+    assert safe_text("x" * 201) == "x" * 201
+    assert safe_text("x" * 1000) == "x" * 1000
 
 
 def test_escapes_count_toward_the_cut():
-    assert safe_text("\n" * 100) == ("\\u000a" * 100)[:199] + ELLIPSIS
+    assert safe_text("\n" * 1000) == ("\\u000a" * 1000)[: SHOWN - 1] + ELLIPSIS
 
 
 @pytest.mark.parametrize(
@@ -341,9 +348,11 @@ def test_hidden_characters_in_a_param_and_a_path_come_out_escaped():
     assert finding.path == "dir/a\\u3164b.md"
 
 
-def test_a_long_param_is_cut_to_200_characters():
-    finding = Finding("E-INTERNAL", "error", "a.md", params={"detail": "y" * 1000})
-    assert finding.params == {"detail": "y" * 199 + ELLIPSIS}
+def test_a_long_param_is_cut_to_2000_characters():
+    finding = Finding("E-INTERNAL", "error", "a.md", params={"detail": "y" * 5000})
+    assert finding.params == {"detail": "y" * (SHOWN - 1) + ELLIPSIS}
+    short = Finding("E-INTERNAL", "error", "a.md", params={"detail": "y" * 1000})
+    assert short.params == {"detail": "y" * 1000}
 
 
 @pytest.mark.parametrize("value", SENSITIVE.values(), ids=SENSITIVE)
@@ -389,8 +398,8 @@ def test_a_param_changed_after_the_finding_was_made_is_cleaned_when_it_is_shown(
         message(finding, "en") == "Placeholder [hidden] is still there. Fill it in before signing."
     )
 
-    finding.params["token"] = "x\ny\U00003164" + "z" * 300  # escaped, then cut to 200
-    cleaned = ("x\\u000ay\\u3164" + "z" * 300)[:199] + ELLIPSIS
+    finding.params["token"] = "x\ny\U00003164" + "z" * 3000  # escaped, then cut to 2000
+    cleaned = ("x\\u000ay\\u3164" + "z" * 3000)[: SHOWN - 1] + ELLIPSIS
     assert (
         message(finding, "en")
         == f"Placeholder {cleaned} is still there. Fill it in before signing."

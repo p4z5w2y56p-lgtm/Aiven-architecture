@@ -276,7 +276,10 @@ def _hits_in_line(line: str) -> list[tuple[int, str]]:
 
 # What a finding shows of a value, at most; and what it shows in place of a sensitive one. The
 # ellipsis stands for the rest of a value that is cut, here and in the checks that quote a part.
-_SHOWN = 200
+# The cut is 2,000 characters (ruling R73), so that the list of changes of W-WIDENS is shown whole,
+# also with 20 tools, many addresses and every other field changed. It is the same cut for every
+# value, and it bounds what a finding can print.
+_SHOWN = 2_000
 HIDDEN = "[hidden]"
 ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 
@@ -373,7 +376,7 @@ def safe_text(value: str) -> str:
     A value for which `is_sensitive` is true is replaced by `[hidden]`, whatever else it holds, so
     a finding never repeats a credential, a bank detail or an ID number. That hides a few harmless
     values as well, a long hex digest or number most often; hiding costs nothing. Anything else
-    is escaped with `escape_unprintable` and cut to 200 characters, ending in an ellipsis.
+    is escaped with `escape_unprintable` and cut to 2,000 characters, ending in an ellipsis.
     """
     if is_sensitive(value):
         return HIDDEN

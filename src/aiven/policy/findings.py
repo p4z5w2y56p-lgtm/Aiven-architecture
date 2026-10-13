@@ -55,7 +55,7 @@ class Finding:
 
     Making a finding cleans it. Each value in `params` goes through `safe_text`: a value that
     holds a credential, a bank detail or an ID number becomes `[hidden]`, unprintable and
-    invisible characters are written as escapes, and a long value is cut to 200 characters. The
+    invisible characters are written as escapes, and a long value is cut to 2,000 characters. The
     `path` only gets the escapes. Cleaning again (`dataclasses.replace` does, and so does
     `message`) never shows more than the first time. It can hide more: the escape of one
     character ends in hex digits, and digits next to them can make a window that passes a
