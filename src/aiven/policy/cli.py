@@ -41,11 +41,12 @@ Exit codes: 0 when there is no error (warnings are allowed), 1 when there is one
 validator could not run. A crash of any command, and a `verify` that says E-INTERNAL, are 2. A crash
 prints one E-INTERNAL for each file of the command and nothing else: the name of the class of the
 exception is its `detail`. Its message and its traceback can hold text of a file, so they are not
-printed, unless `--debug` is given (traceback, on stderr); where the output holds an E-INTERNAL and
-`--debug` is not given, one fixed line on stderr says to use it. Two more things are exit code 2: a
-command line that makes no sense (a usage error of argparse), and an output that cannot be written
-(a disk that is full, a pipe that is closed), which gives one fixed line on stderr, no traceback and
-no message.
+printed, unless `--debug` is given (traceback, on stderr); after a crash that is caught here, and
+without `--debug`, one fixed line on stderr says to use it (not for an E-INTERNAL that `verify`
+makes: it keeps no traceback, and `--debug` would show nothing more). Two more things are exit code
+2: a command line that makes no sense (a usage error of argparse), and an output that cannot be
+written (a disk that is full, a pipe that is closed), which gives one fixed line on stderr, no
+traceback and no message.
 
 Findings go to stdout and notes to stderr. Text of a file reaches the output only in a finding,
 which cleans it (findings.py). A character that the encoding of stdout or stderr cannot take is
@@ -127,6 +128,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the command line and give the exit code: 0, 1 or 2 (see the module)."""
     _escape_what_cannot_be_encoded()
     args = _parser().parse_args(argv)
+    caught = False
     try:
         cfg, catalog = _platform(args)
         findings, status = args.run(args, cfg, catalog)
@@ -134,6 +136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as error:
         # Whatever went wrong, the files count as invalid (fail closed), and what is said is the
         # name of the class of the error: its message and its traceback can hold text of a file.
+        caught = True
         if args.debug:
             with contextlib.suppress(Exception):
                 traceback.print_exc()
@@ -141,8 +144,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         text, status = _text(findings, as_json=args.json), EXIT_CRASH
     if not _write(text):
         return EXIT_CRASH
-    if not args.debug and any(f.code == "E-INTERNAL" for f in findings):
-        _note(DEBUG_NOTE)  # the line says what went wrong, and not why: that is in the traceback
+    if caught and not args.debug:
+        # The line says what went wrong and not why, and the traceback has the why. It is said for
+        # the crash that is caught here only: an E-INTERNAL that verify() makes has no traceback to
+        # show, and --debug would give nothing more (ruling R90).
+        _note(DEBUG_NOTE)
     return status
 
 

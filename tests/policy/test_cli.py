@@ -61,7 +61,8 @@ VALID = variant_file(render=True)  # version 1 of invoice-reminder: the three wa
 # Without --previous-ref the history is not known, and validate says that it checks none (R86).
 NO_REF_NOTE = "note: version order and widening need --previous-ref"
 
-# Where the output holds an E-INTERNAL and --debug was not given, the cause can be had that way.
+# After a crash that the command line caught itself, and without --debug: with it the cause is in
+# the traceback (ruling R90). Not for an E-INTERNAL that verify() makes: it keeps no traceback.
 DEBUG_NOTE = "note: run again with --debug to see the cause"
 
 
@@ -1469,7 +1470,32 @@ def test_a_trust_anchor_that_cannot_be_used_is_e_internal_and_exit_2(run, signer
     gone = Signer(signer.key, tmp_path / "no-allowed-signers")
     done = verify(run, gone, sig)
     assert (done.status, done.lines) == (2, [internal(INVOICE, "FileNotFoundError")])
-    assert done.err.splitlines() == [VERIFY_NOTE, DEBUG_NOTE]
+
+
+def test_an_e_internal_that_verify_makes_says_nothing_of_debug(run, signer, tmp_path):
+    # verify() turns the exception into the finding and keeps the name of its class, and nothing
+    # else. --debug has no traceback to show for it, so the line that says to use it would promise
+    # what it cannot give (ruling R90).
+    sig = signed(signer)
+    gone = Signer(signer.key, tmp_path / "no-allowed-signers")
+    for flags in ([], ["--debug"]):
+        done = verify(run, gone, sig, *flags)
+        assert (done.status, done.lines) == (2, [internal(INVOICE, "FileNotFoundError")])
+        assert done.err.splitlines() == [VERIFY_NOTE]  # no note about --debug, and no traceback
+
+
+def test_a_crash_that_the_command_line_catches_in_verify_still_says_how_to_see_the_cause(
+    run, signer, tmp_path
+):
+    # A signature that is a folder is not read by verify(): the exception is the command line's own,
+    # and --debug shows its traceback (ruling R90).
+    write(INVOICE, VALID)
+    quiet = verify(run, signer, tmp_path)
+    loud = verify(run, signer, tmp_path, "--debug")
+    assert (quiet.status, quiet.lines) == (2, [internal(INVOICE, "IsADirectoryError")])
+    assert quiet.err.splitlines() == [DEBUG_NOTE]
+    assert "Traceback" in loud.err and "IsADirectoryError" in loud.err
+    assert DEBUG_NOTE not in loud.err
 
 
 def test_a_signature_that_cannot_be_read_is_a_crash_and_not_a_missing_one(run, signer, tmp_path):
