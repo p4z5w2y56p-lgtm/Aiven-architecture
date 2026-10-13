@@ -1,27 +1,62 @@
-"""Load-time verification (validator-spec 2 and 3.10): `verify`, and the seam it needs in validate.py.
+"""Load-time verification (validator-spec 2 and 3.10): `verify`, and the seam in validate.py.
 
-`validate_policy` is the one run of the checks that gives the policy and the findings together
-(`validate_file` gives only the findings). `verify` calls it, and only after the signature holds.
+`verify` is the gateway's way to load one policy file. It checks the size and the signature before
+it decodes or parses any of the file (rulings R43 and R56), and only then validates it and makes the
+checks that are possible at load time. `validate_policy` is the seam it needs: one run of the checks
+that gives the policy and the findings together (`validate_file` gives only the findings).
+
+The tests that need a signature use real ones. Each makes a throwaway ed25519 key of its own in its
+`tmp_path` with `ssh-keygen -t ed25519 -N ""`, signs with it, and writes the `allowed_signers` file
+that trusts it, so no key is stored anywhere. They do not skip when ssh-keygen is missing: they
+fail, loudly. The tests that look at the call to ssh-keygen stand in for `subprocess.run`, and sign
+before they do.
+
+The valid file is the base (`valid_base()`): version 1 of `invoice-reminder`. A clean load has the
+Drive and Email wrappers built (`LIVE`), switched on for every agent, and a folder in the sandbox.
+The real catalog has every wrapper planned.
 """
 
 import hashlib
+import shutil
+import stat
+import subprocess
 from collections import Counter
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
 from aiven.policy import validate as validate_module
-from aiven.policy.constants import MAX_SCANNED_BYTES
+from aiven.policy import verify as verify_module
+from aiven.policy.constants import MAX_FILE_BYTES, MAX_SCANNED_BYTES
+from aiven.policy.findings import Finding, format_line, message
 from aiven.policy.validate import report_order, validate_file, validate_policy
+from aiven.policy.verify import ActiveVersion, verify
 from tests.support import gen
-from tests.support.bodies import policy_of
-from tests.support.frontmatter import BASE_TEXT
-from tests.support.policies import BASE_PATH, TEMPLATE_PATH, valid_base
-from tests.support.rules import CATALOG, CFG, with_tools
+from tests.support.bodies import policy_of, rerendered
+from tests.support.frontmatter import BASE_TEXT, without
+from tests.support.policies import BASE_PATH, FOLDER_ID, TEMPLATE_PATH, line_of, valid_base
+from tests.support.rules import (
+    CATALOG,
+    CFG,
+    UNSETTLED_TOOLS,
+    catalog_with,
+    setting,
+    with_tools,
+)
 from tests.support.variants import variant_file
 
 BASE = valid_base()
 TEMPLATE = TEMPLATE_PATH.read_bytes()
+TEMPLATE_NAME = Path("templates/policy-template.md")
+AGENT = "invoice-reminder"
+SANDBOX_PATH = "AIVEN Architecture Sandbox / Invoices"
+LIVE = catalog_with(drive="built", email="built")
+
+# The tools of the base, and how a finding shows the wrapper of each.
+BASE_TOOLS = {"sheets.read": "Drive", "gmail.draft": "Email", "gmail.send": "Email"}
 
 # The checks that read a file. Each of them runs once for a file, whatever is done with the result.
 CHECKS = (
@@ -35,23 +70,122 @@ CHECKS = (
     "check_body",
 )
 
-
-def counting(name, real, calls):
-    """A stand-in for the function `real` that counts its calls under `name`, and lets it run."""
-
-    def spy(*args, **kwargs):
-        calls[name] += 1
-        return real(*args, **kwargs)
-
-    return spy
+INVALID = Finding("E-SIG-INVALID", "error", str(BASE_PATH))
+OTHER_HASH = "sha256:" + "a" * 64
 
 
-def spy_on(monkeypatch, module, names) -> Counter:
-    """Count the calls of the functions `names` of `module`, and let them run."""
-    calls: Counter = Counter()
-    for name in names:
-        monkeypatch.setattr(module, name, counting(name, getattr(module, name), calls))
-    return calls
+# --- real signatures
+
+
+@dataclass(frozen=True)
+class Signer:
+    """A throwaway ed25519 key, and the `allowed_signers` file that trusts it."""
+
+    key: Path
+    allowed_signers: Path
+
+    def sign(self, data: bytes, namespace: str = "aiven-policy-v1") -> bytes:
+        """The detached signature of `data`, as `ssh-keygen -Y sign` writes it."""
+        done = subprocess.run(
+            ["ssh-keygen", "-Y", "sign", "-f", str(self.key), "-n", namespace],
+            input=data,
+            capture_output=True,
+            check=True,
+        )
+        return done.stdout
+
+
+def make_signer(
+    folder: Path, name: str = "matthijs", namespaces: str | None = "aiven-policy-v1"
+) -> Signer:
+    """A new key in `folder`, trusted as `name` for `namespaces` (None: for every namespace).
+
+    With the defaults the file of allowed signers has the one line of validator-spec section 2.
+    """
+    assert shutil.which("ssh-keygen"), "ssh-keygen is needed for the signing tests (OpenSSH)"
+    folder.mkdir()
+    key = folder / "key"
+    command = ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "", "-f", str(key)]
+    subprocess.run(command, capture_output=True, check=True)
+    public = (folder / "key.pub").read_text().split()[:2]  # the type and the key, no comment
+    options = "" if namespaces is None else f' namespaces="{namespaces}"'
+    allowed = folder / "allowed_signers"
+    allowed.write_text(f"{name}{options} {' '.join(public)}\n")
+    return Signer(key, allowed)
+
+
+@pytest.fixture(autouse=True)
+def _work_in_a_temporary_folder(tmp_path, monkeypatch):
+    """Run in a folder of the test's own. ssh-keygen that is called wrongly makes a key in the
+    current folder, named after the first line of its input; that must not be the repository."""
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+
+
+@pytest.fixture
+def signer(tmp_path) -> Signer:
+    """The signer of the tests: the key of "matthijs", trusted for the policy namespace only."""
+    return make_signer(tmp_path / "matthijs")
+
+
+@pytest.fixture
+def nowhere(tmp_path) -> Signer:
+    """A signer whose files do not exist, for the tests that stand in for ssh-keygen."""
+    return Signer(tmp_path / "key", tmp_path / "allowed_signers")
+
+
+# --- calling verify
+
+
+def all_live(wrapper: str, agent: str) -> bool:
+    return True
+
+
+def in_sandbox(folder_id: str, path: str | None) -> bool:
+    return True
+
+
+def verify_with(
+    signer: Signer,
+    data: bytes,
+    sig: bytes | None,
+    *,
+    path: Path = BASE_PATH,
+    active=None,
+    wrapper_live: Callable[[str, str], bool] = all_live,
+    folder_check: Callable[[str, str | None], bool] = in_sandbox,
+    catalog=LIVE,
+):
+    """`verify` with the trust anchor of `signer`, and the defaults of a clean load."""
+    anchor = signer.allowed_signers
+    return verify(path, data, sig, anchor, active, wrapper_live, folder_check, CFG, catalog)
+
+
+def load(signer: Signer, data: bytes, **options):
+    """`verify` for the file `data` as `signer` signs it."""
+    return verify_with(signer, data, signer.sign(data), **options)
+
+
+def shape(findings):
+    return [(found.code, found.line, found.params) for found in findings]
+
+
+def shown(findings) -> str:
+    """Every way the findings are shown: the line, both languages, the params and the repr."""
+    return "\n".join(
+        f"{format_line(f)}\n{message(f, 'en')}\n{message(f, 'nl')}\n{f.params}\n{f!r}"
+        for f in findings
+    )
+
+
+def padded(size: int) -> bytes:
+    """The base with filler in a line of free text, until the file has `size` bytes."""
+    marker = b"Reads: only"
+    assert BASE.count(marker) == 1
+    data = BASE.replace(marker, marker + b"x" * (size - len(BASE)))
+    assert len(data) == size
+    return data
 
 
 def tool_lines(text: str, tool: str) -> list[int]:
@@ -70,6 +204,646 @@ def tool_line(text: str, tool: str) -> int:
     return line
 
 
+def not_live(*tools: str) -> list[tuple[str, int, dict[str, str]]]:
+    """The `shape` of E-TOOL-NOT-LIVE for tools of the base, on their lines in the base."""
+    return [
+        ("E-TOOL-NOT-LIVE", tool_line(BASE_TEXT, tool), {"tool": tool, "wrapper": BASE_TOOLS[tool]})
+        for tool in tools
+    ]
+
+
+# --- spying on the checks
+
+
+def counting(name, real, calls):
+    """A stand-in for the function `real` that counts its calls under `name`, and lets it run."""
+
+    def spy(*args, **kwargs):
+        calls[name] += 1
+        return real(*args, **kwargs)
+
+    return spy
+
+
+def spy_on(monkeypatch, module, names, calls: Counter | None = None) -> Counter:
+    """Count the calls of the functions `names` of `module` in `calls`, and let them run."""
+    calls = Counter() if calls is None else calls
+    for name in names:
+        monkeypatch.setattr(module, name, counting(name, getattr(module, name), calls))
+    return calls
+
+
+# --- standing in for ssh-keygen
+
+
+class Call(NamedTuple):
+    """One call of the stand-in for subprocess.run, as it was made."""
+
+    args: tuple
+    kwargs: dict
+    sig: bytes  # what the signature file held during the call
+    folder_mode: int  # the permission bits of the folder that held it
+
+    @property
+    def argv(self) -> list[str]:
+        return self.args[0]
+
+    @property
+    def sig_path(self) -> Path:
+        return Path(self.argv[-1])
+
+
+def stub_run(monkeypatch, *, returncode=0, stdout=b"", stderr=b"", error=None) -> list[Call]:
+    """Stand in for subprocess.run: record each call, then answer it (or raise `error`).
+
+    The signature file is read during the call, while it is there. Sign before you stub: the
+    signing helpers use subprocess.run too.
+    """
+    calls: list[Call] = []
+
+    def run(*args, **kwargs):
+        sig_file = Path(args[0][-1])
+        mode = stat.S_IMODE(sig_file.parent.stat().st_mode)
+        calls.append(Call(args, kwargs, sig_file.read_bytes(), mode))
+        if error is not None:
+            raise error
+        return subprocess.CompletedProcess(args[0], returncode, stdout, stderr)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    return calls
+
+
+# --- the size comes first (ruling R56, step 1)
+
+
+@pytest.mark.parametrize("signed", [True, False], ids=["signed", "unsigned"])
+@pytest.mark.parametrize("size", [MAX_FILE_BYTES + 1, MAX_SCANNED_BYTES + 1])
+def test_a_file_over_64_kib_gets_e_file_size_and_nothing_else(signer, size, signed):
+    data = padded(size)
+    sig = signer.sign(data) if signed else None  # a valid signature does not save it
+    assert verify_with(signer, data, sig) == (
+        None,
+        [Finding("E-FILE-SIZE", "error", str(BASE_PATH), params={"size": str(size)})],
+    )
+
+
+def test_a_file_of_exactly_64_kib_is_not_too_large(signer):
+    policy, findings = load(signer, padded(MAX_FILE_BYTES))
+    assert (policy is not None, findings) == (True, [])
+
+
+# --- no signature (ruling R56, step 2)
+
+
+def test_missing_sig(signer):
+    assert verify_with(signer, BASE, None) == (
+        None,
+        [Finding("E-SIG-MISSING", "error", str(BASE_PATH), params={"agent": AGENT})],
+    )
+
+
+def test_the_template_is_not_signed_and_does_not_load(signer):
+    result = verify_with(signer, TEMPLATE, None, path=TEMPLATE_NAME)
+    assert result == (
+        None,
+        [
+            Finding(
+                "E-SIG-MISSING", "error", str(TEMPLATE_NAME), params={"agent": "policy-template"}
+            )
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "name, agent", [("a.md", "a"), ("invoice-reminder.md", AGENT), ("notes.txt", "notes.txt")]
+)
+def test_the_agent_of_e_sig_missing_is_the_file_name_without_md(signer, name, agent):
+    _, findings = verify_with(signer, BASE, None, path=Path("policies") / name)
+    assert shape(findings) == [("E-SIG-MISSING", None, {"agent": agent})]
+
+
+# --- the signature (ruling R56, step 3)
+
+
+def test_valid_signature_loads(signer):
+    policy, findings = load(signer, BASE)
+    assert findings == []
+    assert policy == policy_of(BASE)
+    assert policy.sha256 == "sha256:" + hashlib.sha256(BASE).hexdigest()
+
+
+def test_one_byte_change_fails(signer):
+    sig = signer.sign(BASE)
+    changed = BASE.replace(b"Once a day", b"once a day", 1)  # the one byte of a capital
+    assert sum(a != b for a, b in zip(BASE, changed, strict=True)) == 1
+    # By itself the changed file is a valid policy: the signature is the one reason it is refused.
+    assert not [f for f in validate_file(BASE_PATH, changed, CFG, LIVE) if f.severity == "error"]
+    assert verify_with(signer, changed, sig) == (None, [INVALID])
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda data: data + b"\n",
+        lambda data: data[:-1],
+        lambda data: data[1:],
+        lambda data: data.replace(b"\n", b"\r\n", 1),
+        lambda data: data.replace(b"version: 1", b"version: 2", 1),
+        lambda data: data.replace(b"Once a", b"Onc ea", 1),
+    ],
+    ids=["added", "dropped end", "dropped start", "carriage return", "version", "swapped"],
+)
+def test_any_change_to_the_bytes_fails(signer, change):
+    sig = signer.sign(BASE)
+    assert verify_with(signer, change(BASE), sig) == (None, [INVALID])
+
+
+def test_git_namespace_signature_fails(tmp_path):
+    anywhere = make_signer(tmp_path / "anywhere", namespaces=None)  # trusted for every namespace
+    assert load(anywhere, BASE)[1] == []  # its signature in the policy namespace loads
+    git = anywhere.sign(BASE, namespace="git")  # the signature that a commit has
+    assert verify_with(anywhere, BASE, git) == (None, [INVALID])
+
+
+def test_a_signature_of_another_key_fails(signer, tmp_path):
+    stranger = make_signer(tmp_path / "stranger")
+    assert verify_with(signer, BASE, stranger.sign(BASE)) == (None, [INVALID])
+
+
+def test_a_signer_who_is_trusted_for_other_namespaces_only_fails(tmp_path):
+    git_only = make_signer(tmp_path / "git-only", namespaces="git")
+    assert load(git_only, BASE) == (None, [INVALID])
+
+
+def test_only_the_signer_matthijs_counts(tmp_path):
+    someone = make_signer(tmp_path / "someone", name="someone")
+    assert load(someone, BASE) == (None, [INVALID])
+
+
+@pytest.mark.parametrize(
+    "garbage",
+    [b"", b"not a signature\n", b"-----BEGIN SSH SIGNATURE-----\n-----END SSH SIGNATURE-----\n"],
+    ids=["empty", "text", "armor without content"],
+)
+def test_a_signature_that_is_not_one_fails(signer, garbage):
+    assert verify_with(signer, BASE, garbage) == (None, [INVALID])
+
+
+def test_a_truncated_signature_fails(signer):
+    sig = signer.sign(BASE)
+    assert verify_with(signer, BASE, sig[: len(sig) // 2]) == (None, [INVALID])
+
+
+def test_a_missing_file_of_allowed_signers_fails_closed(signer, nowhere):
+    sig = signer.sign(BASE)
+    assert verify_with(nowhere, BASE, sig) == (None, [INVALID])
+
+
+def test_nothing_that_ssh_keygen_says_is_in_the_finding(signer):
+    _, findings = verify_with(signer, BASE, b"not a signature\n")
+    assert findings == [INVALID]
+    for words in ("Could not verify", "incorrect signature", "missing header", "sshsig"):
+        assert words not in shown(findings)
+
+
+# --- the call to ssh-keygen
+
+
+def test_ssh_keygen_gets_exactly_these_arguments(monkeypatch, nowhere):
+    calls = stub_run(monkeypatch)
+    verify_with(nowhere, BASE, b"sig")
+    (call,) = calls
+    assert len(call.args) == 1  # the one list
+    assert call.argv[:-1] == [
+        "ssh-keygen",
+        "-Y",
+        "verify",
+        "-f",
+        str(nowhere.allowed_signers),
+        "-I",
+        "matthijs",
+        "-n",
+        "aiven-policy-v1",
+        "-s",
+    ]
+    assert call.kwargs == {"input": BASE, "capture_output": True, "timeout": 10, "check": False}
+
+
+@pytest.mark.parametrize(
+    "returncode, valid", [(0, True), (1, False), (2, False), (255, False), (-9, False)]
+)
+def test_an_exit_status_of_zero_is_a_valid_signature_and_anything_else_is_not(
+    monkeypatch, nowhere, returncode, valid
+):
+    stub_run(monkeypatch, returncode=returncode)
+    policy, findings = verify_with(nowhere, BASE, b"sig")
+    assert (policy is not None, [found.code for found in findings]) == (
+        valid,
+        [] if valid else ["E-SIG-INVALID"],
+    )
+
+
+def test_nothing_of_the_file_reaches_the_arguments(monkeypatch, nowhere):
+    hostile = b"; touch hacked\n-O verify-time=1\n$(id) `id` -f /etc/passwd\n" + BASE
+    odd_name = Path("policies/-n git; touch hacked $(id).md")
+    calls = stub_run(monkeypatch)
+    verify_with(nowhere, BASE, b"sig")
+    verify_with(nowhere, hostile, b"sig", path=odd_name)
+    plain, other = calls
+    assert other.argv[:-1] == plain.argv[:-1]
+    assert other.kwargs["input"] == hostile  # the file goes in on stdin, and only there
+
+
+def test_the_signature_is_in_a_private_folder_of_its_own_that_is_gone_afterwards(
+    monkeypatch, nowhere
+):
+    calls = stub_run(monkeypatch)
+    for _ in range(2):
+        verify_with(nowhere, BASE, b"the signature")
+    first, second = calls
+    assert first.sig == second.sig == b"the signature"
+    assert first.folder_mode == second.folder_mode == 0o700
+    assert first.sig_path.parent != second.sig_path.parent
+    assert not first.sig_path.parent.exists()
+    assert not second.sig_path.parent.exists()
+
+
+def test_the_output_of_ssh_keygen_never_reaches_a_finding(monkeypatch, nowhere):
+    leak = b"LEAK-0123456789"
+    stub_run(monkeypatch, returncode=255, stdout=leak, stderr=leak)
+    result = verify_with(nowhere, BASE, b"sig")
+    assert result == (None, [INVALID])
+    assert "LEAK" not in shown(result[1])
+
+
+# --- nothing is parsed before the signature holds (rulings R43 and R56)
+
+
+def _unsigned(tmp_path):
+    return make_signer(tmp_path / "k"), BASE, None, "E-SIG-MISSING"
+
+
+def _changed(tmp_path):
+    signer = make_signer(tmp_path / "k")
+    return signer, BASE.replace(b"Once a day", b"once a day", 1), signer.sign(BASE), "E-SIG-INVALID"
+
+
+def _git(tmp_path):
+    signer = make_signer(tmp_path / "k", namespaces=None)
+    return signer, BASE, signer.sign(BASE, namespace="git"), "E-SIG-INVALID"
+
+
+def _stranger(tmp_path):
+    signer = make_signer(tmp_path / "k")
+    return signer, BASE, make_signer(tmp_path / "other").sign(BASE), "E-SIG-INVALID"
+
+
+def _garbage(tmp_path):
+    return make_signer(tmp_path / "k"), BASE, b"not a signature\n", "E-SIG-INVALID"
+
+
+def _too_large_signed(tmp_path):
+    signer, data = make_signer(tmp_path / "k"), padded(MAX_FILE_BYTES + 1)
+    return signer, data, signer.sign(data), "E-FILE-SIZE"
+
+
+def _too_large_unsigned(tmp_path):
+    return make_signer(tmp_path / "k"), padded(MAX_SCANNED_BYTES + 1), None, "E-FILE-SIZE"
+
+
+NOT_PARSED = {
+    "no signature": _unsigned,
+    "a changed byte": _changed,
+    "a signature of the git namespace": _git,
+    "a signature of another key": _stranger,
+    "a signature that is garbage": _garbage,
+    "a signed file that is too large": _too_large_signed,
+    "an unsigned file that is too large": _too_large_unsigned,
+}
+
+
+@pytest.mark.parametrize("name", NOT_PARSED)
+def test_a_file_is_not_parsed_before_its_signature_holds(monkeypatch, tmp_path, name):
+    signer, data, sig, code = NOT_PARSED[name](tmp_path)
+    calls = spy_on(monkeypatch, validate_module, CHECKS)
+    spy_on(monkeypatch, verify_module, ["validate_policy"], calls)
+    policy, findings = verify_with(signer, data, sig)
+    assert (policy, [found.code for found in findings]) == (None, [code])
+    assert sum(calls.values()) == 0  # not one check, not even a decoding of the bytes
+
+
+def test_a_signed_file_is_validated_once_and_every_check_runs_once(signer, monkeypatch):
+    sig = signer.sign(BASE)
+    calls = spy_on(monkeypatch, validate_module, CHECKS)
+    spy_on(monkeypatch, verify_module, ["validate_policy"], calls)
+    assert verify_with(signer, BASE, sig)[0] is not None
+    assert calls == Counter(dict.fromkeys(CHECKS, 1)) + Counter(validate_policy=1)
+
+
+# --- the file is validated once the signature holds (ruling R56, steps 4 and 6)
+
+
+def test_a_signed_file_with_errors_does_not_load(signer):
+    # The template has errors of its own (its placeholders, and the name of its file).
+    policy, findings = load(signer, TEMPLATE, path=TEMPLATE_NAME)
+    assert policy is None
+    assert findings == validate_file(TEMPLATE_NAME, TEMPLATE, CFG, LIVE)
+    assert {found.code for found in findings} == {"E-FILENAME", "E-PLACEHOLDER"}
+
+
+def test_a_warning_does_not_stop_a_load(signer):
+    data = variant_file(setting("shadow.min_runs", 5), render=True)
+    policy, findings = load(signer, data)
+    assert policy == policy_of(data)
+    assert [(found.code, found.severity) for found in findings] == [("W-SHADOW-LOW", "warning")]
+
+
+def test_a_signed_file_that_gives_no_policy_gets_no_load_checks(signer):
+    asked = []
+    data = BASE.replace(b"max_class: R2", b"max_class: [")  # the front matter does not parse
+    policy, findings = load(
+        signer,
+        data,
+        active=ActiveVersion(3, OTHER_HASH),
+        wrapper_live=lambda *args: asked.append(args) or False,
+        folder_check=lambda *args: asked.append(args) or False,
+    )
+    assert (policy, asked) == (None, [])
+    assert findings == validate_file(BASE_PATH, data, CFG, LIVE)
+    assert {found.code for found in findings} == {"E-YAML"}
+
+
+# --- the version against the active one (3.10)
+
+
+def version_file(version: int) -> bytes:
+    """The base as the given version, with its generated sections rendered again."""
+    return variant_file(setting("version", version), render=True)
+
+
+def version_order(value: int, next_version: int) -> Finding:
+    params = {"value": str(value), "next": str(next_version)}
+    return Finding("E-VERSION-ORDER", "error", str(BASE_PATH), params=params)
+
+
+def test_older_version_refused(signer):
+    result = load(signer, version_file(2), active=ActiveVersion(3, OTHER_HASH))
+    assert result == (None, [version_order(2, 4)])
+
+
+def test_same_version_other_hash_refused(signer):
+    result = load(signer, version_file(3), active=ActiveVersion(3, OTHER_HASH))
+    assert result == (None, [version_order(3, 4)])
+
+
+def test_the_active_version_itself_loads_again(signer):
+    data = version_file(3)
+    policy, findings = load(signer, data, active=ActiveVersion(3, policy_of(data).sha256))
+    assert (policy == policy_of(data), findings) == (True, [])
+
+
+@pytest.mark.parametrize("version", [4, 5, 9999])
+def test_a_newer_version_loads_whatever_the_gap(signer, version):
+    # CI holds a version to the previous one + 1. At load only the order counts.
+    data = version_file(version)
+    policy, findings = load(signer, data, active=ActiveVersion(3, OTHER_HASH))
+    assert (policy == policy_of(data), findings) == (True, [])
+
+
+def test_with_no_active_version_any_version_loads(signer):
+    data = version_file(7)
+    policy, findings = load(signer, data, active=None)
+    assert (policy == policy_of(data), findings) == (True, [])
+
+
+# --- the wrappers (3.10, E-TOOL-NOT-LIVE)
+
+
+def test_wrapper_not_live_for_agent(signer):
+    policy, findings = load(signer, BASE, wrapper_live=lambda wrapper, agent: wrapper != "email")
+    assert policy is None
+    assert shape(findings) == not_live("gmail.draft", "gmail.send")
+    assert all(f.severity == "error" and f.path == str(BASE_PATH) for f in findings)
+
+
+def test_a_wrapper_that_is_off_for_the_agent_is_not_live_whichever_it_is(signer):
+    _, findings = load(signer, BASE, wrapper_live=lambda wrapper, agent: False)
+    assert shape(findings) == not_live("sheets.read", "gmail.draft", "gmail.send")
+
+
+def test_wrapper_live_is_asked_once_for_each_wrapper_with_the_agent(signer):
+    asked = []
+    load(signer, BASE, wrapper_live=lambda wrapper, agent: asked.append((wrapper, agent)) or True)
+    assert asked == [("drive", AGENT), ("email", AGENT)]
+
+
+def test_a_planned_wrapper_is_not_live_whatever_wrapper_live_says(signer):
+    asked = []
+    policy, findings = load(
+        signer, BASE, catalog=CATALOG, wrapper_live=lambda *args: asked.append(args) or True
+    )
+    assert policy is None
+    assert shape(findings) == not_live("sheets.read", "gmail.draft", "gmail.send")
+    assert asked == []  # the wrapper is not built: nobody has switched it on for anybody
+
+
+def test_at_load_w_tool_not_live_becomes_e_tool_not_live_and_both_never_appear(signer):
+    warned = validate_file(BASE_PATH, BASE, CFG, CATALOG)
+    assert [found.code for found in warned] == ["W-TOOL-NOT-LIVE"] * 3  # the validator warns
+    _, findings = load(signer, BASE, catalog=CATALOG)
+    assert [found.code for found in findings] == ["E-TOOL-NOT-LIVE"] * 3
+    assert [found.line for found in findings] == [found.line for found in warned]
+
+
+def test_w_tool_not_live_never_comes_out_of_verify_even_without_a_policy(signer):
+    data = variant_file(without("shadow.min_runs"))  # a field is missing: no policy
+    warned = validate_file(BASE_PATH, data, CFG, CATALOG)
+    assert [found.code for found in warned].count("W-TOOL-NOT-LIVE") == 3
+    policy, findings = load(signer, data, catalog=CATALOG)
+    assert policy is None
+    assert [found.code for found in findings] == ["E-FIELD-MISSING"]
+
+
+@pytest.mark.parametrize("name", UNSETTLED_TOOLS)
+def test_a_tool_that_failed_its_own_checks_is_not_judged_for_its_wrapper(signer, name):
+    tools = UNSETTLED_TOOLS[name]
+    data = variant_file(with_tools(*tools))
+    _, findings = load(signer, data, wrapper_live=lambda wrapper, agent: False)
+    judged = [(f.params["tool"], f.line) for f in findings if f.code == "E-TOOL-NOT-LIVE"]
+    # sheets.read is the one tool in these lists that passes its own checks.
+    expected = [(tool, tool_line(data.decode(), tool)) for tool in tools if tool == "sheets.read"]
+    assert judged == expected
+
+
+def test_a_tool_that_breaks_another_rule_is_still_judged_for_its_wrapper(signer):
+    data = variant_file(setting("max_class", "R0"))  # gmail.draft is R1 and gmail.send is R2
+    _, findings = load(signer, data, wrapper_live=lambda wrapper, agent: False)
+    assert [found.code for found in findings].count("E-TOOL-ABOVE-MAX-CLASS") == 2
+    judged = [f.params["tool"] for f in findings if f.code == "E-TOOL-NOT-LIVE"]
+    assert judged == ["sheets.read", "gmail.draft", "gmail.send"]
+
+
+def test_a_wrapper_is_shown_by_its_display_name(signer):
+    data = variant_file(with_tools("sheets.read", "gmail.draft", "gmail.send", "agentbuilder.read"))
+    _, findings = load(signer, data)  # the Agent Builder wrapper is planned, even in LIVE
+    wrappers = {
+        f.params["tool"]: f.params["wrapper"] for f in findings if f.code == "E-TOOL-NOT-LIVE"
+    }
+    assert wrappers == {"agentbuilder.read": "Agent Builder"}
+
+
+# --- the folder (3.10, E-SCOPE-NOT-IN-SANDBOX)
+
+
+def email_only(*, with_folder_id: bool = False) -> bytes:
+    """A valid file for an agent with no Drive tool, so no bullet for it and no folder path.
+
+    With `with_folder_id` it keeps its folder ID. The validator warns about that (W-SCOPE-UNUSED).
+    """
+    unused = ["scope.drive_folder_path"]
+    if not with_folder_id:
+        unused.append("scope.drive_folder_id")
+    data = variant_file(with_tools("gmail.draft", "gmail.send"), without(*unused)).decode()
+    bullet = next(row for row in data.split("\n") if row.startswith("- `sheets.read`:"))
+    return rerendered(data.replace(bullet + "\n", "").encode())
+
+
+def test_folder_outside_sandbox(signer):
+    asked = []
+
+    def elsewhere(folder_id, path):
+        asked.append((folder_id, path))
+        return False
+
+    policy, findings = load(signer, BASE, folder_check=elsewhere)
+    assert policy is None
+    assert findings == [
+        Finding(
+            "E-SCOPE-NOT-IN-SANDBOX",
+            "error",
+            str(BASE_PATH),
+            params={"id": FOLDER_ID, "path": SANDBOX_PATH},
+        )
+    ]
+    assert asked == [(FOLDER_ID, SANDBOX_PATH)]  # the folder, and the path the policy says it has
+
+
+def test_a_folder_in_the_sandbox_loads(signer):
+    asked = []
+    policy, findings = load(signer, BASE, folder_check=lambda *args: asked.append(args) or True)
+    assert (policy is not None, findings, asked) == (True, [], [(FOLDER_ID, SANDBOX_PATH)])
+
+
+def test_there_is_no_folder_check_without_a_folder_id(signer):
+    asked = []
+    data = email_only()
+    policy, findings = load(signer, data, folder_check=lambda *args: asked.append(args) or False)
+    assert (policy is not None, findings, asked) == (True, [], [])
+
+
+def test_a_folder_id_without_a_path_is_checked_with_none(signer):
+    asked = []
+    data = email_only(with_folder_id=True)
+    policy, findings = load(signer, data, folder_check=lambda *args: asked.append(args) or False)
+    assert asked == [(FOLDER_ID, None)]
+    assert policy is None
+    assert shape([f for f in findings if f.code == "E-SCOPE-NOT-IN-SANDBOX"]) == [
+        ("E-SCOPE-NOT-IN-SANDBOX", None, {"id": FOLDER_ID, "path": ""})
+    ]
+
+
+# --- all of it together
+
+
+def test_the_findings_of_the_file_and_of_the_load_come_in_one_sorted_list(signer):
+    data = variant_file(setting("shadow.min_runs", 5), setting("version", 2), render=True)
+    text = data.decode()
+    policy, findings = load(
+        signer,
+        data,
+        active=ActiveVersion(3, OTHER_HASH),
+        wrapper_live=lambda wrapper, agent: wrapper != "email",
+        folder_check=lambda folder_id, path: False,
+    )
+    assert policy is None
+    assert [(found.code, found.line) for found in findings] == [
+        ("E-SCOPE-NOT-IN-SANDBOX", None),
+        ("E-VERSION-ORDER", None),
+        ("E-TOOL-NOT-LIVE", tool_line(text, "gmail.draft")),
+        ("E-TOOL-NOT-LIVE", tool_line(text, "gmail.send")),
+        ("W-SHADOW-LOW", line_of(text, "min_runs: 5")),
+    ]
+    assert findings == sorted(findings, key=report_order)
+
+
+# --- anything that goes wrong fails closed (ruling R56, E-INTERNAL)
+
+LEAK = "LEAK: a line of the file and the words of an exception"
+
+
+def internal(detail: str) -> Finding:
+    return Finding("E-INTERNAL", "error", str(BASE_PATH), params={"detail": detail})
+
+
+def raises(error: BaseException):
+    def callback(*args):
+        raise error
+
+    return callback
+
+
+def test_a_missing_ssh_keygen_gives_e_internal(signer, tmp_path, monkeypatch):
+    sig = signer.sign(BASE)
+    nothing_to_run = tmp_path / "no-programs"
+    nothing_to_run.mkdir()
+    monkeypatch.setenv("PATH", str(nothing_to_run))  # a real FileNotFoundError, not a stand-in
+    assert verify_with(signer, BASE, sig) == (None, [internal("FileNotFoundError")])
+
+
+def test_a_timeout_gives_e_internal_and_the_signature_folder_is_removed(monkeypatch, nowhere):
+    calls = stub_run(monkeypatch, error=subprocess.TimeoutExpired("ssh-keygen", 10, output=LEAK))
+    assert verify_with(nowhere, BASE, b"sig") == (None, [internal("TimeoutExpired")])
+    assert not calls[0].sig_path.parent.exists()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [PermissionError(LEAK), OSError(LEAK), subprocess.SubprocessError(LEAK)],
+    ids=["PermissionError", "OSError", "SubprocessError"],
+)
+def test_any_failure_to_run_ssh_keygen_gives_e_internal_with_the_class_name_only(
+    monkeypatch, nowhere, error
+):
+    stub_run(monkeypatch, error=error)
+    policy, findings = verify_with(nowhere, BASE, b"sig")
+    assert (policy, findings) == (None, [internal(type(error).__name__)])
+    assert "LEAK" not in shown(findings)
+    assert type(error).__name__ in message(findings[0], "en")
+
+
+@pytest.mark.parametrize("which", ["wrapper_live", "folder_check"])
+def test_a_callback_that_raises_gives_e_internal_and_nothing_else(signer, which):
+    # The file is older than the active version, so there is a finding to be dropped.
+    options = {which: raises(RuntimeError(LEAK))}
+    result = load(signer, version_file(2), active=ActiveVersion(3, OTHER_HASH), **options)
+    assert result == (None, [internal("RuntimeError")])
+    assert "LEAK" not in shown(result[1])
+
+
+def test_a_crash_in_the_checks_gives_e_internal_with_the_class_name_only(signer, monkeypatch):
+    sig = signer.sign(BASE)
+    monkeypatch.setattr(verify_module, "validate_policy", raises(KeyError(LEAK)))
+    result = verify_with(signer, BASE, sig)
+    assert result == (None, [internal("KeyError")])
+    assert "LEAK" not in shown(result[1])
+
+
+@pytest.mark.parametrize("which", ["wrapper_live", "folder_check"])
+def test_an_interrupt_is_not_swallowed(signer, which):
+    with pytest.raises(KeyboardInterrupt):
+        load(signer, BASE, **{which: raises(KeyboardInterrupt())})
+
+
 # --- validate.py: the policy and the findings from one run of the checks
 
 SEAM_INPUTS = {
@@ -79,7 +853,7 @@ SEAM_INPUTS = {
     "a syntax error": BASE.replace(b"max_class: R2", b"max_class: ["),
     "a wrong type": BASE.replace(b"version: 1", b"version: one"),
     "a number out of range": BASE.replace(b"runs_per_day: 1", b"runs_per_day: 11"),
-    "a file over 64 KiB": BASE.replace(b"Reads: only", b"Reads: " + b"x" * 65_536 + b" only"),
+    "a file over 64 KiB": padded(MAX_FILE_BYTES + 1),
     "a file too large to read through": b"x" * (MAX_SCANNED_BYTES + 1),
 }
 
@@ -102,10 +876,8 @@ def test_the_findings_of_validate_policy_are_in_report_order(name):
     assert findings == sorted(findings, key=report_order)
 
 
-def test_the_template_has_several_findings_for_the_order_to_be_tried_on():
-    findings = validate_policy(
-        Path("templates/policy-template.md"), TEMPLATE, CFG, CATALOG
-    ).findings
+def test_the_template_has_the_findings_of_section_9_in_report_order():
+    findings = validate_policy(TEMPLATE_NAME, TEMPLATE, CFG, CATALOG).findings
     assert [(found.code, found.line) for found in findings] == [
         ("E-FILENAME", None),
         ("E-PLACEHOLDER", 6),
@@ -147,9 +919,7 @@ def test_validate_file_runs_every_check_once_too(monkeypatch):
 
 def test_validate_policy_gives_the_line_of_each_tool():
     result = validate_policy(BASE_PATH, BASE, CFG, CATALOG)
-    assert result.tool_lines == {
-        tool: tool_line(BASE_TEXT, tool) for tool in ("sheets.read", "gmail.draft", "gmail.send")
-    }
+    assert result.tool_lines == {tool: tool_line(BASE_TEXT, tool) for tool in BASE_TOOLS}
 
 
 def test_a_tool_that_is_listed_twice_has_the_line_of_its_first_entry():
