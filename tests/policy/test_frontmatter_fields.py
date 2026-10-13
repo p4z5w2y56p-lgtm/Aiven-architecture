@@ -426,6 +426,25 @@ def test_a_value_is_a_placeholder_when_it_is_written_with_one_in_quotes_or_on_a_
     }
 
 
+# "As written" is the token of the scalar, from its first to its last character. A comment behind a
+# plain or quoted scalar is outside it. The comment behind the `|` or `>` of a block scalar is
+# inside it, which is the one place where the text of a scalar holds more than its value. Either
+# way E-PLACEHOLDER reports the placeholder, so nothing goes unreported.
+
+
+def test_a_placeholder_in_a_comment_behind_a_plain_scalar_is_not_part_of_the_value():
+    result = load(swap("max_runtime_s: 300", "max_runtime_s: 300 # TODO"), PATH)
+    assert (result.findings, result.placeholders) == ([], frozenset())
+    assert result.data["limits"]["max_runtime_s"] == 300
+
+
+def test_a_placeholder_in_the_comment_behind_a_block_indicator_is_part_of_the_value():
+    text = swap("max_runtime_s: 300", "max_runtime_s: | # TODO\n    300")
+    result = load(text, PATH)
+    assert (result.findings, result.placeholders) == ([], {"limits.max_runtime_s"})
+    assert unexplained(text, result) == []
+
+
 def test_the_template_holds_no_placeholder():
     assert load(FRONT, PATH).placeholders == frozenset()
 
