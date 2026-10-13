@@ -1419,6 +1419,12 @@ def test_a_version_below_the_active_one_is_refused(run, signer, built_catalog):
     ]
 
 
+def test_the_smallest_active_version_is_1(run, signer, built_catalog):
+    sig = signed(signer)
+    active = ["--active-version", "1", "--active-sha256", policy_of(VALID).sha256]
+    assert verify(run, signer, sig, *active, catalog=built_catalog).status == 0
+
+
 def test_the_active_version_itself_loads_again(run, signer, built_catalog):
     sig = signed(signer)
     active = ["--active-version", "1", "--active-sha256", policy_of(VALID).sha256]
@@ -1432,8 +1438,19 @@ def test_the_active_version_itself_loads_again(run, signer, built_catalog):
         ["--active-sha256", OTHER_HASH],
         ["--active-version", "3", "--active-sha256", "sha256:abc"],
         ["--active-version", "three", "--active-sha256", OTHER_HASH],
+        ["--active-version", "0", "--active-sha256", OTHER_HASH],
+        ["--active-version", "-1", "--active-sha256", OTHER_HASH],
+        ["--active-version", "1.5", "--active-sha256", OTHER_HASH],
     ],
-    ids=["no hash", "no version", "a hash that is not one", "a version that is no number"],
+    ids=[
+        "no hash",
+        "no version",
+        "a hash that is not one",
+        "a version that is no number",
+        "a version of 0",
+        "a version below 0",
+        "a version that is not whole",
+    ],
 )
 def test_the_active_version_and_its_hash_go_together_and_are_well_formed(
     run, signer, built_catalog, options

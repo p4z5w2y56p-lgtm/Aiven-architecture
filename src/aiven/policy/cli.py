@@ -258,10 +258,21 @@ def _parser() -> argparse.ArgumentParser:
     verifying.add_argument(
         "--allowed-signers", required=True, type=Path, help="the file of allowed signers"
     )
-    verifying.add_argument("--active-version", type=int, help="the version that is loaded now")
+    verifying.add_argument(
+        "--active-version", type=_version, help="the version that is loaded now (1 or more)"
+    )
     verifying.add_argument("--active-sha256", help="the hash of the file of that version")
     verifying.set_defaults(run=_verify, json=False, parser=verifying)
     return parser
+
+
+def _version(text: str) -> int:
+    """A version number for the command line: a whole number of 1 or more, or a usage error."""
+    if not (text.isascii() and text.isdecimal()) or int(text) < 1:
+        raise argparse.ArgumentTypeError(
+            f"{text!r} is not a version: use a whole number, 1 or more"
+        )
+    return int(text)
 
 
 def _validate(
