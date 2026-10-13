@@ -400,6 +400,33 @@ def test_a_file_named_twice_is_checked_once(run):
     assert twice.lines == once.lines
 
 
+def test_a_file_in_two_spellings_is_checked_once_under_the_first(run):
+    write(INVOICE, VALID)
+    twisty = "policies/../" + INVOICE  # the same file, named by way of its folder
+    for first, second in ((INVOICE, twisty), (twisty, INVOICE)):
+        done = run("validate", first, second)
+        assert done.status == 0
+        assert done.lines == [format_line(f) for f in findings_of(first, VALID)]
+
+
+def test_a_link_to_a_file_is_the_same_file(run):
+    write(INVOICE, VALID)
+    Path("policies/link.md").symlink_to("invoice-reminder.md")
+    done = run("validate", INVOICE, "policies/link.md")
+    assert done.status == 0
+    assert done.lines == [format_line(f) for f in findings_of(INVOICE, VALID)]
+
+
+def test_a_link_that_leads_round_in_a_circle_is_a_crash_and_not_a_traceback(run):
+    # Naming the files is where it fails (a loop of links cannot be resolved), and the handler of
+    # the crashes must not need what failed: it names the files as they were given.
+    Path("loop").symlink_to("loop")
+    done = run("validate", "loop")
+    assert done.status == 2
+    assert [line.split()[:3] for line in done.lines] == [["error", "E-INTERNAL", "loop:"]]
+    assert "Traceback" not in done.err
+
+
 # --- validate --json (validator-spec section 1, ruling R23)
 
 ZERO_WIDTH_SPACE = b"\xe2\x80\x8b"  # a hidden character: a finding with a column

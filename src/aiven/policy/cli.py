@@ -6,16 +6,17 @@ is. Every command takes `--config`, `--catalog` and `--debug`.
 
 `validate <file>... [--json] [--previous-ref REF]` runs every check on each file (`validate_policy`)
 and the checks across the files that built a policy (`check_set`, given the files sorted by path).
-The output is file by file in the order of the arguments, a file named twice counting once. A file's
-own findings come in the order of `validate_file`, and the findings across the files are in with
-those of the file they are about. With `--previous-ref` the previous version of a file is the file
-as it is at that Git ref (`git show REF:path`, run without a shell). A file that is not there is a
-new agent, and must be version 1. The previous files are loaded and built and nothing is said of
-them. A file whose history is not known has no version order and no widening (E-VERSION-ORDER and
-W-WIDENS), and is no new agent: that is every file without a ref (one note on stderr), and a file
-whose previous version gives no policy (a note on stderr for each; the gateway still refuses a
-lower version at load). `--json` prints one document, `{"findings": [...]}`, with the column, the
-parameters and the text in both languages (section 1).
+The output is file by file in the order of the arguments, a file named twice counting once, in
+whatever spelling (with `..`, by a link). A file's own findings come in the order of
+`validate_file`, and the findings across the files are in with those of the file they are about.
+With `--previous-ref` the previous version of a file is the file as it is at that Git ref (`git
+show REF:path`, run without a shell). A file that is not there is a new agent, and must be version
+1. The previous files are loaded and built and nothing is said of them. A file whose history is
+not known has no version order and no widening (E-VERSION-ORDER and W-WIDENS), and is no new
+agent: that is every file without a ref (one note on stderr), and a file whose previous version
+gives no policy (a note on stderr for each; the gateway still refuses a lower version at load).
+`--json` prints one document, `{"findings": [...]}`, with the column, the parameters and the text
+in both languages (section 1).
 
 `render <file>` rewrites the two generated sections, when the front matter loads and builds a policy
 without an error (ruling R29). A finding of the file, the body or the content does not stop it
@@ -59,7 +60,7 @@ import sys
 import tempfile
 import traceback
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from aiven.policy.catalog import Catalog, load_catalog
@@ -262,7 +263,7 @@ def _validate(
     args: argparse.Namespace, cfg: PlatformConfig, catalog: Catalog
 ) -> tuple[list[Finding], int]:
     """The findings of all files, file by file, and the exit code (see the module)."""
-    paths = list(dict.fromkeys(args.files))  # a file named twice is checked once
+    paths = _distinct(args.files)
     runs = [validate_policy(path, path.read_bytes(), cfg, catalog) for path in paths]
     built = sorted(
         (
@@ -292,6 +293,18 @@ def _validate(
     for note in notes:
         _note(note)
     return findings, _status(findings)
+
+
+def _distinct(paths: Iterable[Path]) -> list[Path]:
+    """The files once each, by the file that a path names, with the spelling that came first.
+
+    `policies/../policies/a.md` and `policies/a.md` are one file, and so is a link and what it
+    points at. Left in twice, a file is its own duplicate (E-AGENT-DUPLICATE).
+    """
+    files: dict[Path, Path] = {}
+    for path in paths:
+        files.setdefault(path.resolve(), path)
+    return list(files.values())
 
 
 def _render(
