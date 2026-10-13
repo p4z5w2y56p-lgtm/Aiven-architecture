@@ -14,11 +14,14 @@ needs a signature makes a key of its own (tests/support/signing.py).
 does (test_coverage_of_codes.py reads it).
 """
 
+import io
 import itertools
 import json
 import os
 import re
+import stat
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -722,6 +725,111 @@ def test_a_crash_while_writing_the_lines_is_a_crash_too(run, monkeypatch):
     write(INVOICE, VALID)
     done = run("validate", INVOICE)
     assert (done.status, done.lines) == (2, [internal(INVOICE, "KeyError")])
+
+
+# --- an output that cannot be written: stdout is closed or full, or cannot take the text
+
+WRITE_NOTE = "note: the output could not be written"
+DRIVER = "import sys; from aiven.policy.cli import main; sys.exit(main(sys.argv[1:]))"
+
+
+class Unwritable:
+    """A stdout that cannot be written to: `write` raises the error. It can have a descriptor."""
+
+    def __init__(self, error: BaseException, fd: int | None = None):
+        self.error = error
+        self.fd = fd
+
+    def write(self, text: str) -> int:
+        raise self.error
+
+    def flush(self) -> None:
+        pass
+
+    def fileno(self) -> int:
+        if self.fd is None:
+            raise io.UnsupportedOperation("fileno")
+        return self.fd
+
+
+WRITE_ERRORS = {
+    "a full disk": OSError(28, LEAK),
+    "an encoding that cannot take the text": UnicodeEncodeError(
+        "ascii", LEAK, 0, 1, "ordinal not in range(128)"
+    ),
+    "a pipe that is closed": BrokenPipeError(32, LEAK),
+}
+
+
+@pytest.mark.parametrize("name", WRITE_ERRORS)
+def test_an_output_that_cannot_be_written_is_exit_2_with_one_fixed_line_and_no_message(
+    run, monkeypatch, name
+):
+    write(INVOICE, VALID)
+    monkeypatch.setattr(sys, "stdout", Unwritable(WRITE_ERRORS[name]))
+    done = run("render", INVOICE)  # render has nothing else to say on stderr
+    assert done.status == 2
+    # The one line, and so no traceback and nothing of the error (its message can hold file text).
+    assert done.err == WRITE_NOTE + "\n"
+
+
+def test_the_stdout_of_the_process_is_pointed_at_the_null_device_when_it_fails(run, monkeypatch):
+    # Python writes what is still in the buffer of stdout once more when it exits. That fails again,
+    # prints the error, and makes the exit code 120 (the tests below run the real thing).
+    read_end, write_end = os.pipe()
+    try:
+        own = Unwritable(OSError(LEAK), fd=write_end)
+        monkeypatch.setattr(sys, "stdout", own)
+        monkeypatch.setattr(sys, "__stdout__", own)  # it is the stdout of the process
+        write(INVOICE, VALID)
+        assert run("render", INVOICE).status == 2
+        assert os.fstat(write_end).st_rdev == os.stat(os.devnull).st_rdev
+    finally:
+        os.close(read_end)
+        os.close(write_end)
+
+
+def test_the_descriptor_of_a_stand_in_for_stdout_is_left_alone(run, monkeypatch):
+    read_end, write_end = os.pipe()
+    try:
+        monkeypatch.setattr(sys, "stdout", Unwritable(OSError(LEAK), fd=write_end))
+        write(INVOICE, VALID)
+        assert run("render", INVOICE).status == 2
+        assert stat.S_ISFIFO(os.fstat(write_end).st_mode)  # still the pipe
+    finally:
+        os.close(read_end)
+        os.close(write_end)
+
+
+def clean_environment(**more: str) -> dict[str, str]:
+    """The environment of a real run: stdout buffered as it is in CI, and no platform values."""
+    dropped = {"AIVEN_POLICY_CONFIG", "PYTHONUNBUFFERED", "PYTHONIOENCODING"}
+    return {**{k: v for k, v in os.environ.items() if k not in dropped}, **more}
+
+
+def test_a_pipe_that_is_closed_is_exit_2_and_not_exit_120_with_a_traceback():
+    command = [sys.executable, "-c", DRIVER, "validate", "templates/policy-template.md"]
+    options = {"cwd": REPO_ROOT, "env": clean_environment(), "stdout": subprocess.PIPE}
+    with subprocess.Popen(command, stderr=subprocess.PIPE, **options) as process:
+        process.stdout.close()  # whoever read the output has gone
+        err = process.stderr.read().decode()
+        status = process.wait()
+    assert status == 2
+    assert WRITE_NOTE in err.splitlines()
+    for text in ("Traceback", "Exception ignored", "BrokenPipe", "Broken pipe"):
+        assert text not in err
+
+
+def test_a_character_that_the_encoding_of_stdout_cannot_take_is_written_as_an_escape(run):
+    name = "caf\u00e9.md"  # a file name with an accent, written as an escape in this source
+    write(name, VALID)
+    command = [sys.executable, "-c", DRIVER, "validate", "--config", str(run.platform)]
+    command += ["--catalog", str(CATALOG_FILE), name]
+    environment = clean_environment(PYTHONIOENCODING="ascii")
+    done = subprocess.run(command, env=environment, capture_output=True, check=False)
+    assert done.returncode == 1  # the name is not the agent's: E-FILENAME, and that is all
+    assert "caf\\xe9.md" in done.stdout.decode("ascii")  # it is ASCII, and the accent is an escape
+    assert b"Traceback" not in done.stderr
 
 
 @pytest.mark.parametrize("flag", [[], ["--json"]], ids=["lines", "json"])

@@ -37,13 +37,17 @@ validator could not run. A crash of any command, and a `verify` that says E-INTE
 prints one E-INTERNAL for each file of the command and nothing else: the name of the class of the
 exception is its `detail`. Its message and its traceback can hold text of a file, so they are not
 printed, unless `--debug` is given (traceback, on stderr). The same goes for a command line that
-makes no sense: a usage error of argparse, also exit code 2.
+makes no sense: a usage error of argparse, also exit code 2, and for an output that cannot be
+written (a disk that is full, a pipe that is closed): exit code 2, one fixed line on stderr, and no
+traceback and no message.
 
 Findings go to stdout and notes to stderr. Text of a file reaches the output only in a finding,
-which cleans it (findings.py).
+which cleans it (findings.py). A character that the encoding of stdout or stderr cannot take is
+written as an escape (`\\xe9`), so a file name with an accent cannot make the output fail.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -73,6 +77,7 @@ EXAMPLE_CONFIG_PATH = Path("config/platform.example.yaml")
 CATALOG_PATH = Path("catalog/catalog-v1.yaml")
 EXAMPLE_NOTE = "note: using the example platform config"
 VERIFY_NOTE = "note: wrapper enablement and the Drive folder are checked at the gateway"
+WRITE_NOTE = "note: the output could not be written"
 GIT_TIMEOUT_S = 60
 
 # The codes of the checks of the whole file, of the body and of the content: validator-spec 3.1, 3.7
@@ -104,6 +109,7 @@ FILE_AND_BODY_CODES = frozenset(
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the command line and give the exit code: 0, 1 or 2 (see the module)."""
+    _escape_what_cannot_be_encoded()
     args = _parser().parse_args(argv)
     try:
         cfg, catalog = _platform(args)
@@ -113,11 +119,65 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Whatever went wrong, the files count as invalid (fail closed), and what is said is the
         # name of the class of the error: its message and its traceback can hold text of a file.
         if args.debug:
-            traceback.print_exc()
+            with contextlib.suppress(Exception):
+                traceback.print_exc()
         findings = [_crash(path, error) for path in dict.fromkeys(args.files)]
         text, status = _text(findings, as_json=args.json), EXIT_CRASH
-    sys.stdout.write(text)
+    if not _write(text):
+        return EXIT_CRASH
     return status
+
+
+def _escape_what_cannot_be_encoded() -> None:
+    """Make stdout and stderr write an escape for a character that their encoding cannot take.
+
+    A file name with an accent would otherwise be a UnicodeEncodeError at the last moment, when the
+    output goes to a terminal or a log that is ASCII (PYTHONIOENCODING, a C locale). A stream that
+    cannot be set (a stand-in, one that is closed) is left as it is.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(AttributeError, ValueError, OSError):
+            stream.reconfigure(errors="backslashreplace")
+
+
+def _write(text: str) -> bool:
+    """Write the output to stdout, and say whether that worked.
+
+    It can fail for reasons that are not the validator's: a disk that is full, a pipe that the
+    reader has closed (`| head`). The error is not shown, as its message can hold text of a file;
+    one fixed line goes to stderr, and the exit code is 2.
+    """
+    try:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+    except Exception:
+        _point_stdout_at_the_null_device()
+        _note(WRITE_NOTE)
+        return False
+    return True
+
+
+def _point_stdout_at_the_null_device() -> None:
+    """Send what is left in the buffer of the stdout of the process to the null device.
+
+    Python writes the buffer of stdout once more when it exits. After a write that failed that
+    fails again: the error is printed, and the exit code becomes 120. A stand-in for stdout (pytest,
+    a caller) has no descriptor of the process to change, and gets none changed.
+    """
+    if sys.stdout is not sys.__stdout__:
+        return
+    with contextlib.suppress(Exception):
+        null = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(null, sys.stdout.fileno())
+        finally:
+            os.close(null)
+
+
+def _note(line: str) -> None:
+    """Say a line on stderr. A note that cannot be written is no reason to stop."""
+    with contextlib.suppress(Exception):
+        print(line, file=sys.stderr)
 
 
 def _platform(args: argparse.Namespace) -> tuple[PlatformConfig, Catalog]:
@@ -137,7 +197,7 @@ def _config_path(given: Path | None) -> Path:
         return Path(os.environ[CONFIG_ENV])
     if CONFIG_PATH.is_file():
         return CONFIG_PATH
-    print(EXAMPLE_NOTE, file=sys.stderr)
+    _note(EXAMPLE_NOTE)
     return EXAMPLE_CONFIG_PATH
 
 
@@ -267,7 +327,7 @@ def _verify(
         cfg,
         catalog,
     )
-    print(VERIFY_NOTE, file=sys.stderr)
+    _note(VERIFY_NOTE)
     return findings, _status(findings)
 
 
