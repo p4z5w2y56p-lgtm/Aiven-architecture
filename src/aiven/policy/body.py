@@ -323,10 +323,8 @@ def _inline(report: _Report, inline: Token, written: set[int]) -> list[Finding]:
             shown.setdefault(row, []).append(_shown(token.content))
     if any(row in written for row in range(inline.map[0], inline.map[1])):
         return findings
-    for (
-        row,
-        parts,
-    ) in shown.items():  # (a row of the paragraph, and so none of them is in `written`)
+    # The rows of `shown` are rows of the paragraph, so none of them is in `written` now.
+    for row, parts in shown.items():
         if any(True for _ in _urls("".join(parts))):
             findings.append(report.at("E-BODY-LINK", row))
             written.add(row)
