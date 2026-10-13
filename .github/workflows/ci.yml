@@ -30,18 +30,22 @@ jobs:
           status=0
           uv run aiven-policy validate templates/policy-template.md || status=$?
           test "$status" -eq 1
-      - name: Policies against the base of the pull request
-        if: github.event_name == 'pull_request'
+      - name: Policies (against the base of the pull request, when there is one)
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          # A push is checked as the pull request that holds it. The platform values come from
-          # AIVEN_POLICY_CONFIG or config/platform.yaml, as for anyone: the example config would
-          # fail every real policy (E-PRINCIPAL).
+          # A pull request has a base, and the version order and the widening of a policy are
+          # judged against it. A push has none: validate then leaves those two out, and says so
+          # on stderr. The platform values come from AIVEN_POLICY_CONFIG or config/platform.yaml,
+          # as for anyone; the example config would fail every real policy (E-PRINCIPAL).
           shopt -s nullglob
           policies=(policies/*.md)
           if [ "${#policies[@]}" -eq 0 ]; then
             echo "No policies yet."
             exit 0
           fi
-          uv run aiven-policy validate --previous-ref "$BASE_SHA" "${policies[@]}"
+          ref=()
+          if [ -n "$BASE_SHA" ]; then
+            ref=(--previous-ref "$BASE_SHA")
+          fi
+          uv run aiven-policy validate "${ref[@]}" "${policies[@]}"
