@@ -40,6 +40,15 @@ run "every_project_has_both_organisation_policies" {
     ])
     error_message = "Both policies are enforced, and Terraform refuses to remove them."
   }
+
+  assert {
+    condition = alltrue([
+      google_org_policy_policy.control_member_domains.name == "projects/aiven-control-test/policies/iam.allowedPolicyMemberDomains",
+      google_org_policy_policy.control_member_domains.parent == "projects/aiven-control-test",
+      google_org_policy_policy.control_member_domains.spec[0].rules[0].allow_all == "TRUE",
+    ])
+    error_message = "Only the control project leaves domain restricted sharing out, for Google's billing account on the stop topic (ruling R164)."
+  }
 }
 
 run "the_service_accounts_of_gateway_design_section_3" {

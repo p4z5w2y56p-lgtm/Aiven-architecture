@@ -8,6 +8,9 @@ resource "google_firestore_database" "gateway" {
   type                    = "FIRESTORE_NATIVE"
   concurrency_mode        = "PESSIMISTIC"
   delete_protection_state = "DELETE_PROTECTION_ENABLED"
+
+  # The Firestore API of this project first (main.tf), or the first apply races it.
+  depends_on = [google_project_service.api]
 }
 
 # Runs and calls expire 90 days after they are written: the gateway sets `expire_at` to that time

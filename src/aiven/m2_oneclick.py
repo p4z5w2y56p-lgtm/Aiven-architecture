@@ -437,11 +437,13 @@ def _main_rows(resources: list[dict[str, Any]]) -> list[str]:
         and str(resource.get("values", {}).get("account_id", "")).startswith("agent-")
     )
     rows = []
+    exception = "google_org_policy_policy.control_member_domains" in values
     rows.append(
         _row(
-            by_type["google_org_policy_policy"] == 6,
+            by_type["google_org_policy_policy"] == 7 and exception,
             "organisation policies",
-            f"{by_type['google_org_policy_policy']} (runbook: 6)",
+            f"{by_type['google_org_policy_policy']} (runbook: 6, and control's exception to domain "
+            "restricted sharing)",
         )
     )
     apis = Counter()
@@ -474,9 +476,9 @@ def _main_rows(resources: list[dict[str, Any]]) -> list[str]:
     )
     rows.append(
         _row(
-            project_roles == 12 + agents,
+            project_roles == 13 + agents,
             "roles on the projects",
-            f"{project_roles} (runbook: 12 + {agents} agent)",
+            f"{project_roles} (runbook: 13 + {agents} agent)",
         )
     )
     names = sorted(

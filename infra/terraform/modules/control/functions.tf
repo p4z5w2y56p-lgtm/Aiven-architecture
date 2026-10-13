@@ -67,6 +67,21 @@ resource "google_storage_bucket_object" "function" {
   source = data.archive_file.function[each.key].output_path
 }
 
+# Cloud Functions copies the source to a bucket of its own, gcf-v2-sources-<number>-<region>, which
+# it makes on the first function, and the build reads it from there. The builder may read buckets of
+# that name only (an IAM condition; Google's buckets have uniform access, which conditions need).
+resource "google_project_iam_member" "builder_reads_staging" {
+  project = var.project
+  role    = "roles/storage.objectViewer"
+  member  = local.members["function-builder"]
+
+  condition {
+    title       = "gcf-v2-sources buckets only"
+    description = "The staging buckets of Cloud Functions, which hold the source of the functions."
+    expression  = "resource.name.startsWith(\"projects/_/buckets/gcf-v2-sources-\")"
+  }
+}
+
 # The build reads the source; nobody else needs to.
 resource "google_storage_bucket_iam_member" "builder_reads_source" {
   bucket = google_storage_bucket.functions.name

@@ -83,7 +83,7 @@ run "failing_closed_for_more_than_a_minute_is_emailed" {
 
   assert {
     condition = alltrue([
-      google_monitoring_alert_policy.control_unreachable.conditions[0].condition_threshold[0].filter == "metric.type=\"logging.googleapis.com/user/aiven/control-unreachable\"",
+      google_monitoring_alert_policy.control_unreachable.conditions[0].condition_threshold[0].filter == "metric.type=\"logging.googleapis.com/user/aiven/control-unreachable\" AND resource.type=\"cloud_run_revision\"",
       google_monitoring_alert_policy.control_unreachable.conditions[0].condition_threshold[0].comparison == "COMPARISON_GT",
       google_monitoring_alert_policy.control_unreachable.conditions[0].condition_threshold[0].threshold_value == 0,
       google_monitoring_alert_policy.control_unreachable.conditions[0].condition_threshold[0].duration == "60s",
@@ -145,5 +145,20 @@ run "a_reminder_on_another_day_moves_the_schedule" {
   assert {
     condition     = google_cloud_scheduler_job.credit_reminder.schedule == "0 9 5 11 *"
     error_message = "The schedule follows credit_alert_date, without leading zeros."
+  }
+}
+
+run "the_builder_reads_the_staging_buckets_of_cloud_functions_only" {
+  module {
+    source = "./modules/control"
+  }
+
+  assert {
+    condition = alltrue([
+      google_project_iam_member.builder_reads_staging.role == "roles/storage.objectViewer",
+      google_project_iam_member.builder_reads_staging.member == "serviceAccount:function-builder@aiven-control-test.iam.gserviceaccount.com",
+      google_project_iam_member.builder_reads_staging.condition[0].expression == "resource.name.startsWith(\"projects/_/buckets/gcf-v2-sources-\")",
+    ])
+    error_message = "function-builder reads Cloud Functions' staging buckets (gcf-v2-sources-*) and no other bucket of the project (ruling R164)."
   }
 }

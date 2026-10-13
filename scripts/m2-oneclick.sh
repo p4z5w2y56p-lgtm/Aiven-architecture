@@ -635,6 +635,8 @@ explain_terraform() { # a plain-English hint for the errors that the runbook nam
     *billing.budgets* | *billingbudgets*) say "   Hint: budgets need Billing Account Administrator on $V_billing_account." ;;
     *SERVICE_DISABLED* | *"has not been used in project"*) say "   Hint: an API was only just turned on; wait 5 minutes." ;;
     *"Error acquiring the state lock"*) say "   Hint: another Terraform run holds the lock; wait for it to end." ;;
+    *"permitted customer"* | *"not in permitted organization"*) say "   Hint: domain restricted sharing still refuses Google's billing account; the control project's exception takes a few minutes to count. Wait 5 minutes and run again." ;;
+    *gcf-v2-sources*) say "   Hint: Cloud Functions' staging bucket: the builder's access to it is new or the bucket was just made. Run again." ;;
     *"Build failed"* | *"build failed"*) say "   Hint: the function build failed; send m2-result.txt and .m2-oneclick/run.log to Claude (the builder's roles, ruling R134)." ;;
   esac
 }

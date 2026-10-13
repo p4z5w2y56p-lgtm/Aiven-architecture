@@ -120,14 +120,18 @@ terraform plan -out=m2.tfplan
 What the plan must show, part by part:
 
 - **Foundation (Task 2.1)**
-  - Six organisation policies, two per project: `iam.disableServiceAccountKeyCreation` and
-    `iam.automaticIamGrantsForDefaultServiceAccounts`, each `enforce = "TRUE"`.
+  - Seven organisation policies. Two per project: `iam.disableServiceAccountKeyCreation` and
+    `iam.automaticIamGrantsForDefaultServiceAccounts`, each `enforce = "TRUE"`. And on the control
+    project only, `iam.allowedPolicyMemberDomains` with `allow_all`: Google's billing account
+    (`billing-budget-alert@system.gserviceaccount.com`) must publish to the stop topic, and domain
+    restricted sharing, which Google sets on new organisations, refuses it (ruling R164).
   - The APIs: 17 in control, 5 in agents, 7 in gateway. Drive, Sheets and Gmail are never among
     those of agents.
   - The service accounts: `gateway`, `control-ui`, `budget-stop`, `credit-reminder`,
     `function-builder` (it builds the two functions), and `agent-<id>` for each agent.
-  - Twelve roles on the projects, plus one `aiplatform.user` per agent; every member is written
-    out in full. No role is granted to a person.
+  - Thirteen roles on the projects, plus one `aiplatform.user` per agent; every member is written
+    out in full. One has a condition: `function-builder` reads Cloud Functions' staging buckets
+    (`gcf-v2-sources-*`) and no other bucket. No role is granted to a person.
 - **Stores (Task 2.2)**
   - Buckets `<control>-policies` (versioned) and `<control>-snapshots` (retention 30 days, not
     locked; deleted at 30 days). Both in europe-west4, uniform access, public access prevented.

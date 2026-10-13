@@ -81,7 +81,9 @@ resource "google_monitoring_alert_policy" "control_unreachable" {
     display_name = "CONTROL_UNREACHABLE refusals for more than 60 s"
 
     condition_threshold {
-      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.control_unreachable.name}\""
+      # Monitoring wants a resource type. The gateway runs on Cloud Run, and the audit entries it
+      # writes there carry that type (Cloud Logging's client finds it itself).
+      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.control_unreachable.name}\" AND resource.type=\"cloud_run_revision\""
       comparison      = "COMPARISON_GT"
       threshold_value = 0
       duration        = "60s"

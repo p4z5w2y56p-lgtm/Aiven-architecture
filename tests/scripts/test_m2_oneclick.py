@@ -234,7 +234,7 @@ def resource(doc: dict[str, Any], address: str) -> dict[str, Any]:
 def test_the_plan_of_a_fresh_deployment_matches_the_runbook():
     done = summarize(plan(), "main")
     assert done.status == 0 and done.refused == []
-    assert done.lines[0] == "Terraform plan: 85 to create, 0 to change, 0 to replace, 0 to delete."
+    assert done.lines[0] == "Terraform plan: 87 to create, 0 to change, 0 to replace, 0 to delete."
     rows = done.lines[1:-1]
     assert len(rows) == 11 and all(row.startswith("  ok  ") for row in rows), rows
     assert any("aiven-alert 10 EUR, aiven-stop 25 EUR" in row for row in rows)
@@ -383,7 +383,7 @@ def test_the_drill_switched_off_removes_the_drill_only():
 
 def test_plan_summary_on_the_command_line(capsys):
     assert main(["plan-summary", str(FIXTURE)]) == 0
-    assert capsys.readouterr().out.startswith("Terraform plan: 85 to create")
+    assert capsys.readouterr().out.startswith("Terraform plan: 87 to create")
 
 
 def test_a_plan_that_cannot_be_read_is_exit_2_with_the_class_only(tmp_path, capsys):

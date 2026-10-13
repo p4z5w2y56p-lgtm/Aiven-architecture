@@ -234,7 +234,7 @@ def test_a_dry_run_without_projects_shows_the_four_it_would_make_and_changes_not
     assert 'sandbox_drive_id: "0AKx7rT2mQpLsUk9PVA"' in platform.read_text()
 
     # The plan: what the runbook says, and nothing that it forbids.
-    assert "Terraform plan: 85 to create, 0 to change, 0 to replace, 0 to delete." in out
+    assert "Terraform plan: 87 to create, 0 to change, 0 to replace, 0 to delete." in out
     rows = [line for line in out.splitlines() if re.match(r"^ {5}(ok|!!) ", line)]
     assert len(rows) == 11 and all(row.startswith("     ok ") for row in rows), rows
     assert "NOTE org-policy-admin: you do not have it yet: a full run grants it" in out
@@ -246,7 +246,7 @@ def test_a_dry_run_without_projects_shows_the_four_it_would_make_and_changes_not
     assert "Mode: dry run (nothing applied)" in result
     assert "NOTE projects: a full run makes:" in result
     assert "PASS plan: dry run: planned, nothing applied" in result
-    assert "Terraform plan: 85 to create" in result
+    assert "Terraform plan: 87 to create" in result
     assert "mock" not in result.replace("-mock", "")  # the stand-in token is nowhere in it
 
 
@@ -286,7 +286,7 @@ def test_a_dry_run_with_values_already_there_asks_nothing(
     before = (repo / "infra" / "terraform" / "terraform.tfvars").read_bytes()
     done, calls = run(repo, tmp_path, "--dry-run", answers="")  # no answers to give
     assert done.returncode == 0, done.stdout + done.stderr
-    assert "Terraform plan: 85 to create" in done.stdout
+    assert "Terraform plan: 87 to create" in done.stdout
     assert "NOTE state-bucket: gs://aiven-control-mock-tfstate does not exist yet" in done.stdout
     assert not [call for call in calls if call.startswith(("projects list", "projects create"))]
     assert (repo / "infra" / "terraform" / "terraform.tfvars").read_bytes() == before

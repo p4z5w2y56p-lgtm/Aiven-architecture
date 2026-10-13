@@ -63,6 +63,22 @@ resource "google_org_policy_policy" "baseline" {
   }
 }
 
+# Cloud Billing publishes the stop budget's notifications as billing-budget-alert@system.
+# gserviceaccount.com, a Google account outside the organisation. Domain restricted sharing
+# (iam.allowedPolicyMemberDomains, which Google sets on new organisations) refuses that account on
+# the topic, and with it the budget, so the control project, and only that project, does not apply
+# it. Nothing else in control grants a role to an outside account; agents and gateway keep the rule.
+resource "google_org_policy_policy" "control_member_domains" {
+  name   = "projects/${var.control_project}/policies/iam.allowedPolicyMemberDomains"
+  parent = "projects/${var.control_project}"
+
+  spec {
+    rules {
+      allow_all = "TRUE"
+    }
+  }
+}
+
 resource "google_project_service" "control" {
   for_each = toset(local.control_apis)
 
@@ -115,5 +131,9 @@ module "control" {
   credit_alert_date   = var.credit_alert_date
   credit_expiry_date  = var.credit_expiry_date
 
-  depends_on = [google_org_policy_policy.baseline, google_project_service.control]
+  depends_on = [
+    google_org_policy_policy.baseline,
+    google_org_policy_policy.control_member_domains,
+    google_project_service.control,
+  ]
 }

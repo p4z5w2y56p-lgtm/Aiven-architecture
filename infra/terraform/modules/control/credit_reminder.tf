@@ -41,6 +41,10 @@ resource "google_cloudfunctions2_function" "credit_reminder" {
       AUDIT_ACTOR   = google_service_account.account["credit-reminder"].email
     }
   }
+
+  # After the stop: the first function makes Cloud Functions' staging bucket, and two at once would
+  # both try (one gets 409). The builder must be able to read that bucket first.
+  depends_on = [google_cloudfunctions2_function.stop, google_project_iam_member.builder_reads_staging]
 }
 
 # Cloud Scheduler calls the function as credit-reminder; nothing else may.

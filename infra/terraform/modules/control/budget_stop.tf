@@ -79,6 +79,9 @@ resource "google_billing_budget" "stop" {
     pubsub_topic   = google_pubsub_topic.stop["budget-stop"].id
     schema_version = "1.0"
   }
+
+  # Billing checks that it may publish to the topic when the budget is made.
+  depends_on = [google_pubsub_topic_iam_member.billing_publishes]
 }
 
 resource "google_pubsub_topic" "stop" {
@@ -144,6 +147,9 @@ resource "google_cloudfunctions2_function" "stop" {
     retry_policy          = "RETRY_POLICY_RETRY"
     service_account_email = google_service_account.account["budget-stop"].email
   }
+
+  # The builder reads the source from Cloud Functions' staging bucket (functions.tf).
+  depends_on = [google_project_iam_member.builder_reads_staging]
 }
 
 # Eventarc calls the function as budget-stop; nothing else may.

@@ -245,6 +245,7 @@
        "values": {
         "member": "serviceAccount:control-ui@aiven-control-mock.iam.gserviceaccount.com",
         "name": "_AllLogs",
+        "parent": "projects/aiven-control-mock",
         "role": "roles/logging.viewAccessor"
        }
       },
@@ -315,6 +316,21 @@
         },
         "project": "aiven-control-mock",
         "type": "email"
+       }
+      },
+      {
+       "address": "module.control.google_project_iam_member.builder_reads_staging",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "condition": [
+         {
+          "expression": "resource.name.startsWith(\"projects/_/buckets/gcf-v2-sources-\")"
+         }
+        ],
+        "member": "serviceAccount:function-builder@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-control-mock",
+        "role": "roles/storage.objectViewer"
        }
       },
       {
@@ -698,7 +714,8 @@
      "mode": "managed",
      "type": "google_org_policy_policy",
      "values": {
-      "name": "projects/aiven-agents-mock/policies/iam.automaticIamGrantsForDefaultServiceAccounts"
+      "name": "projects/aiven-agents-mock/policies/iam.automaticIamGrantsForDefaultServiceAccounts",
+      "parent": "projects/aiven-agents-mock"
      }
     },
     {
@@ -706,7 +723,8 @@
      "mode": "managed",
      "type": "google_org_policy_policy",
      "values": {
-      "name": "projects/aiven-agents-mock/policies/iam.disableServiceAccountKeyCreation"
+      "name": "projects/aiven-agents-mock/policies/iam.disableServiceAccountKeyCreation",
+      "parent": "projects/aiven-agents-mock"
      }
     },
     {
@@ -714,7 +732,8 @@
      "mode": "managed",
      "type": "google_org_policy_policy",
      "values": {
-      "name": "projects/aiven-control-mock/policies/iam.automaticIamGrantsForDefaultServiceAccounts"
+      "name": "projects/aiven-control-mock/policies/iam.automaticIamGrantsForDefaultServiceAccounts",
+      "parent": "projects/aiven-control-mock"
      }
     },
     {
@@ -722,7 +741,8 @@
      "mode": "managed",
      "type": "google_org_policy_policy",
      "values": {
-      "name": "projects/aiven-control-mock/policies/iam.disableServiceAccountKeyCreation"
+      "name": "projects/aiven-control-mock/policies/iam.disableServiceAccountKeyCreation",
+      "parent": "projects/aiven-control-mock"
      }
     },
     {
@@ -730,7 +750,8 @@
      "mode": "managed",
      "type": "google_org_policy_policy",
      "values": {
-      "name": "projects/aiven-gateway-mock/policies/iam.automaticIamGrantsForDefaultServiceAccounts"
+      "name": "projects/aiven-gateway-mock/policies/iam.automaticIamGrantsForDefaultServiceAccounts",
+      "parent": "projects/aiven-gateway-mock"
      }
     },
     {
@@ -738,7 +759,17 @@
      "mode": "managed",
      "type": "google_org_policy_policy",
      "values": {
-      "name": "projects/aiven-gateway-mock/policies/iam.disableServiceAccountKeyCreation"
+      "name": "projects/aiven-gateway-mock/policies/iam.disableServiceAccountKeyCreation",
+      "parent": "projects/aiven-gateway-mock"
+     }
+    },
+    {
+     "address": "google_org_policy_policy.control_member_domains",
+     "mode": "managed",
+     "type": "google_org_policy_policy",
+     "values": {
+      "name": "projects/aiven-control-mock/policies/iam.allowedPolicyMemberDomains",
+      "parent": "projects/aiven-control-mock"
      }
     },
     {
@@ -950,6 +981,16 @@
   },
   {
    "address": "google_org_policy_policy.baseline[\"gateway/iam.disableServiceAccountKeyCreation\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_org_policy_policy"
+  },
+  {
+   "address": "google_org_policy_policy.control_member_domains",
    "change": {
     "actions": [
      "create"
@@ -1417,6 +1458,16 @@
    },
    "mode": "managed",
    "type": "google_monitoring_notification_channel"
+  },
+  {
+   "address": "module.control.google_project_iam_member.builder_reads_staging",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
   },
   {
    "address": "module.control.google_project_iam_member.project[\"roles/artifactregistry.writer function-builder\"]",
