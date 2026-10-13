@@ -176,3 +176,22 @@ def test_the_example_values_say_where_the_real_ones_are_and_when_ci_needs_them()
     assert "config/platform.yaml" in text
     assert "no credentials" in text
     assert "CI" in text and "first policy" in text
+
+
+# --- the config guard (ruling R113)
+
+
+def test_the_config_guard_runs_before_the_tests():
+    runs = [str(step.get("run", "")) for step in steps()]
+    assert runs.count("uv run aiven-check-config") == 1
+    tests = next(index for index, run in enumerate(runs) if run.startswith("uv run pytest"))
+    assert runs.index("uv run aiven-check-config") < tests
+
+
+def test_the_coverage_gate_covers_every_package():
+    (run,) = [
+        str(step["run"]) for step in steps() if str(step.get("run", "")).startswith("uv run pytest")
+    ]
+    words = run.split()
+    assert "--cov=aiven" in words
+    assert "--cov-branch" in words and "--cov-fail-under=95" in words
