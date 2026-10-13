@@ -1,0 +1,11 @@
+#!/bin/sh
+# The config guard of CI on what this commit holds: `aiven-check-config --staged` refuses anything
+# but IDs and addresses in the platform and Terraform values, before it is in the Git history.
+# Installing this hook is optional, and CI stays the gate that cannot be skipped. Install it once
+# per clone with `git config core.hooksPath .githooks`; `git config --unset core.hooksPath` undoes it.
+if ! command -v uv >/dev/null 2>&1; then
+  echo "pre-commit: uv is not on the PATH, so the config guard cannot check this commit." >&2
+  echo "Install uv, or turn the hook off with: git config --unset core.hooksPath" >&2
+  exit 1
+fi
+exec uv run --frozen aiven-check-config --staged

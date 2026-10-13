@@ -36,6 +36,7 @@ from aiven.policy.validate import Validated, validate_file
 from tests.support import REPO_ROOT, gen
 from tests.support.bodies import policy_of, rerendered
 from tests.support.frontmatter import tool_line, without
+from tests.support.git import WHERE_GIT_LOOKS
 from tests.support.policies import (
     AGENTS_PROJECT,
     FOLDER_ID,
@@ -524,20 +525,6 @@ def test_a_file_name_cannot_start_a_line_of_its_own(run):
 NEXT_VERSION = setting("version", 2)
 SKIPS_A_VERSION = setting("version", 3)
 MORE_RUNS_A_DAY = setting("limits.runs_per_day", 2)
-
-
-# What tells git where its repository is. A test run from a hook of git has them set to the real
-# repository, and a test that makes a repository and commits to it must not meet that one.
-WHERE_GIT_LOOKS = (
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_COMMON_DIR",
-    "GIT_NAMESPACE",
-    "GIT_PREFIX",
-)
 
 
 @pytest.fixture

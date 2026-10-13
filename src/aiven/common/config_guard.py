@@ -6,6 +6,12 @@ credential, a key or a token, and that CI refuses secrets in it. The Terraform v
 command is that check (ruling R113). With no arguments it checks each of `DEFAULT_FILES` that
 exists; with arguments, the files named. CI runs it on every push and pull request.
 
+With `--staged` it checks each of `DEFAULT_FILES` that the Git index holds, as the index holds it:
+what the next commit holds, whatever the working copy says. Terraform values are then checked
+against the `variables.tf` of the index. The optional pre-commit hook `.githooks/pre-commit` runs
+this, so a secret is refused before it is in the Git history; CI stays the gate that cannot be
+skipped. Without Git, or outside a work tree, it is exit 2.
+
 Every file:
 
 - C-FILE-KIND: it is neither platform values (`.yaml`, `.yml`) nor Terraform values (`.tfvars`,
@@ -43,18 +49,21 @@ the error only: its message can quote the file).
 
 What it cannot see (validator-spec section 8): a secret of no known shape, under a name that does
 not suggest one, as a value that fits its key (a drive ID is any 10 to 100 letters, digits, `_` and
-`-`). And it runs in CI, after the commit: a secret that it finds is in the Git history already,
-and must be revoked, not only removed.
+`-`). And CI runs it after the commit: a secret that CI finds is in the Git history already, and
+must be revoked, not only removed. Only the pre-commit hook, where it is installed, comes before.
 """
 
 import argparse
 import os
+import posixpath
 import re
+import subprocess
 import sys
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
+from functools import partial
 from pathlib import Path
 from typing import NamedTuple
 
@@ -78,6 +87,7 @@ DEFAULT_FILES = (
 )
 
 EXIT_OK, EXIT_PROBLEMS, EXIT_CRASH = 0, 1, 2
+GIT_TIMEOUT_S = 60
 
 _ONLY_IDS = "this file holds IDs and addresses only"
 _SECRET_NAME = f"a name that suggests a secret; {_ONLY_IDS}"
@@ -457,11 +467,17 @@ def _declared(variables: Path) -> frozenset[str] | None:
     return frozenset(_DECLARATION.findall(text))
 
 
-def _check_tfvars(text: str, where: str, variables: Path) -> list[Problem]:
-    """The problems of Terraform values, against the variables that `variables` declares."""
+def _declared_in(variables: bytes | None) -> frozenset[str] | None:
+    """The names of the variables that the bytes of a variables.tf declare; None without them."""
+    if variables is None:
+        return None
+    return frozenset(_DECLARATION.findall(variables.decode("utf-8")))
+
+
+def _check_tfvars(text: str, where: str, declared: frozenset[str] | None) -> list[Problem]:
+    """The problems of Terraform values, against the names of the variables that are declared."""
     assignments, stopped_at = _assignments(text)
     problems = [] if stopped_at is None else [Problem("C-SYNTAX", where, stopped_at, _NOT_PLAIN)]
-    declared = _declared(variables)
     if declared is None:
         text = "no variables.tf next to this file, so its names cannot be checked"
         problems.append(Problem("C-NO-VARIABLES", where, None, text))
@@ -528,6 +544,16 @@ def check_file(path: Path) -> list[Problem]:
             data = handle.read(MAX_FILE_BYTES + 1)
     except OSError as error:
         return [Problem("C-READ", where, None, f"cannot be read ({type(error).__name__})")]
+    declared = partial(_declared, path.parent / "variables.tf")
+    return _check_data(data, where, kind == "platform", declared)
+
+
+def _check_data(
+    data: bytes, where: str, platform: bool, declared: Callable[[], frozenset[str] | None]
+) -> list[Problem]:
+    """Every problem of the bytes of a file (check_file). `declared` gives the names that the
+    variables.tf next to Terraform values declares, None when there is none; it is only asked for
+    Terraform values that get as far as their names."""
     if len(data) > MAX_FILE_BYTES:
         return [Problem("C-SIZE", where, None, "is larger than 64 KiB, and was not read")]
     text = data.decode("utf-8", errors="replace")
@@ -537,11 +563,79 @@ def check_file(path: Path) -> list[Problem]:
         line = data.count(b"\n", 0, odd.start()) + 1
         says = "is not plain ASCII text from this line on (printable ASCII, tabs and line ends)"
         problems.append(Problem("C-ENCODING", where, line, says))
-    elif kind == "platform":
+    elif platform:
         problems += _check_platform(text, where, {hit.kind for hit in hits})
     else:
-        problems += _check_tfvars(text, where, path.parent / "variables.tf")
+        problems += _check_tfvars(text, where, declared())
     return sorted(dict.fromkeys(problems), key=lambda problem: problem.line or 0)
+
+
+# --- the staged files (the pre-commit hook)
+
+
+def _git(*args: str) -> bytes:
+    """What `git` prints with these arguments, in the current folder and the environment as it is.
+
+    A hook gets its index from that environment: `git commit -a` and `git commit <file>` hand it
+    an index of their own in GIT_INDEX_FILE.
+    """
+    command = ["git", *args]
+    return subprocess.run(command, capture_output=True, check=True, timeout=GIT_TIMEOUT_S).stdout
+
+
+def _index(names: Sequence[str]) -> dict[str, bytes]:
+    """The bytes of each of `names` (paths from the top of the work tree) that the index holds.
+
+    It works from any folder of the work tree: the paths are taken from the top (`:(top)`), and
+    `:<path>` names the file in the index by its path from the top.
+    """
+    specs = [f":(top,literal){name}" for name in names]
+    listed = _git("ls-files", "-z", "--cached", "--full-name", "--", *specs)
+    held = dict.fromkeys(os.fsdecode(name) for name in listed.split(b"\0") if name)
+    return {name: _git("cat-file", "blob", f":{name}") for name in held}
+
+
+def _staged_checks() -> list[tuple[str, Callable[[], list[Problem]]]]:
+    """A check of each default file that the index holds, as the index holds it: what the next
+    commit holds. Terraform values are checked against the variables.tf of the index."""
+    variables = {
+        name: posixpath.join(posixpath.dirname(name), "variables.tf") for name in DEFAULT_FILES
+    }
+    blobs = _index([*DEFAULT_FILES, *variables.values()])
+    return [
+        (
+            name,
+            partial(
+                _check_data,
+                blobs[name],
+                name,
+                _kind(name) == "platform",
+                partial(_declared_in, blobs.get(variables[name])),
+            ),
+        )
+        for name in DEFAULT_FILES
+        if name in blobs
+    ]
+
+
+def _report(checks: list[tuple[str, Callable[[], list[Problem]]]], checked: str) -> int:
+    """Run each check, print the problems and one line on stderr, and give the exit code."""
+    problems: list[Problem] = []
+    crashed = False
+    for where, check in checks:
+        try:
+            problems += [replace(problem, path=where) for problem in check()]
+        except Exception as error:
+            # The message of the error, and its traceback, can quote the file; its class cannot.
+            crashed = True
+            text = f"the check crashed ({type(error).__name__})"
+            problems.append(Problem("C-INTERNAL", where, None, text))
+    for problem in problems:
+        print(problem)
+    print(f"{checked}: " + ", ".join(_ascii(where) for where, _ in checks), file=sys.stderr)
+    if crashed:
+        return EXIT_CRASH
+    return EXIT_PROBLEMS if problems else EXIT_OK
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -556,26 +650,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=Path,
         help=f"the files to check (default: each of {', '.join(DEFAULT_FILES)} that exists)",
     )
+    parser.add_argument(
+        "--staged",
+        action="store_true",
+        help="check the default files as the Git index holds them: what the next commit holds "
+        "(the pre-commit hook in .githooks runs this)",
+    )
     args = parser.parse_args(argv)
+    if args.staged:
+        if args.files:
+            parser.error("--staged checks the default files as the index holds them: give no files")
+        try:
+            checks = _staged_checks()
+        except (OSError, subprocess.SubprocessError) as error:
+            says = "--staged needs Git, in a Git work tree"
+            print(f"cannot read the Git index ({type(error).__name__}): {says}", file=sys.stderr)
+            return EXIT_CRASH
+        if not checks:
+            print(
+                f"nothing to check: the index holds none of {', '.join(DEFAULT_FILES)}",
+                file=sys.stderr,
+            )
+            return EXIT_OK
+        return _report(checks, "checked (staged)")
     paths = list(dict.fromkeys(args.files)) or [
         Path(name) for name in DEFAULT_FILES if os.path.lexists(name)
     ]
     if not paths:
         print(f"nothing to check: none of {', '.join(DEFAULT_FILES)} exists", file=sys.stderr)
         return EXIT_OK
-    problems: list[Problem] = []
-    crashed = False
-    for path in paths:
-        try:
-            problems += check_file(path)
-        except Exception as error:
-            # The message of the error, and its traceback, can quote the file; its class cannot.
-            crashed = True
-            text = f"the check crashed ({type(error).__name__})"
-            problems.append(Problem("C-INTERNAL", str(path), None, text))
-    for problem in problems:
-        print(problem)
-    print("checked: " + ", ".join(_ascii(str(path)) for path in paths), file=sys.stderr)
-    if crashed:
-        return EXIT_CRASH
-    return EXIT_PROBLEMS if problems else EXIT_OK
+    return _report([(str(path), partial(check_file, path)) for path in paths], "checked")

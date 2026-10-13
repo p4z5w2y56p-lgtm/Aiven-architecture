@@ -1,0 +1,4 @@
+# The hooks run under sh, also on Windows: they keep LF line ends.
+.githooks/* text eol=lf
+# The one-click script of M2 runs under bash.
+*.sh text eol=lf

@@ -49,3 +49,12 @@ Checking the platform values and the deployment:
 uv run aiven-check-config          # IDs and addresses only in the platform and Terraform values (CI runs it)
 uv run aiven-deploy-check all      # after the apply, with your own login; it only reads
 ```
+
+Optional: the same config guard as a pre-commit hook, so a secret in the platform or Terraform values
+is refused before it is committed, not after. CI stays the gate, with or without the hook. Once per
+clone (it needs uv on the PATH that Git sees):
+
+```sh
+git config core.hooksPath .githooks       # Git then runs .githooks/pre-commit: aiven-check-config --staged
+git config --unset core.hooksPath         # turns it off again
+```
