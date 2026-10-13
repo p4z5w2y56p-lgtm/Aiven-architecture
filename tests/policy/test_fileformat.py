@@ -1,7 +1,10 @@
 """File format checks (validator-spec section 3.1): bytes, line endings, hidden characters."""
 
 import codecs
+import random
 import re
+import string
+import time
 from pathlib import Path
 
 import pytest
@@ -9,6 +12,7 @@ import pytest
 from aiven.policy import constants
 from aiven.policy.fileformat import check_file, decode_text
 from aiven.policy.findings import Finding, load_messages, message
+from tests.support import gen
 from tests.support.characters import HIDDEN_CHARACTERS, VISIBLE_CHARACTERS
 from tests.support.policies import BASE_PATH, TEMPLATE_PATH, valid_base
 from tests.support.spec_tables import code_spans, line_starting_with, table_after
@@ -270,15 +274,29 @@ def test_the_hidden_characters_equal_the_spec():
 
 # --- E-PLACEHOLDER
 
-PLACEHOLDERS = [
-    "REPLACE_ME",
-    "REPLACE_ME_X",
-    "REPLACE_ME_AGENTS_PROJECT",
-    "REPLACE_ME2",
-    "TODO",
-    "TBD",
-    "FIXME",
-]
+ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
+HIDDEN = "[hidden]"
+
+# Each word as it is written, and the token that its finding shows (ruling R22): the name of the
+# placeholder, which is REPLACE_ME and any upper-case words after underscores, and an ellipsis
+# when the word goes on. Nothing that follows the name in the same word is shown.
+PLACEHOLDERS = {
+    "REPLACE_ME": "REPLACE_ME",
+    "REPLACE_ME_X": "REPLACE_ME_X",
+    "REPLACE_ME_AGENTS_PROJECT": "REPLACE_ME_AGENTS_PROJECT",
+    "REPLACE_ME_FOLDER_ID_2": "REPLACE_ME_FOLDER_ID_2",
+    "TODO": "TODO",
+    "TBD": "TBD",
+    "FIXME": "FIXME",
+    "REPLACE_ME2": "REPLACE_ME" + ELLIPSIS,
+    "REPLACE_ME_": "REPLACE_ME" + ELLIPSIS,
+    "REPLACE_ME__X": "REPLACE_ME" + ELLIPSIS,
+    "REPLACE_MEx": "REPLACE_ME" + ELLIPSIS,
+    "REPLACE_ME_x": "REPLACE_ME" + ELLIPSIS,
+    "REPLACE_ME_X_y": "REPLACE_ME_X" + ELLIPSIS,
+    "REPLACE_ME_FOLDER_IDs": "REPLACE_ME_FOLDER_ID" + ELLIPSIS,
+    "REPLACE_ME_\N{LATIN CAPITAL LETTER E WITH ACUTE}": "REPLACE_ME" + ELLIPSIS,
+}
 NOT_PLACEHOLDERS = [
     "todo",
     "Todo",
@@ -302,13 +320,13 @@ NOT_PLACEHOLDERS = [
 @pytest.mark.parametrize(
     "template", ["{} here", "see {}", "x ({}) y", "{}: later", "a-{}-b", "# {}"]
 )
-@pytest.mark.parametrize("token", PLACEHOLDERS)
-def test_a_placeholder_is_reported_with_its_token(token, template):
-    text = template.format(token) + "\n"
+@pytest.mark.parametrize(("word", "token"), PLACEHOLDERS.items(), ids=list(PLACEHOLDERS))
+def test_a_placeholder_is_reported_with_its_own_name(word, token, template):
+    text = template.format(word) + "\n"
     (finding,) = check(text)
     assert finding.code == "E-PLACEHOLDER"
     assert finding.params == {"token": token}
-    assert (finding.line, finding.column) == (1, text.index(token) + 1)
+    assert (finding.line, finding.column) == (1, text.index(word) + 1)
 
 
 @pytest.mark.parametrize("word", NOT_PLACEHOLDERS)
@@ -348,3 +366,74 @@ def test_the_template_placeholders_are_the_ones_in_spec_section_9():
     assert {f.code for f in findings} == {"E-PLACEHOLDER"}
     ordered = sorted(findings, key=lambda f: (f.line, f.column))
     assert [(f.line, f.params["token"]) for f in ordered] == expected
+
+
+SAMPLES = gen.sensitive_samples()
+VALUES = {label: value for label, (value, _) in SAMPLES.items()}
+SHARED_WORDS = ["REPLACE_ME_", "REPLACE_ME", "REPLACE_ME_X", "REPLACE_ME_FOLDER_ID"]
+
+
+@pytest.mark.parametrize("glue", SHARED_WORDS)
+@pytest.mark.parametrize("value", VALUES.values(), ids=VALUES)
+def test_a_value_in_the_same_word_hides_the_token(glue, value):
+    # The name of the placeholder ends at the first character that is not upper case or a digit,
+    # and that can be inside a key (a hyphen, a dot). So the finding judges the whole word, the
+    # run of characters without whitespace around the placeholder: if it holds anything sensitive,
+    # the token is hidden, whole.
+    (finding,) = check(f"see {glue}{value} here\n")
+    assert finding.params == {"token": HIDDEN}
+    assert (finding.line, finding.column) == (1, 5)
+
+
+@pytest.mark.parametrize("value", VALUES.values(), ids=VALUES)
+def test_a_value_in_another_word_leaves_the_token_alone(value):
+    (finding,) = check(f"see REPLACE_ME_X {value} here\n")
+    assert finding.params == {"token": "REPLACE_ME_X"}
+
+
+@pytest.mark.parametrize("space", ["\t", "\r", "\N{NO-BREAK SPACE}", "\N{IDEOGRAPHIC SPACE}"])
+def test_a_word_ends_at_any_whitespace(space):
+    findings = check(f"REPLACE_ME_X{space}{gen.valid_iban()}\n")
+    shown = [f.params for f in findings if f.code == "E-PLACEHOLDER"]
+    assert shown == [{"token": "REPLACE_ME_X"}]
+
+
+def test_random_google_keys_after_a_placeholder_are_never_shown():
+    rng = random.Random(11)
+    alphabet = string.ascii_letters + string.digits + "_-"
+    for glue in SHARED_WORDS[:3]:
+        for _ in range(300):
+            key = "AIza" + "".join(rng.choices(alphabet, k=35))
+            (finding,) = check(f"{glue}{key}\n")
+            assert finding.params == {"token": HIDDEN}
+
+
+def test_every_placeholder_of_a_word_is_judged_by_the_whole_word():
+    clean = sorted(check("A.REPLACE_ME_A.REPLACE_ME_B\n"), key=lambda f: f.column)
+    assert [f.params["token"] for f in clean] == ["REPLACE_ME_A", "REPLACE_ME_B"]
+    dirty = check(f"A.REPLACE_ME_A.REPLACE_ME_B.{gen.valid_bsn()}\n")
+    assert [f.params["token"] for f in dirty] == [HIDDEN, HIDDEN]
+
+
+def test_a_long_word_with_many_placeholders_is_judged_once():
+    word = ("1" * 9 + ".REPLACE_ME.") * 1500
+    started = time.perf_counter()
+    findings = check(word + "\n")
+    assert time.perf_counter() - started < 5  # generous: it takes a fraction of a second
+    assert [f.params for f in findings] == [{"token": "REPLACE_ME"}] * 1500
+
+
+def test_the_four_template_placeholders_stay_visible():
+    # Lines 6 and 56 hold the principal address, 25 and 84 the folder ID. Their words hold nothing
+    # sensitive, so the findings show them as they are (validator-spec section 9).
+    findings = check_file(Path("policy-template.md"), TEMPLATE_PATH.read_bytes())
+    ordered = sorted(findings, key=lambda f: (f.line, f.column))
+    assert [(f.line, f.params["token"]) for f in ordered] == [
+        (6, "REPLACE_ME_AGENTS_PROJECT"),
+        (25, "REPLACE_ME_FOLDER_ID"),
+        (56, "REPLACE_ME_AGENTS_PROJECT"),
+        (84, "REPLACE_ME_FOLDER_ID"),
+    ]
+    for finding in findings:
+        assert finding.params["token"] in message(finding, "en")
+        assert finding.params["token"] in message(finding, "nl")

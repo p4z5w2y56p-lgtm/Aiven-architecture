@@ -171,10 +171,13 @@ def test_content_findings_never_contain_value(code, kind, label, value):
 # A value joined to a placeholder word: the placeholder's own text would carry it into a finding.
 # `scan` sees the value only where no letter or digit stands in front of it, which is after the
 # underscore of `REPLACE_ME_`. The guard hides it whichever way it is glued.
+GOOGLE_KEYS = gen.secret_values()["Google API key"]
 GLUED_VALUES = {
     "BSN": ("E-ID-NUMBER", gen.valid_bsn()),
     "IBAN": ("E-BANK-DETAILS", gen.valid_iban()),
     "card number": ("E-BANK-DETAILS", gen.valid_card()),
+    "Google API key": ("E-SECRET", GOOGLE_KEYS[0]),
+    "Google API key with hyphens": ("E-SECRET", GOOGLE_KEYS[1]),
     "AWS access key": ("E-SECRET", gen.secret_values()["AWS access key"][0]),
     "GitHub token": ("E-SECRET", gen.secret_values()["GitHub token"][0]),
 }
@@ -207,6 +210,27 @@ def test_a_placeholder_glued_to_a_value_does_not_echo_it(glue, must_be_reported,
         assert all(value not in text for text in shown)
     placeholder = next(f for f in new if f.code == "E-PLACEHOLDER")
     assert placeholder.params == {"token": "[hidden]"}
+
+
+SAMPLES = gen.sensitive_samples()
+
+
+@pytest.mark.parametrize(("value", "start"), SAMPLES.values(), ids=SAMPLES)
+def test_a_value_after_a_template_placeholder_shows_at_most_its_public_start(value, start):
+    new = new_findings(insert_after(WHY_DRAFT, f" REPLACE_ME_FOLDER_ID{value}")(BASE))
+    # The word that holds the placeholder holds the value, so the token is not shown at all. Other
+    # findings on the line are allowed. Whatever they are, the part of the value after its public
+    # start (`AKIA`, `gh`) is in none of the outputs.
+    placeholder = next(f for f in new if f.code == "E-PLACEHOLDER")
+    assert placeholder.params == {"token": "[hidden]"}
+    for finding in new:
+        shown = [
+            format_line(finding),
+            message(finding, "en"),
+            message(finding, "nl"),
+            json.dumps(dataclasses.asdict(finding)),
+        ]
+        assert all(value[start:] not in text for text in shown)
 
 
 def test_validate_file_decodes_the_bytes_once(monkeypatch):

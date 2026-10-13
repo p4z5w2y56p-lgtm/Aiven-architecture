@@ -130,7 +130,9 @@ def secret_values() -> dict[str, list[str]]:
 
     There is at least one string per kind and one for each alternative of its pattern. Each is as
     short as the pattern allows, so a test can cut one character off and expect the match to go.
-    They use the whole character class of their pattern, `-` and `_` where it allows them.
+    They use the whole character class of their pattern, `-` and `_` where it allows them. The
+    second Google key has a hyphen early in its body and another as its last character: a word
+    that holds it is cut at the hyphen by anything that reads words.
     """
     return {
         "private key": [
@@ -140,7 +142,7 @@ def secret_values() -> dict[str, list[str]]:
             "-----BEGIN " + "PGP PRIVATE KEY BLOCK" + "-----",
         ],
         "service account key": ['"private' + '_key"'],
-        "Google API key": ["AIza" + "Sy-_" + "Q" * 31],
+        "Google API key": ["AIza" + "Sy-_" + "Q" * 31, "AIza" + "Q-" + "Z" * 32 + "-"],
         "OAuth token": ["ya29" + ".a-_" + "b" * 17, "1/" + "/0a-_" + "b" * 17],
         "GitHub token": ["gh" + "p_" + "a" * 36, "github" + "_pat_" + "A_1" * 7 + "x"],
         "Slack token": ["xox" + "b-" + "a1-" * 3 + "z"],
@@ -153,4 +155,29 @@ def secret_values() -> dict[str, list[str]]:
             "client-secret" + "=" + "Zq7f",
             "TOKEN" + " = " + "Zq7f",
         ],
+    }
+
+
+def sensitive_samples() -> dict[str, tuple[str, int]]:
+    """One value of each kind that a finding must not show, and the length of its public start.
+
+    The public start is what every value of its kind begins with (`AKIA`, `gh`): a finding may
+    show that, and nothing after it. A BSN, an IBAN and a card number have none, so for them the
+    length is 0. The Google key comes twice, the second time with hyphens early and last.
+    """
+    secrets = secret_values()
+    return {
+        "BSN": (valid_bsn(), 0),
+        "IBAN": (valid_iban(), 0),
+        "card number": (valid_card(), 0),
+        "Google API key": (secrets["Google API key"][0], len("AIza")),
+        "Google API key with hyphens": (secrets["Google API key"][1], len("AIza")),
+        "AWS access key": (secrets["AWS access key"][0], len("AKIA")),
+        "GitHub token": (secrets["GitHub token"][0], len("ghp_")),
+        "Slack token": (secrets["Slack token"][0], len("xoxb-")),
+        "OpenAI API key": (secrets["OpenAI API key"][0], len("sk-")),
+        "Anthropic API key": (secrets["Anthropic API key"][0], len("sk-ant-")),
+        "OAuth token": (secrets["OAuth token"][0], len("ya29.")),
+        "JWT": (secrets["JWT"][0], len("eyJ")),
+        "password assignment": (assignment("password", "=", "Zq7f1234"), len("password=")),
     }

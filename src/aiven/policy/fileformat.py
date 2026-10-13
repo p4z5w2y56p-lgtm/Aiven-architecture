@@ -11,10 +11,18 @@ from pathlib import Path
 
 from aiven.policy.chars import is_hidden
 from aiven.policy.constants import MAX_FILE_BYTES
+from aiven.policy.content import ELLIPSIS, HIDDEN, is_sensitive
 from aiven.policy.findings import Finding
 
 # Whole words only and case-sensitive, so a random Drive ID that happens to hold "TBD" is no hit.
 _PLACEHOLDER = re.compile(r"\b(?:REPLACE_ME\w*|TODO|TBD|FIXME)\b")
+
+# The name of a placeholder: REPLACE_ME and any upper-case words after underscores. A finding shows
+# this much of what `_PLACEHOLDER` found, and nothing that follows it in the same word.
+_NAME = re.compile(r"REPLACE_ME(?:_[A-Z0-9]+)*")
+
+# A word: the run of characters without whitespace that a placeholder stands in.
+_WORD = re.compile(r"\S+")
 
 # Printable ASCII has no hidden character. Looking only at the rest keeps the common case fast.
 _NOT_PRINTABLE_ASCII = re.compile(r"[^\x20-\x7e]")
@@ -72,12 +80,44 @@ def check_file(path: Path, data: bytes, text: str | None = None) -> list[Finding
                 column = found.start() + 1
                 params = {"codepoint": f"U+{ord(char):04X}", "col": str(column)}
                 findings.append(Finding("E-HIDDEN-CHAR", "error", where, number, column, params))
-        for found in _PLACEHOLDER.finditer(line):
-            params = {"token": found.group()}
-            findings.append(
-                Finding("E-PLACEHOLDER", "error", where, number, found.start() + 1, params)
-            )
+        findings.extend(_placeholder_findings(where, number, line))
     return findings
+
+
+def _placeholder_findings(where: str, number: int, line: str) -> list[Finding]:
+    """E-PLACEHOLDER for each placeholder in one line.
+
+    A finding shows the name of the placeholder (`_name`) and nothing of the word around it, and
+    not even the name when that word holds something sensitive: `REPLACE_ME_` and a key are one
+    word, and a name that stops at a hyphen or a dot inside the key would show part of it. So the
+    whole word goes through `is_sensitive`, once, however many placeholders it holds. If it is
+    sensitive, the token is `[hidden]`.
+    """
+    if _PLACEHOLDER.search(line) is None:
+        return []
+    findings = []
+    for word in _WORD.finditer(line):
+        text = word.group()
+        sensitive = None
+        for found in _PLACEHOLDER.finditer(text):
+            if sensitive is None:
+                sensitive = is_sensitive(text)
+            params = {"token": HIDDEN if sensitive else _name(found.group())}
+            column = word.start() + found.start() + 1
+            findings.append(Finding("E-PLACEHOLDER", "error", where, number, column, params))
+    return findings
+
+
+def _name(placeholder: str) -> str:
+    """The name of a placeholder, with an ellipsis if the placeholder goes on after it.
+
+    `TODO`, `TBD` and `FIXME` are their own names. Of a word that starts with `REPLACE_ME`, the
+    name is the longest start that is `REPLACE_ME` and upper-case words after underscores.
+    """
+    if not placeholder.startswith("REPLACE_ME"):
+        return placeholder
+    name = _NAME.match(placeholder).group()
+    return name if len(name) == len(placeholder) else name + ELLIPSIS
 
 
 def _encoding_line(data: bytes) -> int | None:

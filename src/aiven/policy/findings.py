@@ -3,9 +3,17 @@
 A finding carries a code, a place and the parameters of its message. The text itself lives in
 `messages/en.json` and `messages/nl.json`, copied verbatim from appendix A.
 
-Text from a file reaches a finding only through its `params` and its `path`, and a finding cleans
-both when it is made (see `content.safe_text`). So whichever check builds a finding, it cannot put
-a credential, a bank detail or an ID number into the output, and it cannot start a second line.
+Text from a file reaches a finding only through its `params` and its `path`. A finding cleans both
+when it is made (see `content.safe_text`), and `message` cleans the params again as it fills them
+in. So whichever check builds a finding, it cannot put what `content.is_sensitive` recognises (a
+credential, a bank detail, an ID number) into a message, and it cannot start a second line, not
+even when a param is changed afterwards. What is read from `params` directly (a JSON writer, say)
+was cleaned when the finding was made; the dict is not frozen, so such a reader runs `safe_text`
+over the values itself.
+
+A check that quotes only a part of a longer word must judge the whole word with `is_sensitive`
+first, as E-PLACEHOLDER does: a part that is cut inside the characters of a key no longer matches
+by itself, so the guard cannot see what it was cut from.
 """
 
 import json
@@ -35,9 +43,10 @@ class Finding:
     Making a finding cleans it. Each value in `params` goes through `safe_text`: a value that
     holds a credential, a bank detail or an ID number becomes `[hidden]`, unprintable and
     invisible characters are written as escapes, and a long value is cut to 200 characters. The
-    `path` only gets the escapes. Cleaning again (`dataclasses.replace` does) never shows more
-    than the first time. It can hide more: the escape of one character ends in hex digits, and
-    digits next to them can make a window that passes a checksum.
+    `path` only gets the escapes. Cleaning again (`dataclasses.replace` does, and so does
+    `message`) never shows more than the first time. It can hide more: the escape of one
+    character ends in hex digits, and digits next to them can make a window that passes a
+    checksum.
     """
 
     code: str
@@ -67,10 +76,15 @@ def load_messages(lang: Lang) -> Mapping[str, str]:
 def message(f: Finding, lang: Lang) -> str:
     """The message of a finding in `en` or `nl`, with its parameters filled in.
 
+    Every param goes through `safe_text` again as it is filled in, so a param that was changed
+    after the finding was made (the dict is not frozen) is still hidden, escaped and cut. That can
+    only hide more than `f.params` shows.
+
     A missing parameter or an unknown code raises KeyError: that is a bug in a check, and it
     must not turn into a half-filled message.
     """
-    return load_messages(lang)[f.code].format_map(f.params)
+    params = {name: safe_text(value) for name, value in f.params.items()}
+    return load_messages(lang)[f.code].format_map(params)
 
 
 def format_line(f: Finding) -> str:

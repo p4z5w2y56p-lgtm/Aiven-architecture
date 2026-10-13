@@ -11,9 +11,11 @@ Letters and digits mean ASCII ones throughout. Every pattern takes linear time, 
 gateway scans text that an agent may have been tricked into writing.
 
 `safe_text` and `escape_unprintable` are the single place where text from a file may enter a
-message. `Finding` runs every param and its path through them, so no check has to remember to.
-`safe_text` is more suspicious than `scan`: it also hides a value in which a kind matches with no
-word boundary at all, because hiding a value costs nothing and showing one costs a leak.
+message. `Finding` runs every param and its path through them when it is made, and `message` runs
+the params through `safe_text` again, so no check has to remember to. `safe_text` is more
+suspicious than `scan`: it also hides a value in which a kind matches with no word boundary at
+all, because hiding a value costs nothing and showing one costs a leak. `is_sensitive` is that
+check on its own, for a check that quotes only a part of a longer word.
 """
 
 import re
@@ -272,10 +274,11 @@ def _hits_in_line(line: str) -> list[tuple[int, str]]:
 
 # --- the single entry for file text into a message
 
-# What a finding shows of a value, at most; and what it shows in place of a sensitive one.
+# What a finding shows of a value, at most; and what it shows in place of a sensitive one. The
+# ellipsis stands for the rest of a value that is cut, here and in the checks that quote a part.
 _SHOWN = 200
-_HIDDEN = "[hidden]"
-_CUT = "\N{HORIZONTAL ELLIPSIS}"
+HIDDEN = "[hidden]"
+ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 
 
 def _escape(char: str) -> str:
@@ -349,24 +352,32 @@ def _holds_sensitive_text(value: str) -> bool:
     return any(next(find(value), None) is not None for find in _ANYWHERE)
 
 
+def is_sensitive(text: str) -> bool:
+    """Whether `text` holds a credential, a bank detail or an ID number, as the guard sees it.
+
+    That is when `scan` finds anything in it, and also when any kind matches with no word boundary
+    at all (see `_holds_sensitive_text`): a credential glued to the letters or digits in front of
+    it or behind it counts, and so does a run of digits in which a window passes a checksum. This
+    is the check of `safe_text`. A check that quotes only a part of a longer word must ask it of
+    the whole word: a part that is cut inside a kind's characters no longer matches by itself.
+
+    A value that is split up, spelled out or otherwise disguised (spec section 8) is not
+    recognised.
+    """
+    return bool(scan(text)) or _holds_sensitive_text(text)
+
+
 def safe_text(value: str) -> str:
     """`value`, text from a file, as a finding may show it.
 
-    A value that holds a credential, a bank detail or an ID number is replaced by `[hidden]`,
-    whatever else it holds, so a finding never repeats one. A value holds one when `scan` finds
-    anything in it, and also when any kind matches with no word boundary at all (see
-    `_holds_sensitive_text`): a credential glued to the letters or digits in front of it or behind
-    it is hidden too, and so is a run of digits in which a window passes a checksum. That hides a
-    few harmless values as well, a long hex digest or number most often; hiding costs nothing.
-    Anything else is escaped with `escape_unprintable` and cut to 200 characters, ending in an
-    ellipsis.
-
-    A value that is split up, spelled out or otherwise disguised (spec section 8) is not
-    recognised and would be shown.
+    A value for which `is_sensitive` is true is replaced by `[hidden]`, whatever else it holds, so
+    a finding never repeats a credential, a bank detail or an ID number. That hides a few harmless
+    values as well, a long hex digest or number most often; hiding costs nothing. Anything else
+    is escaped with `escape_unprintable` and cut to 200 characters, ending in an ellipsis.
     """
-    if scan(value) or _holds_sensitive_text(value):
-        return _HIDDEN
+    if is_sensitive(value):
+        return HIDDEN
     shown = escape_unprintable(value)
     if len(shown) > _SHOWN:
-        shown = shown[: _SHOWN - 1] + _CUT
+        shown = shown[: _SHOWN - 1] + ELLIPSIS
     return shown

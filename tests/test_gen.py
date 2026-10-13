@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from aiven.policy.content import KIND_CODES
+from aiven.policy.content import KIND_CODES, scan
 from tests.support import gen
 from tests.support.checksums import eleven_test_ok, luhn_ok, mod97_remainder
 
@@ -97,3 +97,25 @@ def test_an_assignment_joins_its_parts_and_can_quote_them():
     assert gen.assignment("key") == "key: Zq7f"
     assert gen.assignment("key", ": ", "value", quote='"') == '"key": "value"'
     assert gen.assignment("key", " = ", "value", quote="'") == "'key' = 'value'"
+
+
+def test_the_second_google_key_has_a_hyphen_early_and_last():
+    first, second = gen.secret_values()["Google API key"]
+    for key in (first, second):
+        assert re.fullmatch(r"AIza[0-9A-Za-z_-]{35}", key)
+    body = second[len("AIza") :]
+    assert body[1] == "-"
+    assert body[-1] == "-"
+
+
+def test_every_sensitive_sample_is_found_by_scan_and_has_a_public_start():
+    samples = gen.sensitive_samples()
+    assert len(samples) == 13
+    for label, (value, start) in samples.items():
+        assert scan(value), label
+        assert 0 <= start < len(value) - 5, label  # a body of more than five characters is left
+    assert [start for value, start in samples.values() if start == 0] == [
+        0,
+        0,
+        0,
+    ]  # BSN, IBAN, card

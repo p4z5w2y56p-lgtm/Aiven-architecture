@@ -14,7 +14,7 @@ from dataclasses import replace
 
 import pytest
 
-from aiven.policy.content import escape_unprintable, safe_text
+from aiven.policy.content import escape_unprintable, is_sensitive, safe_text
 from aiven.policy.findings import Finding, format_line, message
 from tests.support import gen
 from tests.support.characters import HIDDEN_CHARACTERS, VISIBLE_CHARACTERS
@@ -203,6 +203,31 @@ def test_ordinary_values_stay_visible(value):
     assert safe_text(value) == value
 
 
+# --- is_sensitive: the check that safe_text uses, for checks that quote a part of a longer word
+
+
+@pytest.mark.parametrize("value", [*SENSITIVE.values(), *STAY_VISIBLE.values(), *PRINTABLE])
+def test_is_sensitive_is_what_safe_text_hides(value):
+    assert is_sensitive(value) == (safe_text(value) == HIDDEN)
+
+
+@pytest.mark.parametrize("value", SENSITIVE.values(), ids=SENSITIVE)
+@pytest.mark.parametrize("before", ["", *BEFORE_A_VALUE.values()])
+def test_is_sensitive_sees_a_value_glued_to_a_word(value, before):
+    assert is_sensitive(before + value)
+    assert is_sensitive(value + "7")
+
+
+def test_is_sensitive_is_false_for_the_words_of_the_template():
+    words = [
+        "agent-invoice-reminder@REPLACE_ME_AGENTS_PROJECT.iam.gserviceaccount.com",
+        "`agent-invoice-reminder@REPLACE_ME_AGENTS_PROJECT.iam.gserviceaccount.com`.",
+        "REPLACE_ME_FOLDER_ID",
+        "`REPLACE_ME_FOLDER_ID`)",
+    ]
+    assert not any(is_sensitive(word) for word in words)
+
+
 def test_the_placeholder_and_the_folder_id_stay_visible_in_findings():
     placeholder = Finding(
         "E-PLACEHOLDER", "error", "a.md", 6, 38, {"token": "REPLACE_ME_AGENTS_PROJECT"}
@@ -349,6 +374,27 @@ def test_a_path_is_escaped_but_neither_hidden_nor_cut():
 
     iban = gen.valid_iban()
     assert Finding("E-FINAL-NEWLINE", "error", f"policies/{iban}.md").path == f"policies/{iban}.md"
+
+
+def test_a_param_changed_after_the_finding_was_made_is_cleaned_when_it_is_shown():
+    # The dict of params is not frozen, so the guard in __post_init__ is not the last word: a
+    # message cleans every param again as it fills it in.
+    iban = gen.valid_iban()
+    finding = Finding("E-PLACEHOLDER", "error", "a.md", 1, 1, {"token": "REPLACE_ME_X"})
+    finding.params["token"] = iban + "\nerror E-FORGED y.md: z"
+    for text in (format_line(finding), message(finding, "en"), message(finding, "nl")):
+        assert iban not in text
+        assert text.splitlines() == [text]
+    assert (
+        message(finding, "en") == "Placeholder [hidden] is still there. Fill it in before signing."
+    )
+
+    finding.params["token"] = "x\ny\U00003164" + "z" * 300  # escaped, then cut to 200
+    cleaned = ("x\\u000ay\\u3164" + "z" * 300)[:199] + ELLIPSIS
+    assert (
+        message(finding, "en")
+        == f"Placeholder {cleaned} is still there. Fill it in before signing."
+    )
 
 
 def test_cleaning_a_finding_again_changes_nothing():
