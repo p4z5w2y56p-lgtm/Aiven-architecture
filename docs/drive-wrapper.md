@@ -65,7 +65,7 @@ Every R1 write, and every R2 write after its confirm, follows these steps:
 
 1. Re-read the target's metadata.
 2. Content-scan the old and the new content.
-3. Write `before.json`, plus `before.bin` or `before-cells.json`, to `gs://aiven-control-snapshots/<agent>/<run_id>/<call_id>/`. Check it: for binary files the uploaded bytes' MD5 must equal Drive's `md5Checksum`, and for Sheets the cell JSON must round-trip unchanged.
+3. Write `before.json`, plus `before.bin` or `before-cells.json`, to `gs://<control-project>-snapshots/<agent>/<run_id>/<call_id>/`. Check it: for binary files the uploaded bytes' MD5 must equal Drive's `md5Checksum`, and for Sheets the cell JSON must round-trip unchanged.
 4. If the target's `modifiedTime` changed since step 1, stop with `STALE_TARGET`.
 5. Write to Drive.
 6. Write `after.json` (the new revision and MD5, or the new file ID).

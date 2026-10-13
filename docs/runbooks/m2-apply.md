@@ -35,8 +35,9 @@ before you go on.
    EUR, 11 and 27 in USD), the address for the alerts (an @aivenstudios.com one), the two credit
    dates (2026-12-20 and 2027-01-04), and the agent IDs.
 2. Copy `config/platform.example.yaml` to `config/platform.yaml`, and fill in the agents project,
-   your address as the trusted author, and the gateway's account
-   (`gateway@<gateway-project>.iam.gserviceaccount.com`).
+   your address as the trusted author, the gateway's account
+   (`gateway@<gateway-project>.iam.gserviceaccount.com`), and `sandbox_drive_id`, the ID of the
+   Sandbox drive (setup step S5).
 3. Commit both files. They hold IDs and addresses only. CI refuses anything else in them
    (`aiven-check-config`). If it ever refuses a secret, that secret is already in the Git history:
    revoke it, don't just delete it.
@@ -147,7 +148,11 @@ part 2 is missing: do it, then plan and apply again. Nothing else is made before
    2027-01-04 a run writes nothing; the yearly schedule then stays silent.)
 2. **BD-1 and BD-2**, the budget stop, on the scratch project only: runbook `budget-stop.md`,
    section Drill. Write down the time from publishing to the unlink, for the report.
-3. **The deploy checks** (gateway-design section 11, BD-3). They only read, with your login; the
+3. **The gateway joins the Sandbox** (drive-wrapper section 1, step 3, which waited for this
+   apply): add `gateway@<gateway-project>.iam.gserviceaccount.com` to the Sandbox drive as
+   **Contributor**. First check step 2 there: the drive admits this one outside member, and
+   access for non-members is off.
+4. **The deploy checks** (gateway-design section 11, BD-3). They only read, with your login; the
    Sandbox checks need the Drive scope as well, so log in once more with it:
 
    ```sh

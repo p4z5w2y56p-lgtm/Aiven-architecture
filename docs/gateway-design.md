@@ -40,6 +40,7 @@ It builds on `docs/validator-spec.md`, which defines the policy format, the acti
 | `gateway@aiven-gateway` | Use the Drive and Sheets APIs with OAuth scope `drive`, as Contributor of the Sandbox drive only. Use Gmail as the agent mailbox only, through delegation in the separate agent Workspace (`signJwt` on its own account, no key; email-wrapper §1). Read and write its own Firestore. In control: write audit entries (`logging.logWriter`), create snapshot objects (`storage.objectCreator` on the snapshot bucket), read policies (`storage.objectViewer` on the policy bucket), and read kill switches, decisions and sign-offs (`datastore.viewer`). | Read, overwrite or delete snapshots. Read or delete the audit log. Change kill switches, decisions, sign-offs or policies. Trash, move or share Drive files (Google blocks this, see the Drive wrapper). Use Drive files outside the Sandbox (`driveId` check on every call). |
 | `control-ui@aiven-control` | Serve the control UI behind IAP, to Matthijs only. Write kill switches, decisions, sign-offs, wrapper switches and taint clears. Read the audit log, the policies and the snapshot list. Read the gateway's working database (`datastore.viewer` on `aiven-gateway`) for pending confirms, proposals and runs. Call the gateway's control endpoints. | Drive, Gmail, billing, and writing the gateway's database |
 | `budget-stop@aiven-control` | Unlink billing from `aiven-agents` and `aiven-gateway`. Write audit entries. | Anything else |
+| `function-builder@aiven-control` | Build the functions `budget-stop` and `credit-reminder`: read their source, write their image and build logs (ruling R134). | Anything else |
 | Matthijs | Owns the three projects. Is Manager of the Sandbox drive. Signs policies with the hardware key, publishes them to the policy bucket, and restores snapshots by hand. | |
 
 - **Organisation policies** for all three projects: no service-account keys (`iam.disableServiceAccountKeyCreation`), and no automatic Editor role for default service accounts (`iam.automaticIamGrantsForDefaultServiceAccounts`).
@@ -93,9 +94,11 @@ Reason codes the agent can see: `KILL_SWITCH`, `NO_POLICY`, `FORBIDDEN`, `RESERV
 | Firestore `control`: `signoffs/{agent}` | `{tools, max_class, policy_hash, shadow_runs_seen, by, at}` | Control UI | Gateway |
 | Firestore `control`: `taint_clears/{file_id}` | `{revision, by, at}`: clears the taint label of one file version | Control UI | Gateway |
 | Firestore `control`: `wrappers/{name}` | `{enabled_for: [agents], by, at}`. An empty list means the wrapper is off. Email starts empty. | Control UI | Gateway |
-| Bucket `aiven-control-policies` (versioned) | `policies/<agent>.md` + `.sig`, `catalog/catalog-v1.yaml` + `.sig` (the machine form of validator-spec §5), `allowed_signers`, `pricing/models.yaml` (EUR per million tokens, for cost estimates) | Matthijs | Gateway, control UI |
-| Bucket `aiven-control-snapshots` (30-day retention, then deleted) | Per run: `manifest.json`. Per call: `before.json`, `before.bin` or `before-cells.json`, `after.json` | Gateway (create only) | Matthijs, control UI (list) |
+| Bucket `<control-project>-policies` (versioned) | `policies/<agent>.md` + `.sig`, `catalog/catalog-v1.yaml` + `.sig` (the machine form of validator-spec §5), `allowed_signers`, `pricing/models.yaml` (EUR per million tokens, for cost estimates) | Matthijs | Gateway, control UI |
+| Bucket `<control-project>-snapshots` (30-day retention, then deleted) | Per run: `manifest.json`. Per call: `before.json`, `before.bin` or `before-cells.json`, `after.json` | Gateway (create only) | Matthijs, control UI (list) |
 | Log bucket `aiven-audit` (365 days, retention locked) | One entry per event (see below) | Gateway, control UI, budget stop (write only) | Matthijs, control UI |
+
+Bucket names are global, like project IDs, so the buckets are named after the control project's ID (ruling R125).
 
 ### Gateway project (`aiven-gateway`), Firestore `gateway`
 
@@ -111,7 +114,7 @@ This is working state: if it is lost, it is rebuilt empty.
 | `shadow/{agent}` | Shadow runs done, and the capability (tools, `max_class`) they cover |
 | `active/{agent}` | Active policy version and hash, used to refuse older versions |
 
-Runs and calls expire after 90 days (Firestore TTL). The audit log is the permanent record.
+Runs and calls expire after 90 days (Firestore TTL on their field `expire_at`, which the gateway sets; ruling R106). The audit log is the permanent record.
 
 ### Audit entry
 
@@ -134,7 +137,7 @@ Each entry is a Cloud Logging `jsonPayload` in log `aiven-audit` in control:
   "catalog_hash": "sha256:...",
   "tainted": false,
   "taint_sources": [],
-  "snapshot": "gs://aiven-control-snapshots/invoice-reminder/r_01JA.../c_01JA.../",
+  "snapshot": "gs://<control-project>-snapshots/invoice-reminder/r_01JA.../c_01JA.../",
   "confirm_id": null,
   "args_sha256": "...",
   "alert": false
@@ -224,7 +227,7 @@ Control UI pages, all in NL and EN:
 
 ## 10. Alerts
 
-Log-based alert policies in control send Matthijs an email for every audit entry with `alert: true`. That covers:
+Log-based alert policies in control send Matthijs an email for every audit entry with `alert: true`, and for a function's own log line with `alert: true`, which it writes when the audit log did not take its entry (ruling R130). That covers:
 
 - R4 or forbidden attempts
 - unknown callers

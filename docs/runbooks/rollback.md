@@ -5,7 +5,7 @@ Use this when an agent changed Sandbox files it shouldn't have, and for the step
 What you need:
 
 - the control UI;
-- read access to the snapshot bucket `aiven-control-snapshots`;
+- read access to the snapshot bucket `<control-project>-snapshots`;
 - Manager rights on the AIVEN Architecture Sandbox drive.
 
 Snapshots are kept for 30 days. After that, only Google's version history is left (step 7).

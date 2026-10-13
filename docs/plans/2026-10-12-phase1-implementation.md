@@ -409,8 +409,8 @@ Plus:
 
 **Resources:**
 
-- Bucket `aiven-control-policies`: versioned, uniform access, public access prevented.
-- Bucket `aiven-control-snapshots`: 30-day retention, lifecycle delete at 30 days.
+- Bucket `<control-project>-policies`: versioned, uniform access, public access prevented. Bucket names are global, so they carry the project ID (ruling R125).
+- Bucket `<control-project>-snapshots`: 30-day retention, lifecycle delete at 30 days.
 - Log bucket `aiven-audit`: 365 days, with a sink for log `aiven-audit` and an exclusion from `_Default`.
 - Firestore databases `control` (control project) and `gateway` (gateway project), with TTL on `runs` and `calls` (90 days).
 
@@ -437,7 +437,7 @@ Locking `aiven-audit` (`locked = true`) can't be undone. **Do not apply it until
   - `unlink(project: str) -> None`
 
   The real implementation uses `google.cloud.billing_v1.CloudBillingClient`: `get_project_billing_info`, and `update_project_billing_info` with `billing_account_name=""`.
-- `StopConfig(budget_name: str = "aiven-stop", projects: tuple[str, ...], enabled: bool)`
+- `StopConfig(budget_name: str = "aiven-stop", projects: tuple[str, ...], enabled: bool)`, plus `currency`, `actor` and `audit_project`, read from the function's environment (ruling R135).
 - `handle(notification: dict, cfg: StopConfig, billing: BillingApi, audit: AuditLog) -> Literal["ignored","below","already_stopped","stopped","disabled"]`
 
 **Audit tests:**
@@ -484,7 +484,7 @@ Locking `aiven-audit` (`locked = true`) can't be undone. **Do not apply it until
 
 **Files:**
 
-- Create: `scripts/deploy_check.py`
+- Create: `scripts/deploy_check.py`, a shim for `src/aiven/deploy_check.py` (console script `aiven-deploy-check`; ruling R144)
 - Test: `tests/scripts/test_deploy_check.py` (with fake clients)
 
 **Interfaces (produces):** `aiven-deploy-check <group>...`. The groups are `keys`, `apis`, `iam`, `stores`, `budgets`, `drive` and `all`. It prints `PASS|FAIL <check>`, and exits 1 on any FAIL. These are the checks in gateway-design §11 and BD-3:
