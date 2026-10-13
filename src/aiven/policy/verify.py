@@ -25,7 +25,7 @@ signature gets only E-SIG-INVALID, not the list of its other problems; it is ref
 
 The signature is checked by ssh-keygen with the arguments of section 2: the file of allowed signers
 that the caller gives, the signer and the namespace of `constants`, and the signature in a file of
-a temporary folder that only this process can open and that is removed afterwards. The file goes in
+a temporary folder that only this user can open and that is removed afterwards. The file goes in
 on stdin. No shell is used and nothing in the arguments comes from the file. What ssh-keygen prints
 is never kept: an exit status of 0 is a valid signature, and anything else is not.
 
