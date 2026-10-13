@@ -9,16 +9,23 @@ wrapper is live (W-TOOL-NOT-LIVE), so the full list is never compared.
 Rules for a mutation:
 - Edit text inside one free-text line of the body (Purpose, Why each tool, Data and risks). Never
   touch the front matter or the two generated sections, and never add or remove a line. The
-  exceptions are the BOM at the very start, the cases about the end of the file, and the front
-  matter cases: those edit the front matter in place (a field is commented out, the comment-only
-  line 2 is replaced), so that no line moves. Only E-LIST-DUPLICATE adds a line, behind the
-  forbidden list, where nothing else points.
+  exceptions are the BOM at the very start, the cases about the end of the file, the front matter
+  cases, and the body cases (below). The front matter cases edit the front matter in place (a field
+  is commented out, the comment-only line 2 is replaced), so that no line moves. Only
+  E-LIST-DUPLICATE adds a line, behind the forbidden list, where nothing else points.
 - The field, tool, limit and scope cases (Task 1.4) edit the front matter in place as well, or add
   one line behind the last entry of a list: the lines below it move down, and the base has no
-  finding below any of them. They never replace a valid entry, which would leave the body
-  explaining other tools than the front matter lists. A rule that needs a different set of tools
-  (the warnings about slack and unused limits and scope) comments out the tools it does not want.
-- Use no URLs, links or HTML: later body checks reject them.
+  finding below any of them. They never replace a valid entry. A rule that needs a different set of
+  tools (the warnings about slack and unused limits and scope) comments out the tools it does not
+  want.
+- A warning does not stop E-BODY-DRIFT (ruling R29). So a case that changes, without an error, a
+  value that the generated sections show must also render them again (`rendered`). A case that
+  comments a tool out also removes the bullet of that tool from Why each tool, and one that adds a
+  tool adds its bullet: the body explains the tools of the front matter, and no others.
+- The body cases (Task 1.5) change the prose or the headings of the three free-text sections, and
+  may add or remove lines: the base has no finding in the body, so nothing moves under a finding.
+  They never touch the generated sections, except the case of E-BODY-DRIFT itself.
+- Use no URLs, links or HTML, except in the cases of E-BODY-HTML and E-BODY-LINK.
 - Find the target line by content (`line_of`), not by number.
 - E-FILENAME changes the path that the validator is given, not the bytes (see its own test).
 """
@@ -35,10 +42,12 @@ from pathlib import Path
 import pytest
 
 from aiven.policy.catalog import load_catalog
+from aiven.policy.constants import SECTIONS
 from aiven.policy.fileformat import decode_text
 from aiven.policy.findings import Finding, format_line, message
 from aiven.policy.validate import validate_file
 from tests.support import REPO_ROOT, gen
+from tests.support.bodies import rerendered
 from tests.support.gen import grouped
 from tests.support.policies import (
     AGENTS_PROJECT,
@@ -68,6 +77,28 @@ PURPOSE_LINE = line_of(BASE_TEXT, PURPOSE)
 READS_LINE = line_of(BASE_TEXT, READS)
 WHY_LINE = line_of(BASE_TEXT, WHY_DRAFT)
 RISKS_LINE = line_of(BASE_TEXT, RISKS_WRITES)
+
+# Task 1.5: lines of the body, and the text of a few of them.
+BASE_LINES = BASE_TEXT.split("\n")
+BODY_START = BASE_LINES.index("---", 1) + 2  # the line behind the closing delimiter
+TITLE_LINE = line_of(BASE_TEXT, "# invoice-reminder")
+PURPOSE_HEADING_LINE = line_of(BASE_TEXT, "## Purpose")
+WHY_HEADING_LINE = line_of(BASE_TEXT, "## Why each tool")
+DATA_HEADING_LINE = line_of(BASE_TEXT, "## Data and risks")
+PURPOSE_TEXT = BASE_LINES[PURPOSE_LINE - 1]
+PURPOSE_AFTER = PURPOSE_LINE + 2  # a line added behind the Purpose paragraph, after a blank one
+# The three bullets of Why each tool, by their first words (the Undo list has the same names).
+WHY_SHEETS = "- `sheets.read`: reads the tracker"
+WHY_DRAFT_BULLET = "- `gmail.draft`: writes one internal"
+WHY_SEND = "- `gmail.send`: sends a reminder draft"
+DRAFT_BULLET_TEXT = BASE_LINES[line_of(BASE_TEXT, WHY_DRAFT_BULLET) - 1]
+SEND_BULLET_LINE = line_of(BASE_TEXT, WHY_SEND)
+STOP = "Stop: the agent kill switch"
+STOP_LINE = line_of(BASE_TEXT, STOP)
+SIGNING = "Signing means: I have read"
+SIGNING_LINE = line_of(BASE_TEXT, SIGNING)
+GENERATED_ENFORCED = "Enforced rules (generated)"
+GENERATED_SIGNOFF = "Sign-off (generated)"
 
 # Lines of the front matter, found by their content.
 COMMENT_LINE = line_of(BASE_TEXT, "# AIVEN policy, schema v1")  # a line of comment only
@@ -176,7 +207,7 @@ def case(
 
 
 def together(*mutations: Mutation) -> Mutation:
-    """Several edits in a row. None of them may add or remove a line."""
+    """Several edits in a row."""
 
     def mutate(data: bytes) -> bytes:
         for mutation in mutations:
@@ -208,6 +239,49 @@ def comment_out(needle: str) -> Mutation:
 def set_value(key: str, old: str, new: str) -> Mutation:
     """Change a value in the line of a field of the front matter: `limits: 10` to `limits: 0`."""
     return edit_line(f"{key}: {old}", f"{key}: {old}", f"{key}: {new}")
+
+
+def remove_line(needle: str) -> Mutation:
+    """Remove the one line that holds `needle`. The lines behind it move up."""
+
+    def mutate(data: bytes) -> bytes:
+        lines = data.split(b"\n")
+        hits = [number for number, line in enumerate(lines) if needle.encode() in line]
+        assert len(hits) == 1, f"{needle!r} must occur in exactly one line"
+        del lines[hits[0]]
+        return b"\n".join(lines)
+
+    return mutate
+
+
+def swap(first: str, second: str) -> Mutation:
+    """Exchange two texts, each of which stands once. No line moves."""
+
+    def mutate(data: bytes) -> bytes:
+        a, b = first.encode(), second.encode()
+        assert data.count(a) == 1 and data.count(b) == 1, "both texts must occur exactly once"
+        return data.replace(a, b"\0").replace(b, a).replace(b"\0", b)
+
+    return mutate
+
+
+def rendered(mutation: Mutation) -> Mutation:
+    """The mutation, and then the generated sections rendered again from the new front matter.
+
+    A warning does not stop E-BODY-DRIFT (ruling R29), so a case that changes a value that the
+    sections show, without an error, has to change the sections too.
+    """
+    return lambda data: rerendered(mutation(data))
+
+
+def drop_bullet(first_words: str) -> Mutation:
+    """Remove a bullet of Why each tool: that of a tool that the case comments out."""
+    return remove_line(first_words)
+
+
+def add_bullet(tool: str) -> Mutation:
+    """Explain a tool in Why each tool, behind the bullet of gmail.send (the last one)."""
+    return insert_line_after(WHY_SEND, f"- `{tool}`: is needed for the case of the test.")
 
 
 def content_samples() -> list[tuple[str, str, str, str]]:
@@ -339,6 +413,13 @@ ONLY_READS = together(
     set_value("records_per_run", "10", "0"),
 )
 
+# A tool that is commented out has no bullet in Why each tool either (or it is E-BODY-TOOL-EXTRA),
+# and the generated sections are rendered again (or it is E-BODY-DRIFT).
+WITHOUT_SEND_RENDERED = rendered(together(WITHOUT_SEND, drop_bullet(WHY_SEND)))
+ONLY_READS_RENDERED = rendered(
+    together(ONLY_READS, drop_bullet(WHY_DRAFT_BULLET), drop_bullet(WHY_SEND))
+)
+
 # Task 1.4: the field, tool, limit and scope rules (validator-spec 3.3 to 3.5).
 LONG_AGENT = "a" * 25
 RULE_CASES = [
@@ -396,7 +477,7 @@ RULE_CASES = [
     case(
         "W-UNTRUSTED-TAINT",
         "taint",
-        set_value("untrusted_input", "strict", "taint"),
+        rendered(set_value("untrusted_input", "strict", "taint")),
         UNTRUSTED_LINE,
         {},
     ),
@@ -553,30 +634,33 @@ RULE_CASES = [
     case(
         "W-MAX-CLASS-SLACK",
         "R2 with nothing above R1",
-        WITHOUT_SEND,
+        WITHOUT_SEND_RENDERED,
         MAX_CLASS_LINE,
         {"max": "R2", "highest": "R1"},
     ),
     case(
         "W-TOOL-NOT-LIVE",
         "drive.read",
-        add_tool("drive.read"),
+        rendered(together(add_tool("drive.read"), add_bullet("drive.read"))),
         TOOLS_END,
         {"tool": "drive.read", "wrapper": "Drive"},
     ),
     case(
         "W-TOOL-NOT-LIVE",
         "agentbuilder.read",
-        add_tool("agentbuilder.read"),
+        rendered(together(add_tool("agentbuilder.read"), add_bullet("agentbuilder.read"))),
         TOOLS_END,
         {"tool": "agentbuilder.read", "wrapper": "Agent Builder"},
     ),
     case(
         "W-LIMIT-UNUSED",
         "emails without gmail.send",
-        together(
-            replace(SENDS, NO_SENDS),
-            set_value("max_class", "R2", "R1"),
+        rendered(
+            together(
+                replace(SENDS, NO_SENDS),
+                set_value("max_class", "R2", "R1"),
+                drop_bullet(WHY_SEND),
+            )
         ),
         EMAILS_LINE,
         {"limit": "emails_per_day", "value": "10"},
@@ -584,14 +668,14 @@ RULE_CASES = [
     case(
         "W-SCOPE-UNUSED",
         "email_to without gmail tools",
-        ONLY_READS,
+        ONLY_READS_RENDERED,
         EMAIL_TO_LINE,
         {"field": "email_to"},
     ),
     case(
         "W-SHADOW-LOW",
         "5 runs",
-        set_value("min_runs", "10", "5"),
+        rendered(set_value("min_runs", "10", "5")),
         MIN_RUNS_LINE,
         {"value": "5"},
     ),
@@ -599,7 +683,7 @@ RULE_CASES = [
 
 # Numbers on the boundary that is allowed: no new finding at all.
 BOUNDARY_CASES = [
-    pytest.param(set_value(field, old, str(value)), id=f"{field} {value}")
+    pytest.param(rendered(set_value(field, old, str(value))), id=f"{field} {value}")
     for field, old, value in [
         ("version", "1", 9999),
         ("emails_per_day", "10", 50),
@@ -611,14 +695,171 @@ BOUNDARY_CASES = [
     ]
 ] + [
     pytest.param(
-        add_emails(*[f"a{n}@aivenstudios.com" for n in range(49)]), id="email_to 50 addresses"
+        rendered(add_emails(*[f"a{n}@aivenstudios.com" for n in range(49)])),
+        id="email_to 50 addresses",
     )
+]
+
+# Task 1.5: the body (validator-spec 3.7). Each case edits the prose or the headings of the three
+# free-text sections, see the top. A line that is added stands two lines behind the one it follows.
+FIVE_SECTIONS = ", ".join(SECTIONS)
+BODY_CASES = [
+    case(
+        "E-BODY-TITLE",
+        "not the agent",
+        edit_line("# invoice-reminder", "invoice-reminder", "invoice reminder"),
+        TITLE_LINE,
+        {"agent": "invoice-reminder"},
+    ),
+    case(
+        "E-BODY-TITLE",
+        "a closing #",
+        edit_line("# invoice-reminder", "reminder", "reminder #"),
+        TITLE_LINE,
+        {"agent": "invoice-reminder"},
+    ),
+    case(
+        "E-BODY-SECTIONS",
+        "a section is missing",
+        remove_line("## Data and risks"),
+        BODY_START,
+        {"found": ", ".join(name for name in SECTIONS if name != "Data and risks")},
+    ),
+    case(
+        "E-BODY-SECTIONS",
+        "a section is renamed",
+        edit_line("## Data and risks", "risks", "risk"),
+        DATA_HEADING_LINE,
+        {"found": FIVE_SECTIONS.replace("Data and risks", "Data and risk")},
+    ),
+    case(
+        "E-BODY-SECTIONS",
+        "out of order",
+        swap("## Purpose", "## Data and risks"),
+        PURPOSE_HEADING_LINE,
+        {
+            "found": FIVE_SECTIONS.replace("Purpose", "@")
+            .replace("Data and risks", "Purpose")
+            .replace("@", "Data and risks")
+        },
+    ),
+    case(
+        "E-BODY-SECTIONS",
+        "an extra ##",
+        insert_line_after(PURPOSE_END, "\n## Notes"),
+        PURPOSE_AFTER,
+        {"found": FIVE_SECTIONS.replace("Why each tool", "Notes, Why each tool")},
+    ),
+    case(
+        "E-BODY-SECTIONS",
+        "a second title",
+        insert_line_after(PURPOSE_END, "\n# Another title"),
+        PURPOSE_AFTER,
+        {"found": FIVE_SECTIONS},
+    ),
+    case(
+        "E-BODY-SECTIONS",
+        "### in front of the first section",
+        insert_line_after("# invoice-reminder", "\n### Early"),
+        TITLE_LINE + 2,
+        {"found": FIVE_SECTIONS},
+    ),
+    case(
+        "E-BODY-EMPTY",
+        "Purpose of 10 characters",
+        edit_line(PURPOSE, PURPOSE_TEXT, "Too short."),
+        PURPOSE_HEADING_LINE,
+        {"section": "Purpose"},
+    ),
+    case(
+        "E-BODY-TOOL-UNEXPLAINED",
+        "no bullet",
+        remove_line(WHY_DRAFT_BULLET),
+        WHY_HEADING_LINE,
+        {"tool": "gmail.draft"},
+    ),
+    case(
+        "E-BODY-TOOL-UNEXPLAINED",
+        "no reason",
+        edit_line(WHY_DRAFT_BULLET, DRAFT_BULLET_TEXT, "- `gmail.draft`:"),
+        WHY_HEADING_LINE,
+        {"tool": "gmail.draft"},
+    ),
+    case(
+        "E-BODY-TOOL-EXTRA",
+        "a tool that is not granted",
+        add_bullet("drive.read"),
+        SEND_BULLET_LINE + 1,
+        {"tool": "drive.read"},
+    ),
+    case(
+        "E-BODY-DRIFT",
+        "Enforced rules",
+        edit_line(STOP, "the agent kill", "no kill"),
+        STOP_LINE,
+        {"section": GENERATED_ENFORCED, "diff_line": str(STOP_LINE)},
+    ),
+    case(
+        "E-BODY-DRIFT",
+        "Sign-off",
+        edit_line(SIGNING, "I have", "I might have"),
+        SIGNING_LINE,
+        {"section": GENERATED_SIGNOFF, "diff_line": str(SIGNING_LINE)},
+    ),
+    case("E-BODY-HTML", "a tag in a paragraph", insert_after(PURPOSE_END, " <b>"), PURPOSE_LINE),
+    case("E-BODY-HTML", "a comment in a bullet", insert_after(WHY_DRAFT, " <!-- x -->"), WHY_LINE),
+    case(
+        "E-BODY-HTML",
+        "a comment on a line of its own",
+        insert_line_after(PURPOSE_END, "\n<!-- x -->"),
+        PURPOSE_AFTER,
+    ),
+    case(
+        "E-BODY-HTML",
+        "text nested too deep to be parsed",
+        insert_line_after(PURPOSE_END, "\n" + "> " * 25 + "text"),
+        PURPOSE_AFTER,
+    ),
+    case("E-BODY-LINK", "a link", insert_after(PURPOSE_END, " [a](b)"), PURPOSE_LINE),
+    case("E-BODY-LINK", "an image", insert_after(PURPOSE_END, " ![a](b)"), PURPOSE_LINE),
+    case(
+        "E-BODY-LINK",
+        "an address in angle brackets",
+        insert_after(PURPOSE_END, " <a@example.test>"),
+        PURPOSE_LINE,
+    ),
+    case(
+        "E-BODY-LINK",
+        "a bare URL",
+        insert_after(PURPOSE_END, " https://example.test"),
+        PURPOSE_LINE,
+    ),
+    case("E-BODY-LINK", "www.", insert_after(PURPOSE_END, " www.example.test"), PURPOSE_LINE),
+    case(
+        "E-BODY-LINK",
+        "a link definition that shows nothing",
+        insert_line_after(PURPOSE_END, "\n[r]: b"),
+        PURPOSE_AFTER,
+    ),
+]
+
+# Body text that is fine: no new finding at all.
+BODY_ALLOWED = [
+    pytest.param(edit_line(PURPOSE, PURPOSE_TEXT, "x" * 20), id="Purpose of 20 characters"),
+    pytest.param(insert_line_after(PURPOSE_END, "\n### Details"), id="### in Purpose"),
+    pytest.param(insert_line_after("## Why each tool", "\n### Details"), id="### in Why each tool"),
+    pytest.param(insert_line_after("## Data and risks", "\n### Details"), id="### in Data"),
+    pytest.param(insert_after(PURPOSE_END, " `<b>` and &lt;b&gt;"), id="html as text"),
+    pytest.param(insert_line_after(PURPOSE_END, "\n> A quote."), id="a quote"),
+    pytest.param(insert_line_after(PURPOSE_END, "\n-\n>"), id="marks without text"),
+    pytest.param(insert_line_after(PURPOSE_END, "\n" + "> " * 18 + "text"), id="18 quotes"),
 ]
 
 # Task 1.2: the file checks (validator-spec 3.1) and content safety (3.8).
 CASES = [
     *FRONT_MATTER_CASES,
     *RULE_CASES,
+    *BODY_CASES,
     case("E-ENCODING", "byte-order mark", lambda data: codecs.BOM_UTF8 + data, 1),
     case("E-ENCODING", "invalid byte", insert_after(PURPOSE, b"\xff"), PURPOSE_LINE),
     case("E-LINE-ENDINGS", "CR before the LF", insert_after(PURPOSE_END, "\r"), PURPOSE_LINE),
@@ -918,6 +1159,11 @@ def test_placeholder_skips_other_checks_for_that_field():
 
 @pytest.mark.parametrize("mutation", BOUNDARY_CASES)
 def test_a_number_on_the_boundary_that_is_allowed_yields_no_new_finding(mutation):
+    assert new_findings(mutation(BASE)) == []
+
+
+@pytest.mark.parametrize("mutation", BODY_ALLOWED)
+def test_body_text_that_is_allowed_yields_no_new_finding(mutation):
     assert new_findings(mutation(BASE)) == []
 
 

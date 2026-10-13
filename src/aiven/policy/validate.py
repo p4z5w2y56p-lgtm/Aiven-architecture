@@ -1,11 +1,13 @@
 """The validator's single entry point: every check, and one sorted list of findings.
 
-Task by task the other checks join the two here (front matter, fields, tools, limits, body). The
-CLI and `verify` call `validate_file` and nothing below it.
+The file checks, the content checks, the front matter, the field, tool, limit and scope rules and
+the body checks are all run from here. The CLI and `verify` call `validate_file` and nothing below
+it.
 """
 
 from pathlib import Path
 
+from aiven.policy.body import check_body
 from aiven.policy.catalog import Catalog
 from aiven.policy.config import PlatformConfig
 from aiven.policy.constants import MAX_SCANNED_BYTES
@@ -40,28 +42,36 @@ def _front_matter_findings(
     path: Path, data: bytes, text: str, cfg: PlatformConfig, catalog: Catalog
 ) -> list[Finding]:
     """The front matter checks (section 3.2), the field, tool, limit and scope rules (3.3 to 3.5),
-    and E-FILENAME, which needs the agent id.
+    E-FILENAME, which needs the agent id, and the body checks (3.7).
 
     This is where every check that needs the front matter belongs. When there is none, or it
-    cannot be trusted (`split` or `load` gives no data), they are all skipped (section 1): what
-    still runs are the file, hidden-character, placeholder and content-safety checks above.
+    cannot be trusted (`split` or `load` gives no data), they are all skipped (section 1, ruling
+    R27): what still runs are the file, hidden-character, placeholder and content-safety checks
+    above.
     """
     parts = split(text)
     if parts is None:
         return [Finding("E-FM-MISSING", "error", str(path), 1)]
-    front, _body, _body_line = parts
+    front, body, body_line = parts
     loaded = load(front, path)
     findings = list(loaded.findings)
     if loaded.data is None:
         return findings
-    _policy, rule_findings = build_policy(loaded, data, cfg, catalog, path)
+    policy, rule_findings = build_policy(loaded, data, cfg, catalog, path)
     findings.extend(rule_findings)
-    # An agent that is not a valid id is E-AGENT-ID, and the file name is not also wrong: one
-    # defect, one code (ruling R28). A placeholder agent is skipped by check_filename itself.
-    if all(found.code != "E-AGENT-ID" for found in rule_findings):
+    # An agent that is not a valid id is E-AGENT-ID, and the file name and the title are not also
+    # wrong: one defect, one code (ruling R28). A placeholder agent is the same, and is skipped by
+    # check_filename itself.
+    named = all(found.code != "E-AGENT-ID" for found in rule_findings)
+    if named:
         findings.extend(check_filename(path, loaded))
-    # Task 1.5 adds the body checks here: the body starts on _body_line, and the generated
-    # sections are rendered from the policy.
+    # The body is judged against the generated sections only when the front matter has no error
+    # (ruling R29): a render from an invalid front matter is noise. Warnings do not stop it, and
+    # neither does E-PLACEHOLDER (a check of the file) or E-FILENAME. The checks that need the
+    # policy are skipped without one (ruling R33), and E-BODY-TITLE for an agent that is not usable.
+    clean = all(found.severity != "error" for found in (*loaded.findings, *rule_findings))
+    usable = named and "agent" not in loaded.placeholders
+    findings.extend(check_body(body, body_line, policy, catalog, path, title=usable, drift=clean))
     return findings
 
 
