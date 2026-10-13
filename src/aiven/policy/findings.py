@@ -14,6 +14,12 @@ over the values itself.
 A check that quotes only a part of a longer word must judge the whole word with `is_sensitive`
 first, as E-PLACEHOLDER does: a part that is cut inside the characters of a key no longer matches
 by itself, so the guard cannot see what it was cut from.
+
+One message has a part that is a sentence of the language, and not a value: the `{restart}` of
+W-WIDENS (ruling R55). A finding does not carry it. It carries the number, as the param
+`restart_runs`, and `message` writes the sentence of the note under appendix A in the language
+asked for, or nothing when there is no `restart_runs`. It does that after the params are cleaned,
+so only the number is cleaned and the sentence around it is the note's own.
 """
 
 import json
@@ -30,6 +36,13 @@ Severity = Literal["error", "warning"]
 Lang = Literal["en", "nl"]
 
 LANGUAGES: tuple[Lang, ...] = ("en", "nl")
+
+# The `{restart}` of W-WIDENS in each language, with its leading space: the note under appendix A
+# of the spec. `{n}` is the param `restart_runs`.
+_RESTART: dict[Lang, str] = {
+    "en": " Shadow mode starts again for {n} runs.",
+    "nl": " De schaduwmodus begint opnieuw voor {n} runs.",
+}
 
 
 @dataclass(frozen=True)
@@ -82,9 +95,15 @@ def message(f: Finding, lang: Lang) -> str:
 
     A missing parameter or an unknown code raises KeyError: that is a bug in a check, and it
     must not turn into a half-filled message.
+
+    W-WIDENS gets its `{restart}` here, from the param `restart_runs` (see the module docstring).
     """
+    template = load_messages(lang)[f.code]
     params = {name: safe_text(value) for name, value in f.params.items()}
-    return load_messages(lang)[f.code].format_map(params)
+    if f.code == "W-WIDENS":
+        runs = params.get("restart_runs")
+        params["restart"] = "" if runs is None else _RESTART[lang].format(n=runs)
+    return template.format_map(params)
 
 
 def format_line(f: Finding) -> str:

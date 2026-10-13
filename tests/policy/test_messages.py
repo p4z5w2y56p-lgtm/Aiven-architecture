@@ -8,10 +8,12 @@ from dataclasses import FrozenInstanceError, replace
 import pytest
 
 from aiven.policy.findings import Finding, format_line, load_messages, message
-from tests.support import REPO_ROOT
-from tests.support.spec_tables import table_after
+from tests.support import REPO_ROOT, gen
+from tests.support.spec_tables import line_starting_with, table_after
 
 MESSAGES_DIR = REPO_ROOT / "src" / "aiven" / "policy" / "messages"
+
+WIDENS = {"changes": "tools: +drive.read; limits.runs_per_day: 1 -> 2"}
 
 
 def _appendix_rows() -> list[list[str]]:
@@ -61,13 +63,87 @@ def test_templates_use_only_plain_named_fields(lang):
 
 @pytest.mark.parametrize("lang", ["en", "nl"])
 def test_every_message_formats_with_exactly_its_own_parameters(lang):
-    # Includes the keyword-named {class} field of E-TOOL-ABOVE-MAX-CLASS.
+    # Includes the keyword-named {class} field of E-TOOL-ABOVE-MAX-CLASS. The {restart} of
+    # W-WIDENS is not a param: `message` makes it from the param restart_runs (see below).
     for code, template in load_messages(lang).items():
-        params = {name: f"<{name}>" for name in _fields(template)}
+        names = {"restart_runs" if name == "restart" else name for name in _fields(template)}
+        params = {name: f"<{name}>" for name in names}
         text = message(Finding(code, "error", "a.md", params=params), lang)
         assert "{" not in text and "}" not in text, code
         for name in params:
             assert f"<{name}>" in text, (code, name)
+
+
+# --- W-WIDENS: the {restart} of its message is a sentence of the language (ruling R55)
+
+
+def _restart_sentences() -> dict[str, str]:
+    """The two sentences of the note under appendix A, with their leading space: EN, then NL."""
+    note = line_starting_with("For W-WIDENS, ")
+    sentences = re.findall(r'"([^"]*)"', note)
+    assert len(sentences) == 2, note
+    return dict(zip(("en", "nl"), sentences, strict=True))
+
+
+@pytest.mark.parametrize("lang", ["en", "nl"])
+def test_widens_restart_is_the_sentence_of_the_note_under_appendix_a(lang):
+    # Drift: the code says what the note under appendix A says, word for word, in both languages.
+    sentence = _restart_sentences()[lang]
+    assert sentence.startswith(" ") and sentence.count("{n}") == 1
+    finding = Finding("W-WIDENS", "warning", "a.md", params={**WIDENS, "restart_runs": "12"})
+    template = load_messages(lang)["W-WIDENS"]
+    expected = template.format(**WIDENS, restart=sentence.replace("{n}", "12"))
+    assert message(finding, lang) == expected
+
+
+def test_widens_restart_in_full():
+    finding = Finding("W-WIDENS", "warning", "a.md", params={**WIDENS, "restart_runs": "10"})
+    assert message(finding, "en") == (
+        "This version gives the agent more room: tools: +drive.read; limits.runs_per_day: 1 -> 2."
+        " Shadow mode starts again for 10 runs."
+    )
+    assert message(finding, "nl") == (
+        "Deze versie geeft de agent meer ruimte: tools: +drive.read; limits.runs_per_day: 1 -> 2."
+        " De schaduwmodus begint opnieuw voor 10 runs."
+    )
+
+
+@pytest.mark.parametrize("lang", ["en", "nl"])
+def test_widens_without_restart_runs_ends_after_the_changes(lang):
+    # Empty when the param is absent: the message ends in the full stop behind the changes.
+    finding = Finding("W-WIDENS", "warning", "a.md", params=WIDENS)
+    text = message(finding, lang)
+    assert text.endswith("limits.runs_per_day: 1 -> 2.")
+    assert text == load_messages(lang)["W-WIDENS"].format(**WIDENS, restart="")
+
+
+def test_widens_restart_is_in_the_one_line_form():
+    finding = Finding("W-WIDENS", "warning", "a.md", params={**WIDENS, "restart_runs": "3"})
+    assert format_line(finding) == f"warning W-WIDENS a.md: {message(finding, 'en')}"
+    assert format_line(finding).endswith(" Shadow mode starts again for 3 runs.")
+
+
+@pytest.mark.parametrize("lang", ["en", "nl"])
+def test_the_number_of_the_restart_sentence_is_cleaned_like_every_param(lang):
+    # `message` cleans the params first and puts the sentence together after that, so the number
+    # is cleaned (escaped, hidden, cut) and the sentence around it is the note's own.
+    finding = Finding("W-WIDENS", "warning", "a.md", params={**WIDENS, "restart_runs": "7"})
+    sentence = _restart_sentences()[lang]
+    for dirty, shown in [
+        ("7\nerror E-FORGED y.md: z", "7\\u000aerror E-FORGED y.md: z"),
+        (gen.valid_bsn(), "[hidden]"),
+        ("{changes} {0}", "{changes} {0}"),
+    ]:
+        finding.params["restart_runs"] = dirty  # the dict is not frozen: cleaned again at output
+        text = message(finding, lang)
+        assert text.endswith(sentence.replace("{n}", shown))
+        assert text.splitlines() == [text]
+
+
+def test_widens_with_an_unknown_language_still_fails_loudly():
+    finding = Finding("W-WIDENS", "warning", "a.md", params={**WIDENS, "restart_runs": "10"})
+    with pytest.raises(ValueError, match="language"):
+        message(finding, "de")
 
 
 def test_finding_defaults_describe_a_file_level_finding():
