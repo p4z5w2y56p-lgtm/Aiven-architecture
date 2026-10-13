@@ -102,6 +102,25 @@ def at(needle: str) -> int:
     return line_of(BASE_TEXT, needle)
 
 
+def tool_lines(text: str, tool: str) -> list[int]:
+    """The file lines of the entries `tool` in the list `tools` of the front matter, in order.
+
+    An entry is `- tool` or `- "tool"`, with or without a comment behind it.
+    """
+    entries = (f"- {tool}", f'- "{tool}"')
+    return [
+        number
+        for number, row in enumerate(text.split("\n"), start=1)
+        if row.split("#")[0].strip() in entries
+    ]
+
+
+def tool_line(text: str, tool: str) -> int:
+    """The file line of the one entry `tool` in the list `tools` of the front matter."""
+    (line,) = tool_lines(text, tool)
+    return line
+
+
 def places(result, code: str | None = None) -> list[tuple[str, int | None, int | None]]:
     """(code, line, column) of the findings of a `load` result, of one code if one is given."""
     return [(f.code, f.line, f.column) for f in result.findings if code in (None, f.code)]

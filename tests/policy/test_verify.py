@@ -1,15 +1,14 @@
-"""Load-time verification (validator-spec 2 and 3.10): `verify`, and the seam in validate.py.
+"""Load-time verification (validator-spec 2 and 3.10): `verify`.
 
 `verify` is the gateway's way to load one policy file. It checks the size and the signature before
-it decodes or parses any of the file (rulings R43 and R56), and only then validates it and makes the
-checks that are possible at load time. `validate_policy` is the seam it needs: one run of the checks
-that gives the policy and the findings together (`validate_file` gives only the findings).
+it decodes or parses any of the file (rulings R43 and R56), and only then validates it
+(`validate_policy`, tested in test_validate.py) and makes the checks that are possible at load time.
 
-The tests that need a signature use real ones. Each makes a throwaway ed25519 key of its own in its
-`tmp_path` with `ssh-keygen -t ed25519 -N ""`, signs with it, and writes the `allowed_signers` file
-that trusts it, so no key is stored anywhere. They do not skip when ssh-keygen is missing: they
-fail, loudly. The tests that look at the call to ssh-keygen stand in for `subprocess.run`, and sign
-before they do.
+The tests that need a signature use real ones (tests/support/signing.py). Each makes a throwaway
+ed25519 key of its own in its `tmp_path` with `ssh-keygen -t ed25519 -N ""`, signs with it, and
+writes the `allowed_signers` file that trusts it, so no key is stored anywhere. They do not skip
+when ssh-keygen is missing: they fail, loudly. The tests that look at the call to ssh-keygen stand
+in for `subprocess.run`, and sign before they do.
 
 The valid file is the base (`valid_base()`): version 1 of `invoice-reminder`. A clean load has the
 Drive and Email wrappers built (`LIVE`), switched on for every agent, and a folder in the sandbox.
@@ -18,14 +17,12 @@ The real catalog has every wrapper planned.
 
 import gc
 import hashlib
-import shutil
 import stat
 import subprocess
 import tempfile
 import warnings
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 from unittest.mock import Mock
@@ -37,12 +34,19 @@ from aiven.policy import validate as validate_module
 from aiven.policy import verify as verify_module
 from aiven.policy.constants import MAX_FILE_BYTES, MAX_SCANNED_BYTES
 from aiven.policy.findings import Finding, format_line, message
-from aiven.policy.validate import Validated, report_order, validate_file, validate_policy
+from aiven.policy.validate import Validated, report_order, validate_file
 from aiven.policy.verify import ActiveVersion, verify
-from tests.support import gen
 from tests.support.bodies import policy_of, rerendered
-from tests.support.frontmatter import BASE_TEXT, without
-from tests.support.policies import BASE_PATH, FOLDER_ID, TEMPLATE_PATH, line_of, valid_base
+from tests.support.frontmatter import BASE_TEXT, tool_line, without
+from tests.support.policies import (
+    BASE_PATH,
+    FOLDER_ID,
+    TEMPLATE_NAME,
+    TEMPLATE_PATH,
+    line_of,
+    padded,
+    valid_base,
+)
 from tests.support.rules import (
     CATALOG,
     CFG,
@@ -51,11 +55,13 @@ from tests.support.rules import (
     setting,
     with_tools,
 )
+from tests.support.signing import Signer, make_signer
+from tests.support.signing import work_in_a_temporary_folder as work_in_a_temporary_folder
+from tests.support.spies import CHECKS, spy_on
 from tests.support.variants import variant_file
 
 BASE = valid_base()
 TEMPLATE = TEMPLATE_PATH.read_bytes()
-TEMPLATE_NAME = Path("templates/policy-template.md")
 AGENT = "invoice-reminder"
 SANDBOX_PATH = "AIVEN Architecture Sandbox / Invoices"
 LIVE = catalog_with(drive="built", email="built")
@@ -63,69 +69,11 @@ LIVE = catalog_with(drive="built", email="built")
 # The tools of the base, and how a finding shows the wrapper of each.
 BASE_TOOLS = {"sheets.read": "Drive", "gmail.draft": "Email", "gmail.send": "Email"}
 
-# The checks that read a file. Each of them runs once for a file, whatever is done with the result.
-CHECKS = (
-    "decode_text",
-    "check_file",
-    "scan",
-    "split",
-    "load",
-    "build_policy",
-    "check_filename",
-    "check_body",
-)
-
 INVALID = Finding("E-SIG-INVALID", "error", str(BASE_PATH))
 OTHER_HASH = "sha256:" + "a" * 64
 
 
-# --- real signatures
-
-
-@dataclass(frozen=True)
-class Signer:
-    """A throwaway ed25519 key, and the `allowed_signers` file that trusts it."""
-
-    key: Path
-    allowed_signers: Path
-
-    def sign(self, data: bytes, namespace: str = "aiven-policy-v1") -> bytes:
-        """The detached signature of `data`, as `ssh-keygen -Y sign` writes it."""
-        done = subprocess.run(
-            ["ssh-keygen", "-Y", "sign", "-f", str(self.key), "-n", namespace],
-            input=data,
-            capture_output=True,
-            check=True,
-        )
-        return done.stdout
-
-
-def make_signer(
-    folder: Path, name: str = "matthijs", namespaces: str | None = "aiven-policy-v1"
-) -> Signer:
-    """A new key in `folder`, trusted as `name` for `namespaces` (None: for every namespace).
-
-    With the defaults the file of allowed signers has the one line of validator-spec section 2.
-    """
-    assert shutil.which("ssh-keygen"), "ssh-keygen is needed for the signing tests (OpenSSH)"
-    folder.mkdir()
-    key = folder / "key"
-    command = ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "", "-f", str(key)]
-    subprocess.run(command, capture_output=True, check=True)
-    public = (folder / "key.pub").read_text().split()[:2]  # the type and the key, no comment
-    options = "" if namespaces is None else f' namespaces="{namespaces}"'
-    allowed = folder / "allowed_signers"
-    allowed.write_text(f"{name}{options} {' '.join(public)}\n")
-    return Signer(key, allowed)
-
-
-@pytest.fixture(autouse=True)
-def _work_in_a_temporary_folder(tmp_path, monkeypatch):
-    """Run in a folder of the test's own. ssh-keygen that is called wrongly makes a key in the
-    current folder, named after the first line of its input; that must not be the repository."""
-    work = tmp_path / "work"
-    work.mkdir()
-    monkeypatch.chdir(work)
+# --- the signers of the tests (tests/support/signing.py makes them)
 
 
 @pytest.fixture
@@ -187,58 +135,12 @@ def shown(findings) -> str:
     )
 
 
-def padded(size: int) -> bytes:
-    """The base with filler in a line of free text, until the file has `size` bytes."""
-    marker = b"Reads: only"
-    assert BASE.count(marker) == 1
-    data = BASE.replace(marker, marker + b"x" * (size - len(BASE)))
-    assert len(data) == size
-    return data
-
-
-def tool_lines(text: str, tool: str) -> list[int]:
-    """The file lines of the entries `tool` in the front matter, in order (the list `tools`)."""
-    entries = (f"- {tool}", f'- "{tool}"')
-    return [
-        number
-        for number, row in enumerate(text.split("\n"), start=1)
-        if row.split("#")[0].strip() in entries
-    ]
-
-
-def tool_line(text: str, tool: str) -> int:
-    """The file line of the one entry `tool` in the front matter."""
-    (line,) = tool_lines(text, tool)
-    return line
-
-
 def not_live(*tools: str) -> list[tuple[str, int, dict[str, str]]]:
     """The `shape` of E-TOOL-NOT-LIVE for tools of the base, on their lines in the base."""
     return [
         ("E-TOOL-NOT-LIVE", tool_line(BASE_TEXT, tool), {"tool": tool, "wrapper": BASE_TOOLS[tool]})
         for tool in tools
     ]
-
-
-# --- spying on the checks
-
-
-def counting(name, real, calls):
-    """A stand-in for the function `real` that counts its calls under `name`, and lets it run."""
-
-    def spy(*args, **kwargs):
-        calls[name] += 1
-        return real(*args, **kwargs)
-
-    return spy
-
-
-def spy_on(monkeypatch, module, names, calls: Counter | None = None) -> Counter:
-    """Count the calls of the functions `names` of `module` in `calls`, and let them run."""
-    calls = Counter() if calls is None else calls
-    for name in names:
-        monkeypatch.setattr(module, name, counting(name, getattr(module, name), calls))
-    return calls
 
 
 # --- standing in for ssh-keygen
@@ -279,6 +181,11 @@ def stub_run(monkeypatch, *, returncode=0, stdout=b"", stderr=b"", error=None) -
 
     monkeypatch.setattr(subprocess, "run", run)
     return calls
+
+
+def test_the_tests_of_this_module_run_in_a_folder_of_their_own(tmp_path):
+    # The fixture of tests/support/signing.py, imported above: it looks unused, and it is not.
+    assert tmp_path in Path.cwd().parents
 
 
 # --- the size comes first (ruling R56, step 1)
@@ -1060,109 +967,3 @@ def test_a_callback_that_does_not_answer_true_or_false_gives_e_internal(signer, 
         gc.collect()  # a coroutine that was never awaited warns when it is collected
     assert result == (None, [internal("TypeError")])
     assert [str(warning.message) for warning in caught] == []
-
-
-# --- validate.py: the policy and the findings from one run of the checks
-
-SEAM_INPUTS = {
-    "the valid base": BASE,
-    "the template": TEMPLATE,
-    "no front matter": b"# invoice-reminder\n",
-    "a syntax error": BASE.replace(b"max_class: R2", b"max_class: ["),
-    "a wrong type": BASE.replace(b"version: 1", b"version: one"),
-    "a number out of range": BASE.replace(b"runs_per_day: 1", b"runs_per_day: 11"),
-    "a file over 64 KiB": padded(MAX_FILE_BYTES + 1),
-    "a file too large to read through": b"x" * (MAX_SCANNED_BYTES + 1),
-}
-
-# Inputs that have a policy: the front matter is complete and well typed. The values do not have
-# to be right (ruling R4): the template still holds its placeholders, and a number may be too high.
-HAVE_A_POLICY = ("the valid base", "the template", "a number out of range", "a file over 64 KiB")
-
-
-@pytest.mark.parametrize("name", SEAM_INPUTS)
-def test_validate_file_gives_only_the_findings_of_validate_policy(name):
-    data = SEAM_INPUTS[name]
-    findings = validate_file(BASE_PATH, data, CFG, CATALOG)
-    assert isinstance(findings, list)
-    assert findings == validate_policy(BASE_PATH, data, CFG, CATALOG).findings
-
-
-@pytest.mark.parametrize("name", SEAM_INPUTS)
-def test_the_findings_of_validate_policy_are_in_report_order(name):
-    findings = validate_policy(BASE_PATH, SEAM_INPUTS[name], CFG, CATALOG).findings
-    assert findings == sorted(findings, key=report_order)
-
-
-def test_the_template_has_the_findings_of_section_9_in_report_order():
-    findings = validate_policy(TEMPLATE_NAME, TEMPLATE, CFG, CATALOG).findings
-    assert [(found.code, found.line) for found in findings] == [
-        ("E-FILENAME", None),
-        ("E-PLACEHOLDER", 6),
-        ("W-TOOL-NOT-LIVE", 9),
-        ("W-TOOL-NOT-LIVE", 10),
-        ("W-TOOL-NOT-LIVE", 11),
-        ("E-PLACEHOLDER", 25),
-        ("E-PLACEHOLDER", 56),
-        ("E-PLACEHOLDER", 84),
-    ]
-
-
-@pytest.mark.parametrize("name", SEAM_INPUTS)
-def test_validate_policy_gives_the_policy_that_the_front_matter_builds(name):
-    result = validate_policy(BASE_PATH, SEAM_INPUTS[name], CFG, CATALOG)
-    if name in HAVE_A_POLICY:
-        assert result.policy == policy_of(SEAM_INPUTS[name])
-    else:
-        assert result.policy is None
-
-
-def test_the_policy_of_validate_policy_has_the_hash_of_the_bytes():
-    policy = validate_policy(BASE_PATH, BASE, CFG, CATALOG).policy
-    assert policy is not None
-    assert policy.sha256 == "sha256:" + hashlib.sha256(BASE).hexdigest()
-
-
-def test_validate_policy_runs_every_check_once(monkeypatch):
-    calls = spy_on(monkeypatch, validate_module, CHECKS)
-    validate_policy(BASE_PATH, BASE, CFG, CATALOG)
-    assert calls == Counter(dict.fromkeys(CHECKS, 1))
-
-
-def test_validate_file_runs_every_check_once_too(monkeypatch):
-    calls = spy_on(monkeypatch, validate_module, CHECKS)
-    validate_file(BASE_PATH, BASE, CFG, CATALOG)
-    assert calls == Counter(dict.fromkeys(CHECKS, 1))
-
-
-def test_validate_policy_gives_the_line_of_each_tool():
-    result = validate_policy(BASE_PATH, BASE, CFG, CATALOG)
-    assert result.tool_lines == {tool: tool_line(BASE_TEXT, tool) for tool in BASE_TOOLS}
-
-
-def test_a_tool_that_is_listed_twice_has_the_line_of_its_first_entry():
-    data = variant_file(with_tools("sheets.read", "gmail.draft", "sheets.read"))
-    first, second = tool_lines(data.decode(), "sheets.read")
-    assert first < second
-    assert validate_policy(BASE_PATH, data, CFG, CATALOG).tool_lines["sheets.read"] == first
-
-
-def test_tools_that_fail_their_rules_have_a_line_too():
-    data = variant_file(with_tools("sheets.read", "gmail.sned"))
-    lines = validate_policy(BASE_PATH, data, CFG, CATALOG).tool_lines
-    assert lines == {tool: tool_line(data.decode(), tool) for tool in ("sheets.read", "gmail.sned")}
-
-
-def test_there_are_no_tool_lines_when_the_list_has_no_value():
-    data = BASE.replace(b"  - gmail.send\n", b"  - [a, b]\n")  # an entry of the wrong type
-    result = validate_policy(BASE_PATH, data, CFG, CATALOG)
-    assert (result.policy, result.tool_lines) == (None, {})
-
-
-def test_the_tool_lines_hold_text_of_the_file_and_are_not_in_the_repr():
-    secret = gen.secret_values()["AWS access key"][0]
-    result = validate_policy(
-        BASE_PATH, variant_file(with_tools("sheets.read", secret)), CFG, CATALOG
-    )
-    assert secret in result.tool_lines
-    assert secret not in repr(result)

@@ -15,6 +15,9 @@ TEMPLATE_PATH = REPO_ROOT / "templates" / "policy-template.md"
 # The path that tests pass to the validator: the base, saved under its agent's name.
 BASE_PATH = Path("policies/invoice-reminder.md")
 
+# The path that the self test of validator-spec section 9 gives the template.
+TEMPLATE_NAME = Path("templates/policy-template.md")
+
 AGENTS_PROJECT = "aiven-agents-test"
 FOLDER_ID = "1aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"
 
@@ -39,6 +42,20 @@ def valid_base() -> bytes:
     text = text.replace("REPLACE_ME_AGENTS_PROJECT", AGENTS_PROJECT)
     text = text.replace("REPLACE_ME_FOLDER_ID", FOLDER_ID)
     return text.encode("utf-8")
+
+
+def padded(size: int) -> bytes:
+    """The valid base with filler in a line of free text, until the file has `size` bytes.
+
+    The filler is inside a sentence of "Data and risks", so the file is a valid policy until it is
+    too large.
+    """
+    base = valid_base()
+    marker = b"Reads: only"
+    assert base.count(marker) == 1
+    data = base.replace(marker, marker + b"x" * (size - len(base)))
+    assert len(data) == size
+    return data
 
 
 def line_of(text: str, needle: str) -> int:
