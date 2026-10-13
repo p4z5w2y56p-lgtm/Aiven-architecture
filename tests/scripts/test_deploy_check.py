@@ -588,7 +588,7 @@ def test_a_drive_answer_of_403_says_how_to_log_in(capsys, monkeypatch):
     table[f"{DRIVE}/drives/{DRIVE_ID}?fields=id,name,restrictions"] = GoogleApiError(403)
     found = failing(capsys, monkeypatch, table, "drive")
     assert found[0].startswith("FAIL drive sandbox sharing: could not read it (HTTP 403)")
-    assert "drive.readonly" in found[0]
+    assert "check the Sandbox by hand" in found[0]
 
 
 # --- when it cannot run

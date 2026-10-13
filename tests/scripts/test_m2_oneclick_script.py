@@ -68,6 +68,10 @@ def test_the_script_is_strict_bash_that_never_prints_a_token_or_locks_the_audit_
     assert os.access(SCRIPT, os.X_OK)
     assert "print-access-token" not in text and "print-identity-token" not in text
     assert "locked = true" not in text and "--locked" not in text
+    # No Drive scope anywhere: Google blocks it for gcloud's login, and the browser then never
+    # comes back, which would hang the run (ruling R162).
+    assert "auth/drive" not in text and "--scopes" not in text
+    assert "aiven-deploy-check keys apis iam stores budgets" in text
     # The drill publishes on the drill's own topic only, never on the real budget-stop topic.
     assert re.findall(r"pubsub topics publish (\S+)", text) == ['"$DRILL_TOPIC"']
     assert 'DRILL_TOPIC="budget-stop-drill"' in text
@@ -189,6 +193,7 @@ def test_a_dry_run_of_a_fresh_deployment_plans_and_changes_nothing(
     assert not [call for call in calls if any(change in call for change in CHANGES)], calls
     assert not [call for call in calls if call.startswith("brew")]
     assert logins_are_gone(tmp_path, calls)
+    assert "auth application-default login --quiet" in calls  # no Drive scope asked for
 
     # The values: asked once, written, and passed by the guard.
     tfvars = repo / "infra" / "terraform" / "terraform.tfvars"
@@ -289,7 +294,7 @@ TF="$FAKE_TERRAFORM" TFRUN="$REPO/infra/terraform" DRY_RUN=0 ACCOUNT=owner@aiven
 V_agents_project=aiven-agents-mock V_gateway_project=aiven-gateway-mock
 V_control_project=aiven-control-mock V_scratch_project=aiven-scratch-mock
 V_billing_account=01F2A3-B4C5D6-E7F809 V_budget_currency=EUR STOP_AMOUNT=25
-V_alert_email=owner@aivenstudios.com V_sandbox_drive_id=0AKx7rT2mQpLsUk9PVA DRIVE_SCOPE=no
+V_alert_email=owner@aivenstudios.com V_sandbox_drive_id=0AKx7rT2mQpLsUk9PVA
 """
 
 
@@ -366,9 +371,11 @@ def test_the_reminder_and_both_drills_pass_and_are_not_run_twice(copy_of_the_rep
     assert lines(done, "FAIL ") == []
     assert "not run again, so no second email" in done.stdout
     assert "passed before" in done.stdout
-    # The Sandbox without the Drive scope: the one step by hand.
+    # The Sandbox is by hand: Google refuses the Drive scope to gcloud's login (ruling R162).
     (manual,) = lines(done, "MANUAL sandbox-member")
     assert "add gateway@aiven-gateway-mock.iam.gserviceaccount.com as Contributor" in manual
+    (check,) = lines(done, "MANUAL sandbox-check")
+    assert "exactly you (Manager) and gateway@aiven-gateway-mock" in check
     # Put back as it was: billing on scratch, the copy switched on again, then removed.
     assert (state / "billing-aiven-scratch-mock").read_text() == "True\n"
     assert (state / "stop-enabled").read_text() == "true\n"

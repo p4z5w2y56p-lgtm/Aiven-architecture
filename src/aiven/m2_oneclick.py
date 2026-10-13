@@ -14,15 +14,12 @@ here, as subcommands of `python -m aiven.m2_oneclick`:
   account key, a lock (`locked = true`, ruling R105), a role for anyone but a service account, or
   for the drill anything but the drill (and a drill function that stops another project than
   scratch).
-- `drive-member --drive ID --member EMAIL --quota-project P`: makes the gateway account
-  Contributor of the Sandbox drive (drive-wrapper section 1, step 3) with the application default
-  login, which needs the Drive scope. Exit 0 when it is (or already was), 3 when it takes a step by
-  hand, which the line says, and 1 on an error.
 - `result-write <path>`: writes the text on stdin to `path`, without any line that the content
   scan flags (a credential, a bank detail, an ID number).
 
-No credential passes through here: the files hold IDs and addresses only, and the Drive call takes
-its login from google.auth. What Google answers is not printed, only status codes and reasons.
+No credential passes through here: the files hold IDs and addresses only, and nothing here calls a
+Google API. Adding the gateway to the Sandbox drive is a step by hand: Google refuses the Drive
+scope to gcloud's own login (ruling R162).
 """
 
 import argparse
@@ -549,94 +546,6 @@ def _main_rows(resources: list[dict[str, Any]]) -> list[str]:
     return rows
 
 
-# --- the Sandbox drive: the gateway as Contributor (drive-wrapper section 1, step 3)
-
-DRIVE = "https://www.googleapis.com/drive/v3"
-DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
-SCOPE_REASONS = frozenset({"insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"})
-
-
-def manual_step(member: str) -> str:
-    """The one step by hand that adds the gateway, when this login cannot."""
-    return (
-        "In Google Drive, open Shared drives > AIVEN Architecture Sandbox > Manage members, add "
-        f"{member} as Contributor, untick Notify people, and Share."
-    )
-
-
-def _reasons(response: Any) -> set[str]:
-    """The reason codes of an error answer of a Google API: never its message."""
-    try:
-        error = response.json().get("error", {})
-    except ValueError:
-        return set()
-    reasons = {item.get("reason") for item in error.get("errors", []) if isinstance(item, dict)}
-    reasons |= {item.get("reason") for item in error.get("details", []) if isinstance(item, dict)}
-    return {reason for reason in reasons if isinstance(reason, str)}
-
-
-def _session() -> Any:
-    import google.auth
-    from google.auth.transport.requests import AuthorizedSession
-
-    credentials, _ = google.auth.default(scopes=[DRIVE_SCOPE])
-    return AuthorizedSession(credentials)
-
-
-def add_drive_member(session: Any, drive: str, member: str, quota_project: str) -> tuple[int, str]:
-    """Make `member` Contributor (writer) of the shared drive `drive`: (exit code, one line)."""
-    headers = {"x-goog-user-project": quota_project}
-
-    def call(method: str, url: str, body: Any = None) -> Any:
-        return session.request(method, url, json=body, headers=headers, timeout=30)
-
-    def by_hand(why: str) -> tuple[int, str]:
-        return EXIT_REFUSED, f"MANUAL sandbox member: {why}. {manual_step(member)}"
-
-    answer = call("GET", f"{DRIVE}/drives/{drive}?fields=id,restrictions")
-    if answer.status_code == 403 and _reasons(answer) & SCOPE_REASONS:
-        return by_hand("this login has no Drive scope")
-    if answer.status_code == 404:
-        return by_hand("this login cannot see the drive; check sandbox_drive_id")
-    if answer.status_code >= 400:
-        return EXIT_ERROR, f"FAIL sandbox member: reading the drive gave HTTP {answer.status_code}"
-    if (answer.json().get("restrictions") or {}).get("domainUsersOnly"):
-        return by_hand(
-            "the drive admits AIVEN accounts only; first turn on access for people outside "
-            "AIVEN in its settings (drive-wrapper section 1, step 2)"
-        )
-    url = (
-        f"{DRIVE}/files/{drive}/permissions?supportsAllDrives=true"
-        "&fields=nextPageToken,permissions(id,type,role,emailAddress)"
-    )
-    token = None
-    while True:
-        page = call("GET", url if token is None else f"{url}&pageToken={token}")
-        if page.status_code >= 400:
-            return EXIT_ERROR, f"FAIL sandbox member: listing members gave HTTP {page.status_code}"
-        body = page.json()
-        for permission in body.get("permissions", []):
-            if str(permission.get("emailAddress", "")).lower() == member.lower():
-                role = permission.get("role")
-                if role == "writer":
-                    return EXIT_OK, f"PASS sandbox member: {member} is Contributor already"
-                return by_hand(f"{member} is a member with role {role}, not Contributor")
-        token = body.get("nextPageToken")
-        if not token:
-            break
-    added = call(
-        "POST",
-        f"{DRIVE}/files/{drive}/permissions?supportsAllDrives=true&sendNotificationEmail=false",
-        {"type": "user", "role": "writer", "emailAddress": member},
-    )
-    if added.status_code < 300:
-        return EXIT_OK, f"PASS sandbox member: {member} added as Contributor"
-    if 400 <= added.status_code < 500:
-        reasons = ", ".join(sorted(_reasons(added))) or f"HTTP {added.status_code}"
-        return by_hand(f"Drive refused it ({reasons})")
-    return EXIT_ERROR, f"FAIL sandbox member: adding gave HTTP {added.status_code}; run again"
-
-
 # --- the result file
 
 
@@ -663,10 +572,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     summary.add_argument("plan", type=Path)
     summary.add_argument("--mode", choices=["main", "drill-on", "drill-off"], default="main")
     summary.add_argument("--scratch")
-    member = commands.add_parser("drive-member")
-    member.add_argument("--drive", required=True)
-    member.add_argument("--member", required=True)
-    member.add_argument("--quota-project", required=True)
     result = commands.add_parser("result-write")
     result.add_argument("path", type=Path)
     args = parser.parse_args(argv)
@@ -685,10 +590,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             done = summarize(plan, args.mode, args.scratch)
             print("\n".join(done.lines))
             return done.status
-        if args.command == "drive-member":
-            status, line = add_drive_member(_session(), args.drive, args.member, args.quota_project)
-            print(line)
-            return status
         args.path.write_text(clean_result(sys.stdin.read()), encoding="utf-8")
         return EXIT_OK
     except ValuesError as error:

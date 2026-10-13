@@ -26,7 +26,9 @@ whether the alert emails arrived (Enter skips that). Then send `m2-result.txt`, 
   it ends, also after an error or Ctrl-C. Your own gcloud setup is not touched, and no token is
   printed, written or logged.
 - **Not done by the script:** the audit log lock (it waits for your confirmation), committing or
-  pushing anything, and Homebrew itself (install it from brew.sh first).
+  pushing anything, Homebrew itself (install it from brew.sh first), and the Sandbox drive: Google
+  refuses the Drive scope to gcloud's own login, so adding the gateway as Contributor and checking
+  the members are by hand (part 6, steps 3 and 4; the script prints both).
 
 The parts below say what each step does, and are the way to do it by hand. Work through them in
 order. Each one says what to check before you go on.
@@ -178,13 +180,11 @@ part 2 is missing: do it, then plan and apply again. Nothing else is made before
    apply): add `gateway@<gateway-project>.iam.gserviceaccount.com` to the Sandbox drive as
    **Contributor**. First check step 2 there: the drive admits this one outside member, and
    access for non-members is off.
-4. **The deploy checks** (gateway-design section 11, BD-3). They only read, with your login; the
-   Sandbox checks need the Drive scope as well, so log in once more with it:
+4. **The deploy checks** (gateway-design section 11, BD-3). They only read, with your login:
 
    ```sh
-   gcloud auth application-default login \
-     --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive.readonly
-   uv run aiven-deploy-check all
+   gcloud auth application-default login
+   uv run aiven-deploy-check keys apis iam stores budgets
    ```
 
    Every line must be PASS, apart from these NOTEs, which are expected in M2:
@@ -192,10 +192,10 @@ part 2 is missing: do it, then plan and apply again. Nothing else is made before
    - `NOTE stores aiven-audit lock`: the lock waits for your confirmation;
    - `NOTE stores firestore gateway ttl`, right after the apply: the TTL is still being made.
 
-   The drive checks need `sandbox_drive_id` in `config/platform.yaml` (setup step S5). Exit code 0
-   means no FAIL. If Google refuses the Drive scope for gcloud's login, check the Sandbox by hand
-   instead: its members are exactly you (Manager) and the gateway account (Contributor), and
-   "Allow people who aren't members to access files" is off.
+   Exit code 0 means no FAIL. The group `drive` is left out: Google refuses the Drive scope to
+   gcloud's own login ("This app is blocked"; ruling R162). Check the Sandbox by hand instead: its
+   members are exactly you (Manager) and the gateway account (Contributor), and "Allow people who
+   aren't members to access files" is off.
 
 ## 7. What to send back
 

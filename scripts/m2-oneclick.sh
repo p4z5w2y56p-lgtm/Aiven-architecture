@@ -6,15 +6,16 @@
 #
 # What you do: log in twice in the browser (gcloud, then Terraform's login), type an ID when one is
 # missing from config/platform.yaml or infra/terraform/terraform.tfvars, and answer "Apply? (y/n)"
-# once. At the end it asks whether the alert emails arrived (Enter skips that).
+# once. At the end it asks whether the alert emails arrived (Enter skips that). Google refuses the
+# Drive scope to gcloud's own login, so the Sandbox drive takes one step by hand, which it prints.
 #
 # In order: the tools (Terraform 1.16.4 checked against its SHA-256, gcloud and uv through
 # Homebrew), the two logins, the values (checked with aiven-check-config), Organization Policy
 # Administrator for you, the bootstrap of the control project (4 APIs and the state bucket),
 # terraform init and plan, a short summary against the runbook, the question, the apply. Then: the
-# credit reminder run by hand, drills BD-1 and BD-2 on the scratch project only, the gateway as
-# Contributor of the Sandbox drive, aiven-deploy-check all, and a report in m2-result.txt (IDs and
-# results only) to send back.
+# credit reminder run by hand, drills BD-1 and BD-2 on the scratch project only, the deploy checks
+# (all but the Drive ones, which are by hand), and a report in m2-result.txt (IDs and results only)
+# to send back.
 #
 # Safe to run again: each step checks first and skips what is done. A step that was done and must
 # not run twice (the reminder email, the drills) is remembered in .m2-oneclick/state. A real error
@@ -89,12 +90,10 @@ cd "$REPO"
 RESULTS=()       # one line per step: PASS, FAIL, MANUAL, NOTE or SKIP, a name and a detail
 TF=""            # the terraform to use
 ACCOUNT=""       # who logged in
-DRIVE_SCOPE="no" # whether Terraform's login (ADC) holds the Drive scope
 GCLOUD_HOME=""   # the folder of this run's logins
 EMAILS="not asked"
 STOP_AMOUNT=""   # budget aiven-stop, a whole amount (variables.tf)
 APPLIED="no"     # whether this run applied, or found nothing to apply
-SANDBOX_BY_HAND=0
 STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # --- output, the report, and stopping
@@ -111,6 +110,15 @@ state_set() {
   grep -vE "^$1=" "$STATE" >"$STATE.new" 2>/dev/null || true
   printf '%s=%s\n' "$1" "$2" >>"$STATE.new"
   mv "$STATE.new" "$STATE"
+}
+
+# Throw away what was typed ahead into the terminal, so that it never answers a question.
+flush_input() {
+  local _
+  if [[ -t 0 ]]; then
+    while read -r -t 0.05 _; do :; done
+  fi
+  return 0
 }
 
 # Run a command with its output in the run log only.
@@ -295,18 +303,13 @@ login() {
     fail "you logged in as ${ACCOUNT:-nobody}, not with an @aivenstudios.com account" \
       "run again, and pick your AIVEN account in the browser"
   fi
-  say "   Second login: Terraform's, with the Drive scope (for the Sandbox drive and its checks)."
-  if gcloud auth application-default login --quiet \
-    --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive; then
-    DRIVE_SCOPE="yes"
-  else
-    say "   Google did not give the Drive scope. Once more, without it: the Sandbox then takes one step by hand."
-    if ! gcloud auth application-default login --quiet \
-      --scopes=https://www.googleapis.com/auth/cloud-platform; then
-      fail "Terraform's login did not finish" "run again, and finish both logins in the browser"
-    fi
+  # No Drive scope: Google blocks it for gcloud's own login ("This app is blocked"), and the
+  # browser then never comes back, so asking for it would hang the run (ruling R162).
+  say "   Second login: Terraform's (no Drive access; the Sandbox is one step by hand)."
+  if ! gcloud auth application-default login --quiet; then
+    fail "Terraform's login did not finish" "run again, and finish both logins in the browser"
   fi
-  record PASS login "$ACCOUNT (Drive scope: $DRIVE_SCOPE); revoked when the script ends"
+  record PASS login "$ACCOUNT; both logins are revoked when the script ends"
 }
 
 # --- 3. the values: IDs and addresses only
@@ -327,6 +330,7 @@ is_reachable_project() { is_project "$1" && project_exists "$1"; }
 # ask NAME "question" "default" check "what it must be"
 ask() {
   local name="$1" question="$2" default="$3" check="$4" shape="$5" answer prompt
+  flush_input
   while true; do
     prompt="   $question"
     [[ -n $default ]] && prompt+=" [$default]"
@@ -578,6 +582,7 @@ plan_and_ask() {
     return 0
   fi
   local answer=""
+  flush_input
   read -r -p $'\n   Apply? (y/n) ' answer || true
   if [[ $answer != y && $answer != Y && $answer != yes ]]; then
     record SKIP apply "you answered no: nothing applied (the bootstrap aside)"
@@ -766,29 +771,20 @@ drills() {
 }
 
 sandbox() {
-  step "9. The gateway as Contributor of the Sandbox drive"
-  local member="gateway@$V_gateway_project.iam.gserviceaccount.com" line status=0
-  local by_hand="In Google Drive, open Shared drives > AIVEN Architecture Sandbox > Manage members, add $member as Contributor, untick Notify people, and Share."
-  SANDBOX_BY_HAND=1
+  step "9. The Sandbox drive: the gateway as Contributor, by hand"
+  local member="gateway@$V_gateway_project.iam.gserviceaccount.com"
   if [[ -z $V_sandbox_drive_id ]]; then
     record MANUAL sandbox-member "no sandbox_drive_id yet (setup step S5): make the drive, then run again and give its ID"
-  elif [[ $DRIVE_SCOPE != yes ]]; then
-    record MANUAL sandbox-member "$by_hand"
   else
-    line="$(helper drive-member --drive "$V_sandbox_drive_id" --member "$member" --quota-project "$V_gateway_project" 2>>"$LOG")" || status=$?
-    if [[ $status -eq 0 || $status -eq 1 || $status -eq 3 ]] && [[ -n $line ]]; then
-      record "${line%% *}" sandbox-member "${line#*: }"
-      [[ $status -eq 0 ]] && SANDBOX_BY_HAND=0
-    else
-      record FAIL sandbox-member "the Drive call could not run (see .m2-oneclick/run.log). $by_hand"
-    fi
+    record MANUAL sandbox-member "In Google Drive, open Shared drives > AIVEN Architecture Sandbox > Manage members, add $member as Contributor, untick Notify people, and Share."
   fi
+  record MANUAL sandbox-check "There, check that the members are exactly you (Manager) and $member (Contributor), and that access for non-members is off."
 }
 
 deploy_check() {
-  step "10. aiven-deploy-check all"
+  step "10. aiven-deploy-check (all but drive: Google refuses the Drive scope to gcloud's login)"
   local status=0 failed noted passed
-  uv run --frozen --quiet aiven-deploy-check all >"$WORK/deploy-check.txt" 2>&1 || status=$?
+  uv run --frozen --quiet aiven-deploy-check keys apis iam stores budgets >"$WORK/deploy-check.txt" 2>&1 || status=$?
   sed 's/^/   /' "$WORK/deploy-check.txt"
   passed="$(grep -c '^PASS' "$WORK/deploy-check.txt" || true)"
   failed="$(grep -c '^FAIL' "$WORK/deploy-check.txt" || true)"
@@ -796,9 +792,7 @@ deploy_check() {
   if [[ $status -eq 0 ]]; then
     record PASS deploy-check "$passed PASS, $noted NOTE (expected in M2: gateway service, audit lock, maybe the Firestore TTL)"
   elif [[ $status -eq 1 ]]; then
-    local why="the FAIL lines are in m2-result.txt"
-    [[ $SANDBOX_BY_HAND == 1 ]] && why+="; drive sandbox members passes once the gateway is added by hand"
-    record FAIL deploy-check "$failed FAIL, $passed PASS, $noted NOTE ($why)"
+    record FAIL deploy-check "$failed FAIL, $passed PASS, $noted NOTE (the FAIL lines are in m2-result.txt)"
   else
     record FAIL deploy-check "it could not run (exit $status)"
   fi
@@ -807,6 +801,7 @@ deploy_check() {
 ask_emails() {
   local answer=""
   printf '\n'
+  flush_input
   read -r -p "   Did the alert emails arrive at $V_alert_email (the credit reminder, and the drill's budget stop)? (y/n, Enter skips) " answer || true
   case "$answer" in
     y | Y | yes) EMAILS="yes" ;;

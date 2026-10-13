@@ -508,9 +508,8 @@ def _budgets(google: Google, d: Deployment) -> list[Result]:
 # --- drive: the Sandbox's members and sharing (section 11; drive-wrapper section 1)
 
 DRIVE_HINT = (
-    "; log in with the drive.readonly scope: gcloud auth application-default login "
-    "--scopes=https://www.googleapis.com/auth/cloud-platform,"
-    "https://www.googleapis.com/auth/drive.readonly"
+    "; Google refuses the Drive scope to gcloud's own login, so check the Sandbox by hand "
+    "(runbook m2-apply.md, part 6)"
 )
 
 
