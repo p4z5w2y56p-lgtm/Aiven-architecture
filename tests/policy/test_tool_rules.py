@@ -11,6 +11,7 @@ import pytest
 
 from aiven.policy import constants
 from aiven.policy.catalog import Action
+from aiven.policy.tools import tool_problem
 from tests.support.frontmatter import front_without
 from tests.support.rules import (
     CATALOG,
@@ -97,6 +98,12 @@ def test_a_tool_that_fails_a_rule_gets_that_code_and_no_other(tool, code):
     assert run.codes(wrappers=True).count("W-TOOL-NOT-LIVE") == WRAPPER_WARNINGS_OF_THE_BASE
 
 
+@pytest.mark.parametrize(("tool", "code"), BAD_TOOLS.values(), ids=BAD_TOOLS)
+def test_tool_problem_is_the_code_of_the_first_rule_that_the_tool_fails(tool, code):
+    # The body checks ask it too (ruling R33), so that they never judge a tool by another rule.
+    assert tool_problem(tool, CATALOG) == code
+
+
 def test_the_bad_tools_cover_every_code_every_r3_action_and_every_reserved_namespace():
     assert {code for _, code in BAD_TOOLS.values()} == {
         "E-TOOL-WILDCARD",
@@ -150,6 +157,7 @@ def test_the_grantable_actions_are_the_r0_r1_and_r2_rows_of_the_catalog():
 def test_every_r0_r1_and_r2_action_of_the_catalog_can_be_granted(tool):
     run = check(with_tools(tool))
     assert [code for code in run.codes() if code.startswith("E-TOOL")] == []
+    assert tool_problem(tool, CATALOG) is None
 
 
 def test_a_policy_without_a_usable_tools_list_has_no_tool_findings():

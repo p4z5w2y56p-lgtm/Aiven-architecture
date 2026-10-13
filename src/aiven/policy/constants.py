@@ -134,6 +134,21 @@ R1_PLUS = ("R1", "R2")
 # How the catalog's wrapper ids are written in messages (validator-spec 5 and 9).
 WRAPPER_NAMES = {"drive": "Drive", "email": "Email", "agentbuilder": "Agent Builder"}
 
+# The `##` sections of a policy body, in this order (validator-spec 3.7, E-BODY-SECTIONS). The first
+# three are free text, and the last two are generated from the front matter (section 7).
+SECTIONS = (
+    "Purpose",
+    "Why each tool",
+    "Data and risks",
+    "Enforced rules (generated)",
+    "Sign-off (generated)",
+)
+FREE_SECTIONS = SECTIONS[:3]
+GENERATED_SECTIONS = SECTIONS[3:]
+
+# A free-text section has at least this many characters of text (validator-spec 3.7, E-BODY-EMPTY).
+MIN_SECTION_CHARS = 20
+
 # A policy file is at most 64 KiB (validator-spec 3.1, E-FILE-SIZE).
 MAX_FILE_BYTES = 64 * 1024
 

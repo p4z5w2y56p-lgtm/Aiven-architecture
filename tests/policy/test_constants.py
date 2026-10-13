@@ -150,3 +150,22 @@ def test_wrapper_names_are_the_ones_in_section_5():
     for action_cell, _, wrapper_cell, _, _ in rows:
         action = catalog.actions[code_spans(action_cell)[0]]
         assert constants.WRAPPER_NAMES[action.wrapper] == wrapper_cell
+
+
+# --- the sections of the body (Task 1.5)
+
+
+def test_the_sections_and_the_minimum_text_equal_section_3_7():
+    header, *rows = table_after("3.7 Body")
+    assert header == ["Code", "Fails when"]
+    fails = dict(rows)
+    listed = re.search(r"in this order: (.+?)\. ", fails["E-BODY-SECTIONS"])
+    assert listed
+    assert constants.SECTIONS == tuple(listed.group(1).split(", "))
+    assert constants.FREE_SECTIONS == constants.SECTIONS[:3]
+    assert constants.GENERATED_SECTIONS == constants.SECTIONS[3:]
+    assert all(name.endswith("(generated)") for name in constants.GENERATED_SECTIONS)
+    assert not any(name.endswith("(generated)") for name in constants.FREE_SECTIONS)
+    empty = fails["E-BODY-EMPTY"]
+    assert [name for name in constants.SECTIONS if name in empty] == list(constants.FREE_SECTIONS)
+    assert f"fewer than {constants.MIN_SECTION_CHARS} characters of text" in empty

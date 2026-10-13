@@ -105,7 +105,7 @@ def check_tools(
         if entry.placeholder:
             settled = False
             continue
-        problem = _problem(entry.text, catalog)
+        problem = tool_problem(entry.text, catalog)
         if problem is not None:
             settled = False
             findings.append(fields.report(problem, entry.line, {"tool": entry.text}))
@@ -118,8 +118,12 @@ def check_tools(
     return findings, Tools(tuple(actions), settled)
 
 
-def _problem(tool: str, catalog: Catalog) -> str | None:
-    """The code of the first rule that the tool fails (ruling R32), None if it passes them all."""
+def tool_problem(tool: str, catalog: Catalog) -> str | None:
+    """The code of the first rule that the tool fails (ruling R32), None if it passes them all.
+
+    That is the test of whether an entry of `tools` is a tool (see the module docstring). The body
+    checks ask it too, so that an entry that failed is not also called unexplained (ruling R33).
+    """
     if "*" in tool:
         return "E-TOOL-WILDCARD"
     action = catalog.actions.get(tool)
