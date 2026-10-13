@@ -170,7 +170,7 @@ The body is parsed as CommonMark with tables. Headings inside code blocks do not
 | E-BODY-TOOL-UNEXPLAINED | A tool has no ``- `tool`: reason`` bullet in Why each tool, or the reason is empty |
 | E-BODY-TOOL-EXTRA | Why each tool explains a tool that is not in `tools` |
 | E-BODY-DRIFT | A generated section differs from what `render` produces from the front matter (see 7) |
-| E-BODY-HTML | Raw HTML or an HTML comment appears, or text the reader cannot see: a character reference that becomes a hidden character, table cells past the header's count, lines the parser drops, or a code fence info string other than one language word |
+| E-BODY-HTML | Raw HTML or an HTML comment appears, or text the reader cannot see: a character reference that becomes a hidden character, table cells past the header's count, lines the parser drops, or a code fence label that does not match `^[a-z0-9+#-]{1,16}$` (a fence without a label is fine) |
 | E-BODY-LINK | A link, image or URL appears |
 
 E-BODY-DRIFT closes a gap in the plan: you sign the body, but the gateway enforces the front matter. Rendering the body from the front matter and refusing any difference means the two always say the same thing.
