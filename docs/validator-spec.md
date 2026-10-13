@@ -201,6 +201,8 @@ E-BODY-DRIFT closes a gap in the plan: you sign the body, but the gateway enforc
 | E-TOOL-NOT-LIVE | A tool's wrapper is not live for this agent: it is planned, disabled, or the agent isn't on its `enabled_for` list |
 | E-SCOPE-NOT-IN-SANDBOX | The folder's `driveId` is not the Sandbox drive, or the folder's real path differs from `drive_folder_path` |
 
+`verify` checks the size and the signature before it reads the file: a file over 64 KiB, an unsigned file and a badly signed file are refused without being parsed, so the gateway never parses bytes Matthijs did not sign.
+
 If a new version fails `verify`, the gateway keeps the active version and alerts Matthijs. If the active version fails (for example, its file changed), the agent is stopped and Matthijs is alerted.
 
 ## 4. How the gateway reads a policy
