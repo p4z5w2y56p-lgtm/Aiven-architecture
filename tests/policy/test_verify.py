@@ -21,6 +21,7 @@ import hashlib
 import shutil
 import stat
 import subprocess
+import tempfile
 import warnings
 from collections import Counter
 from collections.abc import Callable
@@ -31,6 +32,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from aiven.policy import constants
 from aiven.policy import validate as validate_module
 from aiven.policy import verify as verify_module
 from aiven.policy.constants import MAX_FILE_BYTES, MAX_SCANNED_BYTES
@@ -407,6 +409,39 @@ def test_nothing_that_ssh_keygen_says_is_in_the_finding(signer):
     assert findings == [INVALID]
     for words in ("Could not verify", "incorrect signature", "missing header", "sshsig"):
         assert words not in shown(findings)
+
+
+# --- the signature is small (ruling R80)
+
+SIG_CAP = 16 * 1024  # a real SSHSIG file is under 1 KiB
+
+
+def test_the_signature_cap_is_16_kib():
+    assert constants.MAX_SIG_BYTES == SIG_CAP
+
+
+def test_a_signature_over_16_kib_is_refused_before_anything_is_written(monkeypatch, nowhere):
+    calls = stub_run(monkeypatch)
+    made = spy_on(monkeypatch, tempfile, ["TemporaryDirectory"])
+    assert verify_with(nowhere, BASE, b"x" * (SIG_CAP + 1)) == (None, [INVALID])
+    assert calls == []  # ssh-keygen was not run
+    assert sum(made.values()) == 0  # and no folder was made for the signature
+
+
+def test_a_signature_of_exactly_16_kib_still_goes_to_ssh_keygen(monkeypatch, nowhere):
+    calls = stub_run(monkeypatch)
+    verify_with(nowhere, BASE, b"x" * SIG_CAP)
+    assert [call.sig for call in calls] == [b"x" * SIG_CAP]
+
+
+def test_a_genuine_signature_padded_past_16_kib_is_refused(signer):
+    # OpenSSH ignores blank lines after a signature, so a genuine one can be made as large as
+    # you like. Without the cap, a megabyte of them would be written out and handed to ssh-keygen.
+    sig = signer.sign(BASE)
+    at_the_cap = sig + b"\n" * (SIG_CAP - len(sig))
+    assert verify_with(signer, BASE, at_the_cap) == (policy_of(BASE), [])
+    assert verify_with(signer, BASE, at_the_cap + b"\n") == (None, [INVALID])
+    assert verify_with(signer, BASE, sig + b"\n" * 1_000_000) == (None, [INVALID])
 
 
 # --- the call to ssh-keygen

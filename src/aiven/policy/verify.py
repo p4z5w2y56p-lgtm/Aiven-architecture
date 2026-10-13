@@ -7,7 +7,8 @@ stops at the first step that fails (rulings R43 and R56):
 1. A file over 64 KiB is E-FILE-SIZE. A file that was signed was validated before it was signed, so
    it cannot be this large.
 2. No signature is E-SIG-MISSING.
-3. `ssh-keygen -Y verify` must accept the signature, or it is E-SIG-INVALID.
+3. `ssh-keygen -Y verify` must accept the signature, or it is E-SIG-INVALID. A signature file over
+   16 KiB is refused first, before it is written anywhere (ruling R80).
 4. The file is validated, once (`validate_policy`).
 5. The checks that are only possible at load run (3.10): the version against the active one
    (E-VERSION-ORDER), the wrappers (E-TOOL-NOT-LIVE) and the Drive folder (E-SCOPE-NOT-IN-SANDBOX).
@@ -52,7 +53,7 @@ from pathlib import Path
 
 from aiven.policy.catalog import Catalog
 from aiven.policy.config import PlatformConfig
-from aiven.policy.constants import MAX_FILE_BYTES, NAMESPACE, SIGNER, WRAPPER_NAMES
+from aiven.policy.constants import MAX_FILE_BYTES, MAX_SIG_BYTES, NAMESPACE, SIGNER, WRAPPER_NAMES
 from aiven.policy.findings import Finding
 from aiven.policy.model import Policy
 from aiven.policy.tools import tool_problem
@@ -125,7 +126,12 @@ def verify(
 
 
 def _signature_holds(data: bytes, sig: bytes, allowed_signers: Path) -> bool:
-    """Whether `ssh-keygen -Y verify` accepts `sig` as the signature of `data` (section 2)."""
+    """Whether `ssh-keygen -Y verify` accepts `sig` as the signature of `data` (section 2).
+
+    A signature over `MAX_SIG_BYTES` is none (ruling R80), and is refused before it is written.
+    """
+    if len(sig) > MAX_SIG_BYTES:
+        return False
     with tempfile.TemporaryDirectory(prefix="aiven-policy-") as folder:
         sig_file = Path(folder) / "policy.sig"
         sig_file.write_bytes(sig)

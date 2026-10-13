@@ -159,6 +159,11 @@ MAX_FILE_BYTES = 64 * 1024
 # the checks of the bytes (E-FILE-SIZE, E-ENCODING, E-LINE-ENDINGS, E-FINAL-NEWLINE) still run.
 MAX_SCANNED_BYTES = 16 * MAX_FILE_BYTES
 
+# A signature file (`<agent>.md.sig`) is at most this long (ruling R80). A real SSHSIG file is under
+# 1 KiB, but OpenSSH ignores blank lines after a signature, so a genuine one can be padded to any
+# size. `verify` refuses a longer file as E-SIG-INVALID before it writes it anywhere.
+MAX_SIG_BYTES = 16 * 1024
+
 # Hidden characters (validator-spec 3.1, E-HIDDEN-CHAR): every character in these Unicode
 # categories, and in these code point ranges (inclusive, in the order of the spec), except LF and
 # the normal space (see `chars.is_hidden`). The ranges are needed because those characters are
