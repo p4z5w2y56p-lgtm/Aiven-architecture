@@ -495,6 +495,19 @@ def test_an_exception_from_the_loader_itself_is_not_taken_for_a_yaml_error(monke
         load("a: &x 1\n", PATH)
 
 
+@pytest.mark.parametrize("error", [KeyError, IndexError, TypeError, RuntimeError])
+def test_any_other_exception_of_ruamel_is_a_bug_and_goes_up(monkeypatch, error):
+    # Only what ruamel is known to raise for input it rejects is E-YAML. Anything else is a bug in
+    # ruamel or here, and must not be passed off as a finding about the file.
+    def failing(self, stream):
+        yield from ()
+        raise error("a bug in the parser")
+
+    monkeypatch.setattr("aiven.policy.frontmatter.YAML.parse", failing)
+    with pytest.raises(error, match="a bug in the parser"):
+        load("a: 1\n", PATH)
+
+
 SAME_UNDER_O = [
     *[front for front, _, _ in REJECTED.values()],
     *[front for front, _ in FEATURES.values()],

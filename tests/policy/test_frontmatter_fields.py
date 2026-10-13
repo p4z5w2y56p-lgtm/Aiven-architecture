@@ -16,6 +16,7 @@ from aiven.policy.frontmatter import (
     FIRST_LINE,
     OPTIONAL,
     FrontMatter,
+    _Reader,
     check_filename,
     load,
 )
@@ -454,6 +455,53 @@ def test_a_disguised_placeholder_is_an_escape_sequence_and_no_field_vanishes(fie
     assert [f.params.get("feature") for f in result.findings] == ["escape sequence"]
     assert (result.data, result.lines, result.placeholders) == (None, {}, frozenset())
     assert unexplained(text, result) == []
+
+
+# The escape rule is what keeps a disguised placeholder from getting this far. It must not be the
+# only thing: the decisions about placeholders go by the text as written, and the tests below run
+# them with the rule switched off. A future change that lets some escape through (a quote, say)
+# then cannot make a value that merely decodes to a placeholder skip its checks.
+
+
+@pytest.fixture
+def escapes_allowed(monkeypatch):
+    feature = _Reader._feature
+
+    def passing_escapes(self, name, index):
+        if name != "escape sequence":
+            feature(self, name, index)
+
+    monkeypatch.setattr(_Reader, "_feature", passing_escapes)
+
+
+@pytest.mark.parametrize("spelling", [TODO_HEX, TODO_FOLDED], ids=["hex escape", "line break"])
+@pytest.mark.parametrize("field", DISGUISED)
+def test_a_value_that_only_decodes_to_a_placeholder_still_gets_its_type_error(
+    escapes_allowed, field, spelling
+):
+    text = DISGUISED[field](spelling)
+    result = load(text, PATH)
+    assert result.placeholders == frozenset()
+    assert places(result) == [("E-FIELD-TYPE", result.lines[field], None)]
+    assert unexplained(text, result) == []
+
+
+def test_entries_that_only_decode_to_a_placeholder_are_still_repeats(escapes_allowed):
+    text = swap("- gmail.send\n", f"- gmail.send\n  - {TODO_HEX}\n  - {TODO_HEX}\n")
+    result = load(text, PATH)
+    assert places(result) == [("E-LIST-DUPLICATE", SEND_LINE + 2, None)]
+    assert only(result).params == {"list": "tools", "entry": "TODO"}
+    assert result.placeholders == frozenset()
+
+
+def test_an_agent_that_only_decodes_to_a_placeholder_is_compared_with_the_file_name(
+    escapes_allowed,
+):
+    front = load(swap("agent: invoice-reminder", f"agent: {TODO_HEX}"), PATH)
+    assert front.placeholders == frozenset()
+    (finding,) = check_filename(Path("policies/other.md"), front)
+    assert finding.params == {"name": "other.md", "agent": "TODO"}
+    assert check_filename(Path("policies/TODO.md"), front) == []
 
 
 # A value on a later line than its key is reported on its own line by E-PLACEHOLDER, and the key
