@@ -278,6 +278,17 @@ def test_an_entry_is_hidden_alone_but_still_counts_for_the_comparison():
     assert widening(new_tools, old_tools) == ([], False)
 
 
+def test_a_hidden_address_in_a_domain_that_was_listed_is_still_no_widening():
+    # Ruling R74 for an address that the guard hides. The old list has @aivenstudios.com, so an
+    # address in that domain gives no new reach, whatever it looks like. The comparison is of the
+    # entry as it is written: as it is shown it is `[hidden]`, which has no domain and would be new.
+    bsn = gen.valid_bsn()
+    only = variant(setting("scope.email_to", [f"{bsn}@aivenstudios.com"]))
+    both = variant(setting("scope.email_to", ["@aivenstudios.com", f"{bsn}@aivenstudios.com"]))
+    assert widening(PREV, only) == ([], False)
+    assert widening(PREV, both) == ([], False)
+
+
 def test_each_hidden_entry_keeps_its_own_place_in_the_list():
     one, two = two_bsns()
     new = variant(with_tools(*TOOLS, f"drive.{one}", "drive.read", f"drive.{two}"))

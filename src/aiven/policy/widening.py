@@ -29,12 +29,17 @@ E-PLACEHOLDER, so such a class is not ranked here. The other fields are compared
 values are.
 
 The strings are plain ASCII (`->`), and `check_history` joins them with `; ` for W-WIDENS. They hold
-text from the file: tools, addresses and the numbers of limits. Each such value goes through
-`content.safe_text` before it is grouped (ruling R77), so one that the guard would hide, a
-credential, a bank detail or an ID number, shows as `[hidden]` in its own place. Without that the
-`Finding` that quotes the joined list hides the whole of it when a single entry looks like one, and
-the tool and the limit next to a BSN-shaped address are lost with it. The `Finding` still judges
-the list as a whole, and shows up to 2,000 characters of it.
+text from the file: tools, addresses, and the numbers of the limits and of `min_runs`. Each such
+value goes through `content.safe_text` before it is grouped (ruling R77), so one that the guard
+would hide, a credential, a bank detail or an ID number, shows as `[hidden]` in its own place.
+Without that the `Finding` that quotes the joined list hides the whole of it when a single entry
+looks like one, and the tool and the limit next to a BSN-shaped address are lost with it. The
+`Finding` still judges the list as a whole, and shows up to 2,000 characters of it.
+
+`max_class` and the mode are not cleaned, because they are constants. `max_class` is only written
+when `_raised` says that the class rose, and `_raised` ranks R0, R1 and R2 and nothing else (R3, R4
+and a placeholder are the errors of their own file), so both classes are one of those three. The
+mode is only written for `strict` to `taint`, and the folder strings only say `changed`.
 """
 
 from aiven.policy.constants import POLICY_CLASSES
@@ -51,6 +56,7 @@ def widening(prev: Policy, new: Policy) -> tuple[list[str], bool]:
     raised = _raised(prev.max_class, new.max_class)
     changes = [_grouped("tools", added)] if added else []
     if raised:
+        # Not cleaned: `_raised` ranks only R0, R1 and R2, so both classes are constants.
         changes.append(f"max_class: {prev.max_class} -> {new.max_class}")
     changes += _limits(prev, new)
     changes += _scope(prev, new)
