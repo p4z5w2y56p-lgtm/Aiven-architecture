@@ -720,6 +720,52 @@ def test_with_no_active_version_any_version_loads(signer):
     assert (policy == policy_of(data), findings) == (True, [])
 
 
+# --- ActiveVersion takes the hash the way a Policy writes it (review M4)
+#
+# A hash in another form would make "the same version in other bytes" true of every reload of the
+# active file, and nothing would load. That is a bug of the caller, so it fails where it is made.
+
+
+def test_active_version_takes_the_hash_of_a_policy():
+    policy = policy_of(BASE)
+    assert ActiveVersion(1, policy.sha256) == ActiveVersion(1, policy.sha256)
+    assert ActiveVersion(3, "sha256:" + "0123456789abcdef" * 4).version == 3
+
+
+BAD_HASHES = {
+    "empty": "",
+    "no digest": "sha256:",
+    "63 digits": "sha256:" + "a" * 63,
+    "65 digits": "sha256:" + "a" * 65,
+    "upper case digits": "sha256:" + "A" * 64,
+    "upper case name": "SHA256:" + "a" * 64,
+    "another algorithm": "sha1:" + "a" * 64,
+    "no name": "a" * 64,
+    "space before": " sha256:" + "a" * 64,
+    "space after": "sha256:" + "a" * 64 + " ",
+    "newline after": "sha256:" + "a" * 64 + "\n",
+    "not hex": "sha256:" + "g" * 64,
+    "a hyphen": "sha256:" + "a" * 63 + "-",
+    "digits that are not ASCII": "sha256:" + "\u0661" * 64,  # what a \d would take for digits
+}
+
+
+@pytest.mark.parametrize("name", BAD_HASHES)
+def test_active_version_refuses_a_hash_in_another_form(name):
+    with pytest.raises(ValueError):
+        ActiveVersion(3, BAD_HASHES[name])
+
+
+@pytest.mark.parametrize(
+    "sha256",
+    [None, 5, b"sha256:" + b"a" * 64, ["sha256:" + "a" * 64]],
+    ids=["None", "a number", "bytes", "a list"],
+)
+def test_active_version_refuses_a_hash_that_is_not_a_string(sha256):
+    with pytest.raises(ValueError):
+        ActiveVersion(3, sha256)
+
+
 # --- the wrappers (3.10, E-TOOL-NOT-LIVE)
 
 

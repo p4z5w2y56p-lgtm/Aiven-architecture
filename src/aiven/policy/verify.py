@@ -47,6 +47,7 @@ them, with `check_set`.
 """
 
 import inspect
+import re
 import stat
 import subprocess
 import tempfile
@@ -65,6 +66,9 @@ from aiven.policy.validate import report_order, validate_policy
 # Long enough for a slow machine, short enough that a hung ssh-keygen cannot hold up a load.
 SSH_KEYGEN_TIMEOUT_S = 10
 
+# The hash of a file as `Policy.sha256` writes it (used with fullmatch: `$` accepts a newline).
+_SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
+
 
 class NotARegularFile(Exception):
     """The file of allowed signers is a folder, a pipe or a device. Only the name is ever shown."""
@@ -74,11 +78,18 @@ class NotARegularFile(Exception):
 class ActiveVersion:
     """The version of an agent that is loaded now: its number and the hash of its file.
 
-    `sha256` is written as `Policy.sha256` is: `sha256:` and the hex digest.
+    `sha256` is written as `Policy.sha256` is: `sha256:` and 64 lowercase hex digits. Any other
+    form raises ValueError when this is made (review M4). A hash in another form would never equal
+    the hash of the file, so the active file itself would be "the same version in other bytes" at
+    every reload, and nothing would load. That is a bug of the caller, and it should show at once.
     """
 
     version: int
     sha256: str
+
+    def __post_init__(self) -> None:
+        if not (isinstance(self.sha256, str) and _SHA256.fullmatch(self.sha256)):
+            raise ValueError("sha256 must be 'sha256:' and 64 lowercase hex digits")
 
 
 def verify(
