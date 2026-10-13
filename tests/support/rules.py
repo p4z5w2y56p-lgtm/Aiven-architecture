@@ -26,8 +26,8 @@ CATALOG = load_catalog(REPO_ROOT / "catalog" / "catalog-v1.yaml")
 BASE = valid_base()
 
 # Lists of tools that are not settled (rulings R49 and R53): an entry that fails its own rules, an
-# entry that is a placeholder, and no tool at all (a size that fails E-RANGE). Each has the tool
-# sheets.read next to the odd one, or nothing.
+# entry that is a placeholder, and no tool at all (a size that fails E-RANGE). Most of them have
+# the tool sheets.read next to the odd entry, which is a tool that passes.
 UNSETTLED_TOOLS = {
     "a name that is not in the catalog": ["sheets.read", "gmail.sned"],
     "a wildcard": ["sheets.read", "drive.*"],
