@@ -379,6 +379,21 @@ def test_the_sign_off_names_the_agent_and_the_version():
 
 # --- what cannot be rendered
 
+# The reasons for a ValueError. Each has one message, with nothing from the file in it, and the
+# tests say which of them a case gets.
+NOT_AN_ACTION = "a tool of the policy is not an R0, R1 or R2 action of the catalog"
+NOT_A_MODE = "untrusted_input is neither strict nor taint"
+NOT_LAST = "the generated sections are not the last two sections of the file"
+NOT_A_HEADING = "a line of the file is like the heading of the generated sections, but is none"
+NOT_HEADINGS = "the generated sections would not be sections where they are added"
+
+
+def refusal(data: bytes, policy=POLICY, catalog=CATALOG) -> str:
+    """The message of the ValueError that `rewrite` raises for this file."""
+    with pytest.raises(ValueError) as raised:
+        rewrite(data, policy, catalog)
+    return str(raised.value)
+
 
 @pytest.mark.parametrize(
     "tool", ["drive.reed", "payments.pay", "drive.*", "drive.move", "agentbuilder.permissions"]
@@ -388,9 +403,8 @@ def test_a_tool_that_is_not_an_action_to_grant_raises_value_error_without_its_na
     policy = replace(POLICY, tools=("sheets.read", tool))
     with pytest.raises(ValueError) as raised:
         render_generated(policy, CATALOG)
-    assert tool not in str(raised.value)
-    with pytest.raises(ValueError):
-        rewrite(BASE, policy, CATALOG)
+    assert str(raised.value) == NOT_AN_ACTION
+    assert refusal(BASE, policy) == NOT_AN_ACTION
 
 
 def test_an_action_without_an_undo_text_or_of_a_class_that_is_not_granted_raises_value_error():
@@ -401,14 +415,19 @@ def test_an_action_without_an_undo_text_or_of_a_class_that_is_not_granted_raises
     }
     catalog = replace(CATALOG, actions={**CATALOG.actions, **actions})
     for tool in actions:
-        with pytest.raises(ValueError):
-            render_generated(replace(POLICY, tools=("sheets.read", tool)), catalog)
+        policy = replace(POLICY, tools=("sheets.read", tool))
+        with pytest.raises(ValueError) as raised:
+            render_generated(policy, catalog)
+        assert str(raised.value) == NOT_AN_ACTION
+        assert refusal(BASE, policy, catalog) == NOT_AN_ACTION
 
 
 def test_a_mode_that_is_neither_strict_nor_taint_raises_value_error_without_its_value():
+    policy = replace(POLICY, untrusted_input="zz-mode")
     with pytest.raises(ValueError) as raised:
-        render_generated(replace(POLICY, untrusted_input="zz-mode"), CATALOG)
-    assert "zz-mode" not in str(raised.value)
+        render_generated(policy, CATALOG)
+    assert str(raised.value) == NOT_A_MODE
+    assert refusal(BASE, policy) == NOT_A_MODE
 
 
 # --- rewrite
@@ -524,7 +543,7 @@ def test_a_heading_in_the_front_matter_is_a_comment_and_not_the_section():
     assert rewrite(data, POLICY, CATALOG) == data[:cut] + SECTIONS.encode()
 
 
-# --- rewrite never deletes text that is not a generated section (ruling R64)
+# --- rewrite never deletes text that is not a generated section (rulings R64 and R69)
 
 AUTHOR = "Text that the author wrote and that no rewrite may take away."
 PURPOSE_HEADING = "## Purpose\n"
@@ -566,10 +585,7 @@ MISORDERED = {
 @pytest.mark.parametrize("text", MISORDERED.values(), ids=MISORDERED)
 def test_sections_that_are_not_the_last_two_are_not_rewritten_and_nothing_of_the_file_is_said(text):
     assert AUTHOR in text
-    with pytest.raises(ValueError) as raised:
-        rewrite(text.encode(), POLICY, CATALOG)
-    assert AUTHOR not in str(raised.value) and AUTHOR not in repr(raised.value)
-    assert "Purpose" not in str(raised.value) and "Notes" not in str(raised.value)
+    assert refusal(text.encode()) == NOT_LAST
 
 
 @pytest.mark.parametrize(
@@ -624,19 +640,34 @@ LINES_THAT_ARE_NO_HEADING = {
 def test_a_line_that_looks_like_the_heading_but_is_none_raises_instead_of_adding_the_sections(tail):
     # Added at the end, the sections would be in the fence too, and each rewrite would add more.
     text = BASE_TEXT[: BASE_TEXT.index(ENFORCED)] + tail
-    with pytest.raises(ValueError) as raised:
-        rewrite(text.encode(), POLICY, CATALOG)
-    assert AUTHOR not in str(raised.value) and ENFORCED not in str(raised.value)
+    assert refusal(text.encode()) == NOT_A_HEADING
 
 
-@pytest.mark.parametrize("tail", ["```\nsome code\n", "<!--\nsome comment\n", "~~~\ncode"])
+OPEN_BLOCKS = {
+    "a comment": "<!--\nsome comment\n",
+    "pre": "<pre>\ntext\n",
+    "script": "<script>\ntext\n",
+    "style": "<style>\ntext\n",
+    "textarea": "<textarea>\ntext\n",
+    "CDATA": "<![CDATA[\ntext\n",
+    "a processing instruction": "<?php\ntext\n",
+    "a declaration": "<!DOCTYPE html\ntext\n",
+    "a fence of backticks": "```\nsome code\n",
+    "a fence of tildes": "~~~\ncode",
+    "a fence that is longer": "`````\ncode\n",
+    "a fence with a word": "```python\ncode\n",
+}
+
+
+@pytest.mark.parametrize("tail", OPEN_BLOCKS.values(), ids=OPEN_BLOCKS)
 def test_sections_that_would_end_up_in_a_block_that_is_not_closed_raise_instead_of_being_added(
     tail,
 ):
     # The same without a line like the heading in it: the sections must be headings where they go.
+    # (The reason is that one, and not the one of a line that looks like the heading: the line is
+    # there after the sections are added, and the file was not the one that had it.)
     data = PREFIX + b"\n\n" + tail.encode()
-    with pytest.raises(ValueError):
-        rewrite(data, POLICY, CATALOG)
+    assert refusal(data) == NOT_HEADINGS
 
 
 @pytest.mark.parametrize("mark", ["> ", "- ", "1. ", "> - "])

@@ -28,7 +28,7 @@ from aiven.policy.catalog import Action, Catalog
 from aiven.policy.constants import GENERATED_SECTIONS, NAMESPACE, SIGNER_NAME, TIMEZONE
 from aiven.policy.fileformat import decode_text
 from aiven.policy.frontmatter import split
-from aiven.policy.markdown import find, headings, parse
+from aiven.policy.markdown import Heading, find, headings, parse
 from aiven.policy.model import Limits, Policy, Scope
 
 # The class and the gate of a tool, by class.
@@ -119,9 +119,10 @@ def rewrite(data: bytes, p: Policy, catalog: Catalog) -> bytes:
     if start is not None:
         return data[:start] + generated
     head = data + _gap(data)
-    # Where the sections go, the first of them must be a heading that is found. (A line that looks
-    # like it and is none makes `_section_start` raise, and else nothing is found.)
-    if _section_start(head + generated) is None:
+    # Where the sections go, the first of them must be a heading that is found. The line of that
+    # heading is in the text now, so a search that looks for such a line would give the wrong reason.
+    _, _, found = _parsed(head + generated)
+    if find(found, GENERATED_SECTIONS[0], top=True) is None:
         raise ValueError(_NOT_HEADINGS)
     return head + generated
 
@@ -241,21 +242,27 @@ def _shadow(runs: int) -> str:
 # --- the file
 
 
+def _parsed(data: bytes) -> tuple[str, int, list[Heading]]:
+    """The body of a file, the file line where it starts, and the headings in it.
+
+    The rows of the headings are lines of the text, and the text has the lines of the bytes:
+    decoding changes no LF, and `decode_text` drops only a byte-order mark, which is inside the
+    first line. A file without front matter has no body to cut out, and is searched whole.
+    """
+    text = decode_text(data)
+    parts = split(text)
+    body, first_line = (text, 1) if parts is None else (parts[1], parts[2])
+    return body, first_line, headings(parse(body))
+
+
 def _section_start(data: bytes) -> int | None:
     """The byte where the line of the heading of "Enforced rules (generated)" starts, if any.
-
-    The rows of the tokens are lines of the text, and the text has the lines of the bytes: decoding
-    changes no LF, and `decode_text` drops only a byte-order mark, which is inside the first line.
-    A file without front matter has no body to cut out, and is searched whole.
 
     ValueError for the two cases of `rewrite` that this decides: there is a heading and the headings
     of level 1 and 2 from there are not the generated sections (R64, and R69 for level 1), or there
     is no heading and there is a line that looks like it.
     """
-    text = decode_text(data)
-    parts = split(text)
-    body, first_line = (text, 1) if parts is None else (parts[1], parts[2])
-    found = headings(parse(body))
+    body, first_line, found = _parsed(data)
     heading = find(found, GENERATED_SECTIONS[0], top=True)
     if heading is None:
         if any(line.strip() == _HEADING for line in body.split("\n")):
