@@ -18,8 +18,9 @@ by itself, so the guard cannot see what it was cut from.
 One message has a part that is a sentence of the language, and not a value: the `{restart}` of
 W-WIDENS (ruling R55). A finding does not carry it. It carries the number, as the param
 `restart_runs`, and `message` writes the sentence of the note under appendix A in the language
-asked for, or nothing when there is no `restart_runs`. It does that after the params are cleaned,
-so only the number is cleaned and the sentence around it is the note's own.
+asked for, or nothing when there is no `restart_runs`. For one run the sentence says "1 run"
+(ruling R75). It does that after the params are cleaned, so only the number is cleaned and the
+sentence around it is the note's own.
 """
 
 import json
@@ -37,11 +38,15 @@ Lang = Literal["en", "nl"]
 
 LANGUAGES: tuple[Lang, ...] = ("en", "nl")
 
-# The `{restart}` of W-WIDENS in each language, with its leading space: the note under appendix A
-# of the spec. `{n}` is the param `restart_runs`.
-_RESTART: dict[Lang, str] = {
-    "en": " Shadow mode starts again for {n} runs.",
-    "nl": " De schaduwmodus begint opnieuw voor {n} runs.",
+# The `{restart}` of W-WIDENS in each language, with its leading space: the sentence for `{n}` runs
+# (`{n}` is the param `restart_runs`), and the sentence for one run. Both are in the note under
+# appendix A of the spec.
+_RESTART: dict[Lang, tuple[str, str]] = {
+    "en": (" Shadow mode starts again for {n} runs.", " Shadow mode starts again for 1 run."),
+    "nl": (
+        " De schaduwmodus begint opnieuw voor {n} runs.",
+        " De schaduwmodus begint opnieuw voor 1 run.",
+    ),
 }
 
 
@@ -102,7 +107,8 @@ def message(f: Finding, lang: Lang) -> str:
     params = {name: safe_text(value) for name, value in f.params.items()}
     if f.code == "W-WIDENS":
         runs = params.get("restart_runs")
-        params["restart"] = "" if runs is None else _RESTART[lang].format(n=runs)
+        many, one = _RESTART[lang]
+        params["restart"] = "" if runs is None else (one if runs == "1" else many.format(n=runs))
     return template.format_map(params)
 
 

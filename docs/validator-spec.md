@@ -403,4 +403,4 @@ Values in `{braces}` are parameters. The UI translates parameters that are words
 | W-UNTRUSTED-TAINT | untrusted_input is taint. The v1 default is strict: with taint, R1 actions still run at once after the run has read untrusted content. | untrusted_input staat op taint. De standaard in v1 is strict: met taint lopen R1-acties direct door nadat de run onbetrouwbare inhoud heeft gelezen. |
 | W-WIDENS | This version gives the agent more room: {changes}.{restart} | Deze versie geeft de agent meer ruimte: {changes}.{restart} |
 
-For W-WIDENS, `{restart}` is " Shadow mode starts again for {n} runs." (NL: " De schaduwmodus begint opnieuw voor {n} runs.") when a tool is added or `max_class` rises; otherwise it is empty.
+For W-WIDENS, `{restart}` is " Shadow mode starts again for {n} runs." (NL: " De schaduwmodus begint opnieuw voor {n} runs."), or " Shadow mode starts again for 1 run." (NL: " De schaduwmodus begint opnieuw voor 1 run.") when {n} is 1, when a tool is added or `max_class` rises; otherwise it is empty.

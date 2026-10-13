@@ -223,6 +223,16 @@ def test_a_new_tool_restarts_shadow_for_the_runs_of_the_new_version():
     }
 
 
+def test_a_restart_for_one_run_says_1_run():
+    new = variant(
+        setting("version", 2), with_tools(*TOOLS, "drive.read"), setting("shadow.min_runs", 1)
+    )
+    (found,) = check_set(files(("invoice-reminder.md", new)), {AGENT: V1})
+    assert found.params["restart_runs"] == "1"
+    assert format_line(found).endswith(" Shadow mode starts again for 1 run.")
+    assert message(found, "nl").endswith(" De schaduwmodus begint opnieuw voor 1 run.")
+
+
 def test_a_raised_class_restarts_shadow_too():
     reads = with_tools("sheets.read")
     previous = {AGENT: variant(reads, setting("max_class", "R1"))}

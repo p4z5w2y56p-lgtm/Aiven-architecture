@@ -74,26 +74,34 @@ def test_every_message_formats_with_exactly_its_own_parameters(lang):
             assert f"<{name}>" in text, (code, name)
 
 
-# --- W-WIDENS: the {restart} of its message is a sentence of the language (ruling R55)
+# --- W-WIDENS: the {restart} of its message is a sentence of the language (rulings R55 and R75)
 
 
-def _restart_sentences() -> dict[str, str]:
-    """The two sentences of the note under appendix A, with their leading space: EN, then NL."""
+def _restart_sentences() -> dict[str, tuple[str, str]]:
+    """The four sentences of the note under appendix A, with their leading space.
+
+    For each language the sentence for `{n}` runs, and the one for a single run. The note gives
+    them in the order EN and NL for `{n}` runs, then EN and NL for 1 run.
+    """
     note = line_starting_with("For W-WIDENS, ")
     sentences = re.findall(r'"([^"]*)"', note)
-    assert len(sentences) == 2, note
-    return dict(zip(("en", "nl"), sentences, strict=True))
+    assert len(sentences) == 4, note
+    assert "when {n} is 1," in note  # the rule that tells them apart
+    en_many, nl_many, en_one, nl_one = sentences
+    return {"en": (en_many, en_one), "nl": (nl_many, nl_one)}
 
 
 @pytest.mark.parametrize("lang", ["en", "nl"])
 def test_widens_restart_is_the_sentence_of_the_note_under_appendix_a(lang):
-    # Drift: the code says what the note under appendix A says, word for word, in both languages.
-    sentence = _restart_sentences()[lang]
-    assert sentence.startswith(" ") and sentence.count("{n}") == 1
-    finding = Finding("W-WIDENS", "warning", "a.md", params={**WIDENS, "restart_runs": "12"})
+    # Drift: the code says what the note under appendix A says, word for word, in both languages,
+    # for a number of runs and for one run.
+    many, one = _restart_sentences()[lang]
+    assert many.startswith(" ") and many.count("{n}") == 1
+    assert one.startswith(" ") and "{n}" not in one and one.endswith(" 1 run.")
     template = load_messages(lang)["W-WIDENS"]
-    expected = template.format(**WIDENS, restart=sentence.replace("{n}", "12"))
-    assert message(finding, lang) == expected
+    for runs, sentence in [("12", many.replace("{n}", "12")), ("1", one)]:
+        finding = Finding("W-WIDENS", "warning", "a.md", params={**WIDENS, "restart_runs": runs})
+        assert message(finding, lang) == template.format(**WIDENS, restart=sentence), runs
 
 
 def test_widens_restart_in_full():
@@ -108,6 +116,29 @@ def test_widens_restart_in_full():
     )
 
 
+@pytest.mark.parametrize(
+    ("lang", "tail"),
+    [
+        ("en", " Shadow mode starts again for 1 run."),
+        ("nl", " De schaduwmodus begint opnieuw voor 1 run."),
+    ],
+)
+def test_widens_restart_for_one_run_is_in_the_singular(lang, tail):
+    finding = Finding("W-WIDENS", "warning", "a.md", params={**WIDENS, "restart_runs": "1"})
+    text = message(finding, lang)
+    assert text.endswith(f"limits.runs_per_day: 1 -> 2.{tail}")
+    assert " 1 runs" not in text
+
+
+@pytest.mark.parametrize("lang", ["en", "nl"])
+@pytest.mark.parametrize("runs", ["0", "2", "10", "11", "100"])
+def test_widens_restart_is_in_the_plural_for_every_number_but_one(lang, runs):
+    # Only 1 is the singular: 10, 11 and 100 have a 1 in them and are not.
+    finding = Finding("W-WIDENS", "warning", "a.md", params={**WIDENS, "restart_runs": runs})
+    many, _ = _restart_sentences()[lang]
+    assert message(finding, lang).endswith(many.replace("{n}", runs))
+
+
 @pytest.mark.parametrize("lang", ["en", "nl"])
 def test_widens_without_restart_runs_ends_after_the_changes(lang):
     # Empty when the param is absent: the message ends in the full stop behind the changes.
@@ -115,6 +146,13 @@ def test_widens_without_restart_runs_ends_after_the_changes(lang):
     text = message(finding, lang)
     assert text.endswith("limits.runs_per_day: 1 -> 2.")
     assert text == load_messages(lang)["W-WIDENS"].format(**WIDENS, restart="")
+
+
+def test_an_empty_number_of_runs_is_not_an_absent_one():
+    # Only a missing param means that shadow mode does not start again. An empty number is a bug
+    # of the check, and the message still says that it does, rather than saying nothing.
+    finding = Finding("W-WIDENS", "warning", "a.md", params={**WIDENS, "restart_runs": ""})
+    assert message(finding, "en").endswith(" Shadow mode starts again for  runs.")
 
 
 def test_widens_restart_is_in_the_one_line_form():
@@ -128,7 +166,7 @@ def test_the_number_of_the_restart_sentence_is_cleaned_like_every_param(lang):
     # `message` cleans the params first and puts the sentence together after that, so the number
     # is cleaned (escaped, hidden, cut) and the sentence around it is the note's own.
     finding = Finding("W-WIDENS", "warning", "a.md", params={**WIDENS, "restart_runs": "7"})
-    sentence = _restart_sentences()[lang]
+    sentence, _ = _restart_sentences()[lang]
     for dirty, shown in [
         ("7\nerror E-FORGED y.md: z", "7\\u000aerror E-FORGED y.md: z"),
         (gen.valid_bsn(), "[hidden]"),
