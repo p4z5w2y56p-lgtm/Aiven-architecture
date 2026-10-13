@@ -10,8 +10,8 @@ section 9 runs the real command in a subprocess, as CI does. Files are made with
 test that needs Git makes a repository of its own in the working folder of the test, and one that
 needs a signature makes a key of its own (tests/support/signing.py).
 
-`CODES_TRIGGERED` is the codes that the tests of this module trigger and that no other test module
-does (test_coverage_of_codes.py reads it).
+`CODES_TRIGGERED` maps the codes that the tests of this module trigger, and that no other test
+module does, to the test that triggers each (test_coverage_of_codes.py reads it).
 """
 
 import io
@@ -49,7 +49,7 @@ from tests.support.signing import work_in_a_temporary_folder as work_in_a_tempor
 from tests.support.spec_tables import code_spans, table_after
 from tests.support.variants import principal_of, variant_file
 
-CODES_TRIGGERED = frozenset({"E-INTERNAL"})
+CODES_TRIGGERED = {"E-INTERNAL": "test_crash_exits_2_with_e_internal"}
 
 CATALOG_FILE = REPO_ROOT / "catalog" / "catalog-v1.yaml"
 CFG = platform_config()
@@ -762,6 +762,7 @@ def test_crash_exits_2_with_e_internal(run, monkeypatch):
     done = run("validate", INVOICE, NUDGE)
     assert done.status == 2
     # One line for each file of the command, and nothing else: no finding, no text of the error.
+    assert [line.split()[:2] for line in done.lines] == [["error", "E-INTERNAL"]] * 2
     assert done.lines == [internal(INVOICE, "RuntimeError"), internal(NUDGE, "RuntimeError")]
     assert "The validator could not finish (RuntimeError)." in done.lines[0]
     assert "LEAK" not in done.out + done.err

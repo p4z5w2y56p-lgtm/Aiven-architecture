@@ -61,18 +61,17 @@ from tests.support.spies import CHECKS, spy_on
 from tests.support.variants import variant_file
 
 # The codes that the tests of this module trigger and that no table of test_codes.py holds as it is
-# triggered here (test_coverage_of_codes.py reads it). Declared, not found: see the tests below.
-CODES_TRIGGERED = frozenset(
-    {
-        "E-FILE-SIZE",  # the size is judged first
-        "E-SIG-MISSING",  # no signature file
-        "E-SIG-INVALID",  # a signature that does not verify
-        "E-VERSION-ORDER",  # older than the active version, or the same one in other bytes
-        "E-TOOL-NOT-LIVE",  # a wrapper that is planned, or not switched on for the agent
-        "E-SCOPE-NOT-IN-SANDBOX",  # a folder that the caller does not vouch for
-        "E-INTERNAL",  # whatever goes wrong in the load fails closed
-    }
-)
+# triggered here, each with the test that triggers it (test_coverage_of_codes.py reads it, and holds
+# it to the test existing and mentioning the code). Declared, not found. E-INTERNAL is not here:
+# the crash test of test_cli.py is the one that declares it.
+CODES_TRIGGERED = {
+    "E-FILE-SIZE": "test_a_file_over_64_kib_gets_e_file_size_and_nothing_else",
+    "E-SIG-MISSING": "test_missing_sig",
+    "E-SIG-INVALID": "test_an_exit_status_of_zero_is_a_valid_signature_and_anything_else_is_not",
+    "E-VERSION-ORDER": "test_the_findings_of_the_file_and_of_the_load_come_in_one_sorted_list",
+    "E-TOOL-NOT-LIVE": "test_at_load_w_tool_not_live_becomes_e_tool_not_live_and_both_never_appear",
+    "E-SCOPE-NOT-IN-SANDBOX": "test_folder_outside_sandbox",
+}
 
 BASE = valid_base()
 TEMPLATE = TEMPLATE_PATH.read_bytes()
