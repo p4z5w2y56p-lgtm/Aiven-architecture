@@ -179,6 +179,8 @@ HIDDEN_INFO = {
     "an equals sign": "a=b",
     "a tab between words": "a\tb",
     "a space that is not ascii": "python\N{NO-BREAK SPACE}x",
+    "a space that is not ascii at the end": "python\N{NO-BREAK SPACE}",
+    "a space that is not ascii at the start": "\N{NO-BREAK SPACE}python",
 }
 
 

@@ -18,8 +18,9 @@ mode. That is a ValueError, and its message holds nothing from the file.
 
 `rewrite` is `aiven-policy render`: it replaces the sections that are there, and nothing else. The
 validator-spec says that it "changes nothing else", so it never takes away text that is not a
-generated section (ruling R64). The generated sections are the last two of a file, and a file in
-which they are not is refused with a ValueError, not repaired by deleting what stands behind them.
+generated section (rulings R64 and R69). The generated sections are the last two of a file, and a
+file in which they are not is refused with a ValueError, not repaired by deleting what stands
+behind them.
 """
 
 import re

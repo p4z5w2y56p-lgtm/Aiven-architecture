@@ -579,6 +579,9 @@ MISORDERED = {
     "a heading of level 1 behind the first section alone": (
         BASE_TEXT[: BASE_TEXT.index(SIGNOFF)] + f"# Note\n\n{AUTHOR}\n"
     ),
+    "a heading of level 1 with the name of the sign-off": BASE_TEXT.replace(
+        SIGNOFF, f"# Sign-off (generated)\n\n{AUTHOR}\n"
+    ),
 }
 
 
@@ -667,6 +670,15 @@ def test_sections_that_would_end_up_in_a_block_that_is_not_closed_raise_instead_
     # (The reason is that one, and not the one of a line that looks like the heading: the line is
     # there after the sections are added, and the file was not the one that had it.)
     data = PREFIX + b"\n\n" + tail.encode()
+    assert refusal(data) == NOT_HEADINGS
+
+
+@pytest.mark.parametrize("mark", ["> ", "- ", "1. "])
+def test_a_copy_of_the_heading_in_a_quote_or_a_list_does_not_stand_in_for_sections_that_are_lost(
+    mark,
+):
+    # The sections would be added inside the fence that is open, and the copy is no heading to find.
+    data = PREFIX + f"\n\n{mark}{ENFORCED}\n\n```\nopen\n".encode()
     assert refusal(data) == NOT_HEADINGS
 
 
