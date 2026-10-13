@@ -9,7 +9,7 @@ Status: Phase 1 (internal only). Milestone M1 is built: the policy validator `ai
 | `docs/plans/2026-10-12-phase1-implementation.md` | Implementation plan: setup steps, credit calendar, milestones M1–M8 |
 | `src/aiven/policy/` | The policy validator: `aiven-policy validate`, `render` and `verify` |
 | `tests/` | The validator's tests, including the template self-test against spec section 9 |
-| `catalog/` | Action catalog v1 and the argument schema of each grantable action |
+| `catalog/` | Action catalog v1 and the argument schema of each grantable Drive and Email action |
 | `config/platform.example.yaml` | Example platform values; the real `config/platform.yaml` (no credentials) comes with M2 |
 | `docs/decisions/m1-validator-rulings.md` | The decisions taken while building M1, where the spec was silent |
 | `templates/policy-template.md` | Policy template, filled in for the example agent `invoice-reminder` |
