@@ -90,7 +90,17 @@ What the plan must show, part by part:
     `agent-<id>` for each agent.
   - Ten roles on the projects, plus one `aiplatform.user` per agent; every member is written out
     in full. No role is granted to a person.
-- Nowhere in the plan: a `google_service_account_key`, or an audit log bucket with `locked = true`.
+- **Stores (Task 2.2)**
+  - Buckets `<control>-policies` (versioned) and `<control>-snapshots` (retention 30 days, not
+    locked; deleted at 30 days). Both in europe-west4, uniform access, public access prevented.
+    Bucket names are global, so they carry the project ID instead of `aiven-control-*`.
+  - Log bucket `aiven-audit`: 365 days, `locked = false`. A sink routes log `aiven-audit` there,
+    and an exclusion keeps it out of `_Default`.
+  - Firestore `control` (control) and `gateway` (gateway): native mode, europe-west4, delete
+    protection on. Runs and calls expire by their field `expire_at`.
+  - Roles on the stores: the gateway reads the policies and may only add snapshots; the control
+    UI reads the policies and the audit log, and lists the snapshots.
+- Nowhere in the plan: a `google_service_account_key`, or `locked = true` / `is_locked = true`.
 
 `terraform show m2.tfplan` shows the plan again. Stop at anything that is not on this list.
 
@@ -103,3 +113,10 @@ terraform output service_accounts
 
 If the apply stops at an organisation policy with `Permission 'orgpolicy.policies.create' denied`,
 part 2 is missing: do it, then plan and apply again. Nothing else is made before the policies.
+
+## Later, and only when you confirm it: the audit log lock
+
+Locking `aiven-audit` fixes its 365-day retention for good: it cannot be undone, and the bucket can
+then only be deleted when it is empty. It is not part of M2. When you confirm it in the
+conversation, it comes as one commit that sets `locked = true` and lifts the guard that refuses it
+(ruling R105); you then plan and apply that change on its own.

@@ -38,11 +38,12 @@ def text_of(path: Path) -> str:
     return "\n".join(line for line in lines if not re.match(r"\s*(#|//)", line))
 
 
-def test_the_audit_log_is_never_locked_without_matthijs_confirming():
-    # Locking the audit log bucket cannot be undone. Matthijs confirms it separately, and the commit
-    # that makes it lifts this guard (ruling R105).
+def test_nothing_is_locked_without_matthijs_confirming():
+    # Locking the audit log bucket (locked) or a bucket's retention policy (is_locked) cannot be
+    # undone. Matthijs confirms the audit log lock separately, and the commit that makes it lifts
+    # this guard for that one line (ruling R105).
     for path in terraform_files():
-        assert not re.search(r"\blocked\s*=\s*true\b", text_of(path)), path
+        assert not re.search(r"\b(is_)?locked\s*=\s*true\b", text_of(path)), path
 
 
 def test_no_service_account_key_is_ever_made():

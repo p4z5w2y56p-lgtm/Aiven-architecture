@@ -15,3 +15,8 @@ output "project_iam" {
     { project = binding.project, role = binding.role, member = binding.member }
   ]
 }
+
+output "firestore" {
+  description = "The name of the gateway's working database."
+  value       = google_firestore_database.gateway.name
+}

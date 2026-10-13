@@ -87,6 +87,7 @@ module "gateway" {
   source = "./modules/gateway"
 
   project            = var.gateway_project
+  region             = var.region
   control_ui_member  = module.control.members["control-ui"]
   budget_stop_member = module.control.members["budget-stop"]
 
@@ -97,6 +98,7 @@ module "control" {
   source = "./modules/control"
 
   project        = var.control_project
+  region         = var.region
   gateway_member = module.gateway.members["gateway"]
 
   depends_on = [google_org_policy_policy.baseline, google_project_service.control]

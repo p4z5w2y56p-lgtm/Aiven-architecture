@@ -19,3 +19,8 @@ output "project_iam" {
   description = "Every role granted on a project: project, role and member (gateway-design section 3)."
   value       = concat(module.agents.project_iam, module.gateway.project_iam, module.control.project_iam)
 }
+
+output "stores" {
+  description = "The names of the stores of the control and gateway projects."
+  value       = merge(module.control.stores, { gateway_firestore = module.gateway.firestore })
+}
