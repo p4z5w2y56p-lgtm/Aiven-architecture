@@ -3,6 +3,10 @@
 The catalog is owned by the gateway and is the only place where classes are defined: a policy
 grants tools, but it can never set or lower a class. It is reviewed and signed like a policy, and
 `Catalog.sha256` is the hash that goes on every log line next to the policy hash.
+
+The catalog fails closed (ruling R94). Its reserved list must hold every entry of
+`constants.RESERVED_NAMESPACES`, in any order, and it may hold more. A catalog that has lost an
+entry would let a tool in that namespace be granted, so `load_catalog` refuses it.
 """
 
 import hashlib
@@ -15,7 +19,7 @@ from typing import Any, Literal, get_args
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
-from aiven.policy.constants import POLICY_CLASSES
+from aiven.policy.constants import POLICY_CLASSES, RESERVED_NAMESPACES
 
 CATALOG_SCHEMA = "aiven-catalog/v1"
 
@@ -77,8 +81,9 @@ def is_pattern(entry: str) -> bool:
 
 
 def load_catalog(path: Path) -> Catalog:
-    """Read a catalog file. Raises CatalogError for unknown keys, classes or wrappers and for
-    anything else that is not valid catalog v1."""
+    """Read a catalog file. Raises CatalogError for unknown keys, classes or wrappers, for a
+    reserved list that lacks an entry of the platform (ruling R94), and for anything else that is
+    not valid catalog v1."""
     path = Path(path)
     raw = path.read_bytes()
     where = path.name
@@ -133,6 +138,9 @@ def _reserved(value: object, where: str) -> tuple[str, ...]:
             raise CatalogError(f"{here}: {entry!r} is neither an exact name nor namespace.*")
         if value.count(entry) > 1:
             raise CatalogError(f"{here}: {entry!r} is listed twice")
+    lacking = [name for name in RESERVED_NAMESPACES if name not in value]
+    if lacking:
+        raise CatalogError(f"{here}: lacks {', '.join(lacking)} (the platform reserves them all)")
     return tuple(value)
 
 

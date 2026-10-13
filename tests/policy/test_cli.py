@@ -1051,6 +1051,18 @@ def test_a_catalog_that_is_not_valid_is_a_crash(run, tmp_path):
     assert (done.status, done.lines) == (2, [internal(INVOICE, "CatalogError")])
 
 
+def test_a_catalog_that_lacks_a_reserved_namespace_is_a_crash_and_judges_nothing(run, tmp_path):
+    # Ruling R94: the catalog fails closed, so a file is not judged by one that has lost an entry
+    # of the reserved list. The entry is taken out of the real catalog.
+    text = CATALOG_FILE.read_text()
+    assert text.count("reserved: [payments.*, ") == 1
+    short = tmp_path / "short-catalog.yaml"
+    short.write_text(text.replace("reserved: [payments.*, ", "reserved: [", 1))
+    write(INVOICE, VALID)
+    done = run("validate", INVOICE, catalog=short)
+    assert (done.status, done.lines) == (2, [internal(INVOICE, "CatalogError")])
+
+
 def test_a_crash_in_the_check_of_the_duplicates_is_a_crash(run, monkeypatch):
     monkeypatch.setattr(cli, "check_duplicates", crashing(ValueError(LEAK)))
     write(INVOICE, VALID)

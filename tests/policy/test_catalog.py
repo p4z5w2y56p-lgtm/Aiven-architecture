@@ -157,15 +157,25 @@ def test_every_action_and_every_reserved_entry_is_a_pattern():
 
 # --- the loader rejects a malformed catalog ------------------------------------------------------
 
-VALID = """\
+# The reserved list of a valid catalog holds every namespace of the platform (ruling R94).
+RESERVED_LINE = (
+    "reserved: [payments.*, policy.*, audit.*, killswitch.*, iam.*, secrets.*, "
+    "agentbuilder.permissions]\n"
+)
+
+VALID = (
+    """\
 schema: aiven-catalog/v1
 wrappers: {drive: planned, email: planned, agentbuilder: planned}
-reserved: [payments.*, agentbuilder.permissions]
+"""
+    + RESERVED_LINE
+    + """\
 actions:
   drive.read: {class: R0, wrapper: drive, undo: "nothing to undo (read only)."}
   drive.update: {class: R1, wrapper: drive, escalates_when_shared: true, undo: "restore it."}
   drive.share: {class: R3, wrapper: drive}
 """
+)
 
 
 def _write(tmp_path: Path, text: str) -> Path:
@@ -179,7 +189,7 @@ def test_the_minimal_valid_catalog_loads(tmp_path):
     assert list(catalog.actions) == ["drive.read", "drive.update", "drive.share"]
     assert catalog.actions["drive.update"].escalates_when_shared is True
     assert catalog.actions["drive.read"].escalates_when_shared is False
-    assert catalog.reserved == ("payments.*", "agentbuilder.permissions")
+    assert catalog.reserved == constants.RESERVED_NAMESPACES
 
 
 def test_wrapper_status_comes_from_the_wrappers_mapping(tmp_path):
@@ -205,10 +215,7 @@ def _replace(old: str, new: str) -> str:
 
 BROKEN = {
     "wrong-schema": (_replace("aiven-catalog/v1", "aiven-catalog/v2"), "schema"),
-    "missing-reserved": (
-        _replace("reserved: [payments.*, agentbuilder.permissions]\n", ""),
-        "reserved",
-    ),
+    "missing-reserved": (_replace(RESERVED_LINE, ""), "reserved"),
     "unknown-top-level-key": (VALID + "extra: 1\n", "unknown key 'extra'"),
     "unknown-wrapper-in-wrappers": (
         _replace("agentbuilder: planned}", "agentbuilder: planned, sharepoint: planned}"),
@@ -263,8 +270,9 @@ BROKEN = {
     ),
     "reserved-entry-with-trailing-newline": (
         _replace(
-            "reserved: [payments.*, agentbuilder.permissions]\n",
-            "reserved:\n  - |\n    payments.*\n  - agentbuilder.permissions\n",
+            RESERVED_LINE,
+            "reserved:\n  - |\n    payments.*\n"
+            + "".join(f"  - {name}\n" for name in constants.RESERVED_NAMESPACES[1:]),
         ),
         "neither an exact name",
     ),
@@ -277,6 +285,56 @@ BROKEN = {
 def test_load_catalog_rejects(tmp_path, text, problem):
     with pytest.raises(CatalogError, match=problem):
         load_catalog(_write(tmp_path, text))
+
+
+# --- the reserved list is held to the platform's (ruling R94)
+#
+# The catalog is the biggest single risk (validator-spec section 5): a catalog that has lost an
+# entry of the reserved list would let a tool in that namespace be granted. So the loader refuses
+# it, and every entry of the platform's list is held in turn: the first of them is `payments.*`,
+# and the last one is `agentbuilder.permissions`.
+
+
+def _reserved_line(*names: str) -> str:
+    return f"reserved: [{', '.join(names)}]\n"
+
+
+@pytest.mark.parametrize("name", constants.RESERVED_NAMESPACES)
+def test_a_reserved_list_that_lacks_an_entry_of_the_platform_is_refused(tmp_path, name):
+    kept = [other for other in constants.RESERVED_NAMESPACES if other != name]
+    text = _replace(RESERVED_LINE, _reserved_line(*kept))
+    # (it is the one entry that is missing, so the list of what lacks ends behind it)
+    with pytest.raises(CatalogError, match=rf"^catalog\.yaml: reserved: lacks {re.escape(name)} "):
+        load_catalog(_write(tmp_path, text))
+
+
+def test_the_error_names_every_entry_that_is_missing_and_no_other(tmp_path):
+    text = _replace(RESERVED_LINE, _reserved_line("policy.*", "audit.*", "killswitch.*", "iam.*"))
+    with pytest.raises(CatalogError) as raised:
+        load_catalog(_write(tmp_path, text))
+    message = str(raised.value)
+    assert "lacks payments.*, secrets.*, agentbuilder.permissions" in message
+    for present in ("policy.*", "audit.*", "killswitch.*", "iam.*"):
+        assert present not in message
+
+
+def test_a_reserved_list_with_none_of_the_platform_entries_is_refused(tmp_path):
+    text = _replace(RESERVED_LINE, _reserved_line("ops.*"))
+    with pytest.raises(CatalogError, match="lacks payments"):
+        load_catalog(_write(tmp_path, text))
+
+
+RESERVED_LISTS = {
+    "the list of the platform": constants.RESERVED_NAMESPACES,
+    "more entries than the platform has": (*constants.RESERVED_NAMESPACES, "ops.*"),
+    "the platform entries in another order": constants.RESERVED_NAMESPACES[::-1],
+}
+
+
+@pytest.mark.parametrize("names", RESERVED_LISTS.values(), ids=RESERVED_LISTS)
+def test_a_reserved_list_that_has_every_entry_of_the_platform_loads(tmp_path, names):
+    text = _replace(RESERVED_LINE, _reserved_line(*names))
+    assert load_catalog(_write(tmp_path, text)).reserved == tuple(names)
 
 
 def test_load_catalog_rejects_bytes_that_are_not_utf8(tmp_path):
