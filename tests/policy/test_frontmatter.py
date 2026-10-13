@@ -11,6 +11,7 @@ Characters outside ASCII are written as \\N{...} escapes, so that this file stay
 import dataclasses
 import json
 import random
+import re
 import time
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from aiven.policy.findings import Finding, format_line, message
 from aiven.policy.frontmatter import FIRST_LINE, MAX_DEPTH, check_filename, load, split
 from aiven.policy.validate import validate_file
 from tests.support import REPO_ROOT, gen
-from tests.support.frontmatter import BASE_TEXT, DATA, FRONT, at, only, places, swap
+from tests.support.frontmatter import BASE_TEXT, DATA, FRONT, at, only, places, swap, unexplained
 from tests.support.policies import BASE_PATH, valid_base
 
 CFG = load_platform_config(REPO_ROOT / "config" / "platform.example.yaml")
@@ -411,26 +412,74 @@ def test_nesting_through_indentation_is_cut_off_too():
     assert places(load(text, PATH)) == [("E-YAML", MAX_DEPTH + 2, 1 + MAX_DEPTH)]
 
 
-def test_load_returns_findings_and_never_raises_on_odd_text():
+# --- a fuzz corpus: random strings, and the template with random edits
+#
+# `load` must never raise, every finding must be one a message can be made of, and no field may
+# drop out of `data` without a finding on its line (`unexplained`).
+
+BS = "\\"  # a backslash; the pieces with escapes are built from it, so no escape is typed here
+PIECES = [
+    *"ab1:-[]{}&*!%#? \n\t\"'|>,.",
+    *["<<", "---", "...", BS, "\x85", "\r", "@", "~"],
+    *["TODO", "TBD", "FIXME", "REPLACE_ME_X"],
+]
+# What a field is set to now and then: placeholders in the ways that decide what is reported.
+VALUES = [
+    *["TODO", "TBD", "'FIXME'", '"REPLACE_ME_X"', "300\n    TBD", "\n    TBD", "|\n    TODO"],
+    *[f'"T{BS}x4fDO"', f'"TO{BS}\n    DO"'],  # TODO, written so that E-PLACEHOLDER misses it
+]
+FIELD_LINE = re.compile(r"\s*[a-z_]+:")
+
+
+def edit_at_random(rnd: random.Random, text: str) -> str:
+    """One random edit of a front matter text: insert, delete, repeat a line, or set a value."""
+    kind = rnd.random()
+    position = rnd.randrange(len(text) + 1)
+    if kind < 0.3:
+        return text[:position] + rnd.choice(PIECES) + text[position:]
+    if kind < 0.4:
+        return text[:position] + text[position + rnd.randint(1, 12) :]
+    lines = text.split("\n")
+    if kind < 0.5:
+        row = rnd.randrange(len(lines))
+        lines.insert(row, lines[row])
+    else:
+        rows = [number for number, line in enumerate(lines) if FIELD_LINE.match(line)]
+        if rows:
+            row = rnd.choice(rows)
+            key = lines[row].split(":")[0]
+            value = rnd.choice(VALUES) if rnd.random() < 0.6 else rnd.choice(PIECES)
+            lines[row] = f"{key}: {value}"
+    return "\n".join(lines)
+
+
+def fuzz_corpus() -> list[str]:
     rnd = random.Random(20261013)
-    pieces = list("ab1:-[]{}&*!%#? \n\t\"'|>,.") + [
-        "<<",
-        "---",
-        "...",
-        "\\",
-        "\x85",
-        "\r",
-        "@",
-        "~",
-    ]
-    for _ in range(1500):
-        text = "".join(rnd.choice(pieces) for _ in range(rnd.randint(0, 60)))
+    texts = ["".join(rnd.choice(PIECES) for _ in range(rnd.randint(0, 60))) for _ in range(1500)]
+    for _ in range(600):
+        text = FRONT
+        for _ in range(rnd.randint(1, 3)):
+            text = edit_at_random(rnd, text)
+        texts.append(text)
+    return texts
+
+
+FUZZ = fuzz_corpus()
+
+
+def test_load_returns_findings_and_never_raises_on_odd_text():
+    for text in FUZZ:
         result = load(text, PATH)
         assert result.data is None or isinstance(result.data, dict)
         for finding in result.findings:
             assert finding.line is None or finding.line >= 1
             for lang in ("en", "nl"):
                 message(finding, lang)  # raises KeyError if the finding lacks a parameter
+
+
+def test_no_field_drops_out_of_the_data_unreported_on_the_fuzz_corpus():
+    for text in FUZZ:
+        assert unexplained(text, load(text, PATH)) == [], text
 
 
 # --- findings never show what the guard hides
@@ -448,7 +497,7 @@ def test_no_finding_about_the_front_matter_shows_a_sensitive_value(value, start)
         f"limits:\n  max_runtime_s: {value}\n",
     ]
     findings = [f for text in texts for f in load(text, PATH).findings]
-    findings += check_filename(Path("policies/other.md"), {"agent": value})
+    findings += check_filename(Path("policies/other.md"), load(f'agent: "{value}"\n', PATH))
     assert len(findings) > len(texts)
     for finding in findings:
         shown = [
@@ -499,11 +548,11 @@ UNUSABLE = {
 def test_checks_that_need_the_front_matter_are_skipped_when_it_has_no_data(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        "aiven.policy.validate.check_filename", lambda path, data: calls.append(data) or []
+        "aiven.policy.validate.check_filename", lambda path, front: calls.append(front) or []
     )
     for old, new in UNUSABLE.values():
         assert BASE.count(old) == 1
         validate(BASE.replace(old, new))
     assert calls == []  # no data, so nothing that needs the fields has run
     validate(BASE)
-    assert calls == [DATA]
+    assert [front.data for front in calls] == [DATA]

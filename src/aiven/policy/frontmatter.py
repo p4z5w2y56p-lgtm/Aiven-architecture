@@ -26,10 +26,18 @@ What `load` returns is a `FrontMatter`:
   numbers in `lines`). A repeated list entry stays. `data` is None when the YAML cannot be trusted
   (E-YAML, E-YAML-FEATURE, E-YAML-DUPLICATE-KEY: no value is kept when a key is there twice) and
   when the front matter is not a mapping. Then no field is checked, and the checks that need the
-  fields are skipped (section 1).
+  fields are skipped (section 1). A field is never dropped silently: if it has a line and is not
+  in `data`, a finding stands on its line (E-FIELD-TYPE, or E-PLACEHOLDER from the file checks) or
+  on the line of a wrong entry of its list. So later checks may read "not in `data`" as "already
+  reported".
 - `lines`: the file line of every field and of every list entry that is in the file, by dotted path
   (`limits.max_runtime_s`, `tools.1`; entries count from 0). The line of a field is the line of its
   key. Empty when `data` is None. Later checks report at these lines.
+- `placeholders`: the paths in `lines` whose value is written with a placeholder (`REPLACE_ME...`,
+  `TODO`, `TBD`, `FIXME`). A field in it skips its other checks (section 3.1). It is judged on the
+  value as it stands in the file, which is what E-PLACEHOLDER reads, and not on the value after
+  YAML has decoded it: otherwise a placeholder written with an escape would skip every check and
+  be reported by none.
 - `findings`: E-FM-NON-ASCII, E-YAML, E-YAML-FEATURE, E-YAML-DUPLICATE-KEY, E-FIELD-MISSING,
   E-FIELD-UNKNOWN, E-FIELD-TYPE and E-LIST-DUPLICATE, in no particular order.
 
@@ -137,6 +145,7 @@ class FrontMatter:
     data: dict[str, Any] | None = field(repr=False)
     lines: dict[str, int] = field(repr=False)
     findings: list[Finding]
+    placeholders: frozenset[str] = field(default=frozenset(), repr=False)
 
 
 def split(text: str) -> tuple[str, str, int] | None:
@@ -171,18 +180,18 @@ def load(fm_text: str, path: Path | str = "") -> FrontMatter:
     checker = _Checker(where)
     data = checker.check(reader.root)
     findings.extend(checker.findings)
-    return FrontMatter(data, checker.lines, findings)
+    return FrontMatter(data, checker.lines, findings, frozenset(checker.placeholders))
 
 
-def check_filename(path: Path, data: dict[str, Any]) -> list[Finding]:
+def check_filename(path: Path, front: FrontMatter) -> list[Finding]:
     """E-FILENAME (section 3.1): the file is not called `<agent>.md`.
 
     It needs the agent id from the front matter, so it is checked here and not with the file.
-    There is nothing to compare when the agent is missing or not a string (not in `data`), or still
-    a placeholder: that field skips its other checks.
+    There is nothing to compare when there is no agent (no data, or it is missing or not a
+    string), or when it is still a placeholder as written: that field skips its other checks.
     """
-    agent = data.get("agent")
-    if not isinstance(agent, str) or has_placeholder(agent) or path.name == f"{agent}.md":
+    agent = (front.data or {}).get("agent")
+    if not isinstance(agent, str) or "agent" in front.placeholders or path.name == f"{agent}.md":
         return []
     return [Finding("E-FILENAME", "error", str(path), params={"name": path.name, "agent": agent})]
 
@@ -244,6 +253,7 @@ class _Node:
     kind: Literal["scalar", "list", "mapping"]
     line: int
     text: str = ""
+    raw: str = ""  # a scalar as it stands in the file, quotes and escapes included
     plain: bool = False  # a scalar that was written without quotes or a block indicator
     items: list["_Node"] = field(default_factory=list)  # the entries of a list
     pairs: list[tuple["_Node", "_Node"]] = field(default_factory=list)  # (key, value) of a mapping
@@ -304,7 +314,8 @@ class _Reader:
     def _scalar(self, event: ScalarEvent) -> None:
         self._properties(event)
         index = event.start_mark.index
-        node = _Node("scalar", self.text.line(index), event.value, event.style is None)
+        raw = self.text.source[index : event.end_mark.index]
+        node = _Node("scalar", self.text.line(index), event.value, raw, event.style is None)
         if self._expects_key():
             if node.plain and node.text == "<<":
                 self._feature("merge key", index)
@@ -417,6 +428,7 @@ class _Checker:
         self.where = where
         self.findings: list[Finding] = []
         self.lines: dict[str, int] = {}
+        self.placeholders: set[str] = set()
 
     def check(self, root: _Node | None) -> dict[str, Any] | None:
         if root is None:  # no document, only comments perhaps: a mapping without fields
@@ -448,6 +460,7 @@ class _Checker:
         return data
 
     def _value(self, path: str, kind: Any, line: int, node: _Node, required: bool) -> Any:
+        self._note_placeholder(path, node)
         if isinstance(kind, dict):
             if node.kind != "mapping":
                 return self._wrong_type(path, line, "mapping", node)
@@ -482,19 +495,37 @@ class _Checker:
         for number, item in enumerate(node.items):
             entry = f"{path}.{number}"
             self.lines[entry] = item.line
+            self._note_placeholder(entry, item)
             if not _is_string(item):
                 self._wrong_type(entry, item.line, "string", item)
                 usable = False
                 continue
-            if item.text in seen and not has_placeholder(item.text):
+            if item.text in seen and entry not in self.placeholders:
                 self._report("E-LIST-DUPLICATE", item.line, list=path, entry=item.text)
             seen.add(item.text)
             entries.append(item.text)
         return entries if usable else _UNUSABLE
 
+    def _note_placeholder(self, path: str, node: _Node) -> None:
+        """Remember a scalar that is written with a placeholder, judged on its text in the file.
+
+        E-PLACEHOLDER reads the file as it is written, and so does this. A value that YAML decodes
+        to a placeholder (`"T\\x4fDO"`) is not one for E-PLACEHOLDER, and so not for this.
+        """
+        if node.kind == "scalar" and has_placeholder(node.raw):
+            self.placeholders.add(path)
+
     def _wrong_type(self, path: str, line: int, expected: str, node: _Node) -> Any:
-        """E-FIELD-TYPE, unless the value is a placeholder: that field skips its other checks."""
-        if not (node.kind == "scalar" and has_placeholder(node.text)):
+        """E-FIELD-TYPE, unless E-PLACEHOLDER reports the value on `line`, the line of the field.
+
+        A field that holds a placeholder skips its other checks (section 3.1). It must not drop
+        out of `data` without a finding on its line though, because later checks read "not in
+        `data`" as "already reported". E-PLACEHOLDER is sure to report a placeholder that stands
+        in the part of the value on `line`. One on a later line is reported there, the field would
+        have nothing on its own line, and so the type error stays.
+        """
+        first_line = node.raw.split("\n", 1)[0]
+        if not (node.kind == "scalar" and node.line == line and has_placeholder(first_line)):
             self._report("E-FIELD-TYPE", line, field=path, expected=expected, found=_found(node))
         return _UNUSABLE
 

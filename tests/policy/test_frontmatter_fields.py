@@ -14,6 +14,7 @@ from aiven.policy.findings import Finding, message
 from aiven.policy.frontmatter import FIELDS, FIRST_LINE, OPTIONAL, check_filename, load
 from tests.support.frontmatter import (
     DATA,
+    FRONT,
     at,
     edited,
     front_without,
@@ -21,12 +22,14 @@ from tests.support.frontmatter import (
     only,
     places,
     swap,
+    unexplained,
 )
 from tests.support.policies import BASE_PATH
 from tests.support.spec_tables import code_spans, line_starting_with, table_after
 
 PATH = BASE_PATH
 SEND_LINE = at("- gmail.draft") + 1  # the line of the last tool, `gmail.send`
+BS = "\\"  # a backslash; YAML text with escapes is built from it, so no escape is typed here
 
 
 # --- scalars: integers
@@ -371,6 +374,9 @@ def test_a_front_matter_in_flow_style_is_read_like_any_other():
 
 
 # --- a placeholder skips the other checks of its field (validator-spec 3.1)
+#
+# E-PLACEHOLDER reads the text of the file as it is written, so "holds a placeholder" is judged on
+# the text as written too, and not on the value after YAML has decoded it (ruling R37).
 
 
 @pytest.mark.parametrize("placeholder", ["TBD", "TODO", "FIXME", "REPLACE_ME_RUNTIME"])
@@ -379,6 +385,7 @@ def test_an_integer_field_that_holds_a_placeholder_gets_no_type_error(placeholde
     assert result.findings == []
     assert "max_runtime_s" not in result.data["limits"]
     assert result.lines["limits.max_runtime_s"] == at("max_runtime_s: 300")
+    assert result.placeholders == {"limits.max_runtime_s"}
 
 
 @pytest.mark.parametrize(
@@ -388,17 +395,123 @@ def test_a_list_or_mapping_field_that_holds_a_placeholder_gets_no_type_error(tex
     result = load(text, PATH)
     assert {f.code for f in result.findings} == {"E-FIELD-MISSING"}
     assert name not in {f.params["field"] for f in result.findings}
+    assert result.placeholders == {name}
 
 
 def test_a_string_field_that_holds_a_placeholder_keeps_its_text():
     result = load(swap("agent: invoice-reminder", "agent: REPLACE_ME_AGENT"), PATH)
     assert result.findings == []
     assert result.data["agent"] == "REPLACE_ME_AGENT"
+    assert result.placeholders == {"agent"}
 
 
 def test_placeholder_entries_are_not_repeats_of_each_other():
     result = load(swap("- gmail.send\n", "- gmail.send\n  - TODO\n  - TODO\n"), PATH)
     assert result.findings == []
+    assert result.placeholders == {"tools.3", "tools.4"}
+
+
+def test_a_value_is_a_placeholder_when_it_is_written_with_one_in_quotes_or_on_a_later_line():
+    assert load(swap("agent: invoice-reminder", 'agent: "TODO"'), PATH).placeholders == {"agent"}
+    assert load(swap("agent: invoice-reminder", "agent: invoice\n  TODO"), PATH).placeholders == {
+        "agent"
+    }
+
+
+def test_the_template_holds_no_placeholder():
+    assert load(FRONT, PATH).placeholders == frozenset()
+
+
+# The same four letters can be written so that YAML decodes them to a placeholder and
+# E-PLACEHOLDER, which reads the text as written, does not see one.
+TODO_HEX = f'"T{BS}x4fDO"'  # TODO, with a hex escape
+TODO_FOLDED = f'"TO{BS}\n    DO"'  # TODO, with an escaped line break
+
+DISGUISED = {
+    "limits.max_runtime_s": lambda v: swap("max_runtime_s: 300", f"max_runtime_s: {v}"),
+    "version": lambda v: swap("version: 1", f"version: {v}"),
+    "limits": lambda v: front_without("limits") + f"limits: {v}\n",
+    "shadow": lambda v: front_without("shadow") + f"shadow: {v}\n",
+    "tools": lambda v: front_without("tools") + f"tools: {v}\n",
+    "forbidden": lambda v: front_without("forbidden") + f"forbidden: {v}\n",
+    "scope.email_to": lambda v: front_without("scope") + f"scope: {{email_to: {v}}}\n",
+}
+
+
+@pytest.mark.parametrize("spelling", [TODO_HEX, TODO_FOLDED], ids=["hex escape", "line break"])
+@pytest.mark.parametrize("field", DISGUISED)
+def test_a_disguised_placeholder_does_not_make_a_field_vanish(field, spelling):
+    text = DISGUISED[field](spelling)
+    result = load(text, PATH)
+    assert unexplained(text, result) == []
+    assert field not in result.placeholders  # as written, it is no placeholder
+    assert [f.code for f in result.findings if f.params.get("field") == field] == ["E-FIELD-TYPE"]
+
+
+# A value on a later line than its key is reported on its own line by E-PLACEHOLDER, and the key
+# line, which is the line of the field, would have nothing: the type error is then not skipped.
+LATER_LINE = {
+    "continued plain scalar": swap("max_runtime_s: 300", "max_runtime_s: 300\n    TBD"),
+    "value on the next line": swap("max_runtime_s: 300", "max_runtime_s:\n    TBD"),
+    "quoted on the next line": swap("max_runtime_s: 300", 'max_runtime_s:\n    "TBD"'),
+    "continued quoted scalar": swap("max_runtime_s: 300", 'max_runtime_s: "300\n    TBD"'),
+}
+
+
+@pytest.mark.parametrize("text", LATER_LINE.values(), ids=LATER_LINE)
+def test_a_placeholder_on_a_later_line_does_not_hide_the_type_error_of_the_key_line(text):
+    result = load(text, PATH)
+    assert places(result) == [("E-FIELD-TYPE", at("max_runtime_s: 300"), None)]
+    assert unexplained(text, result) == []
+
+
+# --- no field leaves `data` without a finding
+#
+# Later checks read "not in `data`" as "already reported". `unexplained` finds the fields that
+# have a line but no value and no finding, and every case of this module is run through it.
+
+
+def all_cases() -> dict[str, str]:
+    """The front matter text of every case in the tables of this module, by a label."""
+    cases = {"the template": FRONT}
+    for label, (value, _) in INTEGER_REJECTED.items():
+        cases[f"integer rejected: {label}"] = swap(
+            "max_runtime_s: 300", f"max_runtime_s: {value}".rstrip()
+        )
+    for label, digits in INTEGER_ACCEPTED.items():
+        cases[f"integer accepted: {label}"] = swap("max_runtime_s: 300", f"max_runtime_s: {digits}")
+    for label, value in STRING_REJECTED.items():
+        cases[f"string rejected: {label}"] = swap("agent: invoice-reminder", f"agent: {value}")
+    for label, value in STRING_ACCEPTED.items():
+        cases[f"string accepted: {label}"] = swap("agent: invoice-reminder", f"agent: {value}")
+    for label, (entry, _) in LIST_ENTRY_REJECTED.items():
+        cases[f"list entry rejected: {label}"] = swap("- gmail.draft", entry)
+    for value in ("TODO", "5 TBD", "[TODO]"):
+        cases[f"list entry: {value}"] = swap("- gmail.draft", f"- {value}")
+    for value in ("TODO", "TBD", "FIXME", "REPLACE_ME_X", "'TODO'", '"TBD"', "|\n    TODO"):
+        cases[f"limit: {value}"] = swap("max_runtime_s: 300", f"max_runtime_s: {value}")
+    for label, (path, entry) in REPEATED.items():
+        cases[f"repeated entry: {label}"] = repeated(path, entry)
+    for path in [*REQUIRED_TOP_LEVEL, *NESTED]:
+        cases[f"missing: {path}"] = front_without(path)
+    for label, (_, change) in UNKNOWN.items():
+        cases[f"unknown: {label}"] = edited(change)
+    for label, (front, _) in NOT_A_MAPPING.items():
+        cases[f"not a mapping: {label}"] = front
+    for label, text in LATER_LINE.items():
+        cases[f"later line: {label}"] = text
+    for field, make in DISGUISED.items():
+        for spelling in (TODO_HEX, TODO_FOLDED, "TODO"):
+            cases[f"{field} written as {spelling}"] = make(spelling)
+    return cases
+
+
+ALL_CASES = all_cases()
+
+
+@pytest.mark.parametrize("text", ALL_CASES.values(), ids=ALL_CASES)
+def test_no_case_of_this_module_makes_a_field_vanish_without_a_finding(text):
+    assert unexplained(text, load(text, PATH)) == []
 
 
 # --- E-FILENAME
@@ -411,8 +524,9 @@ def test_the_file_name_must_be_the_agent_id_and_md():
         "policies/other.md",
         params={"name": "other.md", "agent": "invoice-reminder"},
     )
-    assert check_filename(Path("policies/other.md"), DATA) == [expected]
-    assert check_filename(Path("elsewhere/invoice-reminder.md"), DATA) == []
+    front = load(FRONT, PATH)
+    assert check_filename(Path("policies/other.md"), front) == [expected]
+    assert check_filename(Path("elsewhere/invoice-reminder.md"), front) == []
 
 
 @pytest.mark.parametrize(
@@ -425,23 +539,37 @@ def test_the_file_name_must_be_the_agent_id_and_md():
     ],
 )
 def test_the_file_name_is_compared_exactly(name):
-    assert [f.code for f in check_filename(Path("policies") / name, DATA)] == ["E-FILENAME"]
+    findings = check_filename(Path("policies") / name, load(FRONT, PATH))
+    assert [f.code for f in findings] == ["E-FILENAME"]
 
 
-@pytest.mark.parametrize(
-    "data",
-    [
-        {},
-        {"agent": 5},
-        {"agent": None},
-        {"agent": "REPLACE_ME_AGENT"},
-        {"agent": "TODO"},
-        {"agent": "x-TBD"},
-    ],
-    ids=["missing", "integer", "null", "placeholder", "TODO", "TBD in the id"],
-)
-def test_the_file_name_check_skips_an_agent_it_cannot_compare(data):
-    assert check_filename(Path("policies/other.md"), data) == []
+FILENAME_SKIPPED = {
+    "missing": None,
+    "integer": "agent: 5",
+    "null": "agent:",
+    "placeholder": "agent: REPLACE_ME_AGENT",
+    "TODO": "agent: TODO",
+    "TBD in the id": "agent: x-TBD",
+    "placeholder in quotes": 'agent: "TODO"',
+    "placeholder on a later line": "agent: invoice\n  TODO",
+}
+
+
+@pytest.mark.parametrize("agent", FILENAME_SKIPPED.values(), ids=FILENAME_SKIPPED)
+def test_the_file_name_check_skips_an_agent_it_cannot_compare(agent):
+    text = front_without("agent") if agent is None else swap("agent: invoice-reminder", agent)
+    assert check_filename(Path("policies/other.md"), load(text, PATH)) == []
+
+
+def test_the_file_name_check_skips_when_there_is_no_data():
+    assert check_filename(Path("policies/other.md"), load("agent: [", PATH)) == []
+
+
+def test_an_agent_that_is_a_placeholder_only_once_decoded_is_still_compared():
+    # E-PLACEHOLDER does not report "T\x4fDO", so it is not a placeholder for this check either.
+    front = load(swap("agent: invoice-reminder", f"agent: {TODO_HEX}"), PATH)
+    (finding,) = check_filename(Path("policies/other.md"), front)
+    assert finding.params == {"name": "other.md", "agent": "TODO"}
 
 
 # --- the field table of the spec

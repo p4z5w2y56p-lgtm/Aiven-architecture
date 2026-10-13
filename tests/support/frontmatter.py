@@ -6,7 +6,9 @@ a changed copy of it as YAML, so that a test can remove or add a field without Y
 """
 
 from copy import deepcopy
+from pathlib import Path
 
+from aiven.policy.fileformat import check_file
 from aiven.policy.frontmatter import split
 from tests.support.policies import AGENTS_PROJECT, FOLDER_ID, line_of, valid_base
 
@@ -99,3 +101,40 @@ def only(result, code: str | None = None):
     """The one finding of a `load` result (of the given code), which must be the only one."""
     (finding,) = [f for f in result.findings if code in (None, f.code)]
     return finding
+
+
+def present(data, path: str) -> bool:
+    """Whether `path` (`limits.max_runtime_s`, `tools.1`) leads to something in `data`."""
+    for part in path.split("."):
+        if isinstance(data, dict) and part in data:
+            data = data[part]
+        elif isinstance(data, list) and part.isdigit() and int(part) < len(data):
+            data = data[int(part)]
+        else:
+            return False
+    return True
+
+
+def unexplained(front: str, result) -> list[str]:
+    """The fields that `result` has a line for but not a value, and that nothing reports.
+
+    Later checks read "not in `data`" as "already reported", so a field must never drop out of
+    `data` silently. A field is reported when a finding stands on its line, or on the line of one
+    of its list entries (a list with a wrong entry is dropped whole). The findings are those of
+    `load` and those of the file checks, because E-PLACEHOLDER comes from the latter: they are
+    run on a file that holds `front` behind its opening delimiter, so the lines are the same.
+    """
+    file = ("---\n" + front + "---\n").encode("utf-8", "replace")
+    findings = [*result.findings, *check_file(Path("policies/x.md"), file)]
+    reported = {f.line for f in findings if f.line is not None}
+    dropped = []
+    for path in result.lines:
+        parent = path.rpartition(".")[0]
+        if present(result.data, path) or (parent and not present(result.data, parent)):
+            continue  # it is there, or it went with its parent, which is judged by itself
+        own = {
+            n for other, n in result.lines.items() if other == path or other.startswith(path + ".")
+        }
+        if not own & reported:
+            dropped.append(path)
+    return dropped

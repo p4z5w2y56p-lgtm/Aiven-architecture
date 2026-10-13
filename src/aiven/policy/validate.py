@@ -43,7 +43,7 @@ def _front_matter_findings(path: Path, text: str) -> list[Finding]:
     findings = list(loaded.findings)
     if loaded.data is None:
         return findings
-    findings.extend(check_filename(path, loaded.data))
+    findings.extend(check_filename(path, loaded))
     # Later tasks add their checks here, with loaded.data and loaded.lines: the values, tools,
     # limits and scope (1.4), and the body, which starts on _body_line (1.5).
     return findings
