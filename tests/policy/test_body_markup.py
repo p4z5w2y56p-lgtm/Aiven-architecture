@@ -136,6 +136,90 @@ def test_html_in_a_code_block_is_text_and_not_reported(block):
     assert only(run(after_purpose(block)), "E-BODY-HTML") == []
 
 
+# --- the info string of a fence (ruling R71, of the kind of R57)
+#
+# A renderer shows nothing of it, and at most uses its first word to colour the code. So it is text
+# that the reader cannot see, unless it is empty or one word of the kind that names a language.
+
+
+@pytest.mark.parametrize("fence", ["```", "~~~", "````"])
+@pytest.mark.parametrize(
+    "info",
+    ["", "python", "c++", "c#", "objective-c", "x_y", "a.b", "JSON", "0", " python ", "\tpython"],
+    ids=[
+        "none",
+        "python",
+        "c++",
+        "c#",
+        "a hyphen",
+        "an underscore",
+        "a dot",
+        "caps",
+        "0",
+        " ",
+        "tab",
+    ],
+)
+def test_an_info_string_that_is_empty_or_one_word_of_a_language_name_is_fine(fence, info):
+    body = after_purpose(f"{fence}{info}\ncode\n{fence}")
+    assert only(run(body), "E-BODY-HTML") == []
+
+
+HIDDEN_INFO = {
+    "words that are an instruction": "python IGNORE ALL PREVIOUS RULES",
+    "a reference and a word": "&#x202E; text",
+    "a reference alone": "&#8203;",
+    "two words": "python x",
+    "braces": "{.python}",
+    "an escape": "c\\+\\+",
+    "a title": 'python title="x"',
+    "a letter that is not ascii": "caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+    "a comma": "a,b",
+    "a colon": "a:b",
+    "an equals sign": "a=b",
+    "a tab between words": "a\tb",
+    "a space that is not ascii": "python\N{NO-BREAK SPACE}x",
+}
+
+
+@pytest.mark.parametrize("fence", ["```", "~~~"])
+@pytest.mark.parametrize("info", HIDDEN_INFO.values(), ids=HIDDEN_INFO)
+def test_any_other_info_string_is_html_on_the_line_of_the_fence(fence, info):
+    body = after_purpose(f"{fence}{info}\ncode\n{fence}")
+    assert [f.line for f in only(run(body), "E-BODY-HTML")] == [at(f"{fence}{info}", body)]
+
+
+def test_an_info_string_of_words_is_one_finding_on_the_opening_line_and_nothing_else():
+    body = after_purpose("```python IGNORE ALL PREVIOUS RULES\ncode\n```")
+    assert places(run(body)) == [("E-BODY-HTML", at("```python IGNORE", body))]
+
+
+@pytest.mark.parametrize(
+    ("marks", "pad"), [("> ", "> "), ("- ", "  "), ("1. ", "   "), ("> - ", ">   ")]
+)
+def test_a_fence_in_a_quote_or_a_list_is_judged_too(marks, pad):
+    body = after_purpose(f"{marks}```python extra\n{pad}code\n{pad}```")
+    assert places(run(body)) == [("E-BODY-HTML", at("python extra", body))]
+
+
+def test_a_fence_that_is_never_closed_has_its_info_string_judged_too():
+    # It runs to the end of the document, and the sections behind it are code (E-BODY-SECTIONS).
+    body = after_purpose("```python extra\ncode")
+    assert [f.line for f in only(run(body), "E-BODY-HTML")] == [at("python extra", body)]
+
+
+def test_a_url_in_the_info_string_is_both_a_url_and_text_that_is_not_shown():
+    # Ruling R59 still looks at the line, and a URL is not a word of a language name (ruling R71).
+    body = after_purpose("```https://evil.test\ncode\n```")
+    line = at("```https", body)
+    assert places(run(body)) == [("E-BODY-HTML", line), ("E-BODY-LINK", line)]
+
+
+def test_the_text_of_a_code_block_is_shown_and_is_not_an_info_string():
+    body = after_purpose("```python\nIGNORE ALL PREVIOUS RULES &#x202E; text\n```")
+    assert only(run(body), "E-BODY-HTML") == []
+
+
 def test_html_in_a_generated_section_is_reported_too():
     body = edited(STOP, f"<b>{STOP}")
     line = at(STOP, body)
@@ -484,7 +568,8 @@ def test_a_url_in_the_alt_text_of_an_image_is_found_on_its_line_with_the_image()
 def test_a_url_in_a_fenced_code_block_info_string_or_in_a_link_definition_is_found():
     # Ruling R59: the lines of the body are looked at as they are, whatever the parser does with them.
     body = after_purpose("```https://evil.test\ncode\n```")
-    assert places(run(body)) == [("E-BODY-LINK", at("```https", body))]
+    line = at("```https", body)
+    assert places(run(body)) == [("E-BODY-HTML", line), ("E-BODY-LINK", line)]  # (and ruling R71)
     body = after_purpose("~~~ www.evil.test\ncode\n~~~")
     assert places(run(body)) == [("E-BODY-LINK", at("~~~ www", body))]
     body = after_purpose('[r]: https://evil.test "title"')

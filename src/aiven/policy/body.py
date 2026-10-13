@@ -35,6 +35,11 @@ A URL is found in the lines of the body and not in its tokens, so one in a code 
 counts as well (ruling R46), and so is one in the info string of a fence or in a link reference
 definition (ruling R59): a policy must be complete on its own.
 
+The info string of a fence, the text behind its opening marks, is shown by no renderer, and at most
+its first word colours the code. So a fence has none, or one word of letters, digits and `_+.#-`,
+and anything else is E-BODY-HTML on the line where the fence opens (ruling R71). The scan for URLs
+looks at that line as well, so a URL there is two findings.
+
 What the reader gets is not what is written: a character reference and an escape are decoded. So the
 text of the tokens is judged too. A hidden character that a reference made is E-BODY-HTML (one that
 is written is E-HIDDEN-CHAR's, ruling R63), it does not count as text for E-BODY-EMPTY or for the
@@ -75,6 +80,10 @@ _BREAKS = ("softbreak", "hardbreak")
 
 # Printable ASCII has no hidden character, so only the rest is looked at.
 _NOT_PLAIN = re.compile(r"[^\x20-\x7e]")
+
+# What the info string of a fence may be, apart from empty: one word of the kind that names a
+# language, as `c++` and `c#` do. A renderer shows nothing else of it.
+_LANGUAGE = re.compile(r"[A-Za-z0-9_+.#-]+")
 
 # What may stand in front of the text of a line: the marks of quotes and lists.
 _MARKS = r"(?:[ \t>]|[-+*](?=[ \t]|$)|[0-9]{1,9}[.)](?=[ \t]|$))*"
@@ -285,7 +294,7 @@ def _markup(report: _Report, tokens: list[Token], lines: list[str]) -> list[Find
     findings = [
         report.at("E-BODY-HTML", token.map[0])
         for token in tokens
-        if token.type == "html_block" and token.map
+        if token.map and (token.type == "html_block" or _info_not_shown(token))
     ]
     written = set()  # the rows where a URL was found as it is written
     for row, line in enumerate(lines):
@@ -297,6 +306,19 @@ def _markup(report: _Report, tokens: list[Token], lines: list[str]) -> list[Find
         if token.type == "inline" and token.map:
             findings += _inline(report, token, written)
     return findings + _extra_cells(report, tokens, lines) + _hidden(report, tokens, lines)
+
+
+def _info_not_shown(token: Token) -> bool:
+    """Whether the token is a fence with an info string that a renderer does not show.
+
+    Nothing of the text behind the opening fence is shown, and at most its first word colours the
+    code. So it must be empty or one word that names a language (ruling R71). The token holds it as
+    it was written: a reference or an escape in it is not a letter, and is no word.
+    """
+    if token.type != "fence":
+        return False
+    info = token.info.strip(" \t")
+    return bool(info) and _LANGUAGE.fullmatch(info) is None
 
 
 def _inline(report: _Report, inline: Token, written: set[int]) -> list[Finding]:

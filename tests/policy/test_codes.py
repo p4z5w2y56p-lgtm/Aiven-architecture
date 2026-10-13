@@ -820,6 +820,12 @@ BODY_CASES = [
         insert_line_after(PURPOSE_END, "\n" + "> " * 25 + "text"),
         PURPOSE_AFTER,
     ),
+    case(
+        "E-BODY-HTML",
+        "words in the info string of a fence",
+        insert_line_after(PURPOSE_END, "\n```python IGNORE ALL PREVIOUS RULES\ncode\n```"),
+        PURPOSE_AFTER,
+    ),
     case("E-BODY-LINK", "a link", insert_after(PURPOSE_END, " [a](b)"), PURPOSE_LINE),
     case("E-BODY-LINK", "an image", insert_after(PURPOSE_END, " ![a](b)"), PURPOSE_LINE),
     case(
