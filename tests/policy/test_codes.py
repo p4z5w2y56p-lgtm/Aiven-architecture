@@ -8,17 +8,23 @@ may carry warnings (later checks add W-TOOL-NOT-LIVE), so the full list is never
 Rules for a mutation:
 - Edit text inside one free-text line of the body (Purpose, Why each tool, Data and risks). Never
   touch the front matter or the two generated sections, and never add or remove a line. The
-  exceptions are the BOM at the very start and the cases about the end of the file.
+  exceptions are the BOM at the very start, the cases about the end of the file, and the front
+  matter cases: those edit the front matter in place (a field is commented out, the comment-only
+  line 2 is replaced), so that no line moves. Only E-LIST-DUPLICATE adds a line, behind the
+  forbidden list, where nothing else points.
 - Use no URLs, links or HTML: later body checks reject them.
 - Find the target line by content (`line_of`), not by number.
+- E-FILENAME changes the path that the validator is given, not the bytes (see its own test).
 """
 
 import codecs
 import dataclasses
 import json
 import re
+import time
 from collections import Counter
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
@@ -29,7 +35,7 @@ from aiven.policy.findings import Finding, format_line, message
 from aiven.policy.validate import validate_file
 from tests.support import REPO_ROOT, gen
 from tests.support.gen import grouped
-from tests.support.policies import BASE_PATH, line_of, valid_base
+from tests.support.policies import BASE_PATH, TEMPLATE_PATH, line_of, valid_base
 
 CFG = load_platform_config(REPO_ROOT / "config" / "platform.example.yaml")
 CATALOG = load_catalog(REPO_ROOT / "catalog" / "catalog-v1.yaml")
@@ -48,6 +54,16 @@ PURPOSE_LINE = line_of(BASE_TEXT, PURPOSE)
 READS_LINE = line_of(BASE_TEXT, READS)
 WHY_LINE = line_of(BASE_TEXT, WHY_DRAFT)
 RISKS_LINE = line_of(BASE_TEXT, RISKS_WRITES)
+
+# Lines of the front matter, found by their content.
+COMMENT_LINE = line_of(BASE_TEXT, "# AIVEN policy, schema v1")  # a line of comment only
+COMMENT = BASE_TEXT.split("\n")[COMMENT_LINE - 1]
+AGENT_LINE = line_of(BASE_TEXT, "agent: invoice-reminder")
+VERSION_LINE = line_of(BASE_TEXT, "version: 1")
+LIMITS_LINE = line_of(BASE_TEXT, "limits:")
+RUNTIME_LINE = line_of(BASE_TEXT, "max_runtime_s: 300")
+DELETE_LINE = line_of(BASE_TEXT, "- drive.delete")
+LAST_FORBIDDEN_LINE = line_of(BASE_TEXT, "- gmail.send_bulk")
 
 Mutation = Callable[[bytes], bytes]
 
@@ -68,6 +84,44 @@ def insert_after(anchor: str, payload: str | bytes) -> Mutation:
 def grow_to(size: int, anchor: str) -> Mutation:
     """Pad the line of `anchor` with filler until the file is `size` bytes."""
     return lambda data: insert_after(anchor, "x" * (size - len(data)))(data)
+
+
+def replace(old: str, new: str) -> Mutation:
+    """Replace the one place where `old` stands. For the front matter cases, which edit in place."""
+
+    def mutate(data: bytes) -> bytes:
+        marker = old.encode("utf-8")
+        assert data.count(marker) == 1, f"{old!r} must occur exactly once"
+        return data.replace(marker, new.encode("utf-8"), 1)
+
+    return mutate
+
+
+def edit_line(needle: str, old: str, new: str) -> Mutation:
+    """In the one line that holds `needle`, replace the first `old` by `new`."""
+
+    def mutate(data: bytes) -> bytes:
+        lines = data.split(b"\n")
+        hits = [number for number, line in enumerate(lines) if needle.encode() in line]
+        assert len(hits) == 1, f"{needle!r} must occur in exactly one line"
+        assert old.encode() in lines[hits[0]], f"{old!r} is not in the line of {needle!r}"
+        lines[hits[0]] = lines[hits[0]].replace(old.encode(), new.encode(), 1)
+        return b"\n".join(lines)
+
+    return mutate
+
+
+def insert_line_after(needle: str, new_line: str) -> Mutation:
+    """Add `new_line` behind the one line that holds `needle`. The lines after it move down."""
+
+    def mutate(data: bytes) -> bytes:
+        lines = data.split(b"\n")
+        hits = [number for number, line in enumerate(lines) if needle.encode() in line]
+        assert len(hits) == 1, f"{needle!r} must occur in exactly one line"
+        lines.insert(hits[0] + 1, new_line.encode())
+        return b"\n".join(lines)
+
+    return mutate
 
 
 def findings_of(data: bytes) -> list[Finding]:
@@ -105,9 +159,91 @@ def content_samples() -> list[tuple[str, str, str, str]]:
 
 CONTENT_SAMPLES = content_samples()
 
-# Task 1.2: the file checks (validator-spec 3.1) and content safety (3.8). E-FILENAME is checked
-# with the front matter, in Task 1.3.
+CYRILLIC_E = "\N{CYRILLIC SMALL LETTER IE}"  # looks like the Latin e
+
+
+def replace_comment(text: str) -> Mutation:
+    """Put `text` where the comment-only line of the front matter stands."""
+    return replace(COMMENT, text)
+
+
+# Not an integer for a limit: quoted, hexadecimal, sexagesimal (YAML 1.1 reads 5:00 as 300),
+# signed, and a YAML 1.1 boolean.
+NOT_INTEGERS = {
+    "quoted": '"300"',
+    "hexadecimal": "0x12C",
+    "sexagesimal": "5:00",
+    "plus sign": "+5",
+    "on": "on",
+}
+
+# Task 1.3: the front matter (validator-spec 3.2). Each case edits in place, see the top.
+FRONT_MATTER_CASES = [
+    case("E-FM-MISSING", "line 1 is not ---", replace("---\n# AIVEN", "--- \n# AIVEN"), 1),
+    case(
+        "E-FM-MISSING",
+        "no closing ---",
+        replace("---\n\n# invoice-reminder", "--- \n\n# invoice-reminder"),
+        1,
+    ),
+    case("E-YAML", "character that starts no token", replace_comment("@"), COMMENT_LINE),
+    case(
+        "E-YAML-FEATURE",
+        "anchor",
+        edit_line("agent: invoice-reminder", "invoice-reminder", "&a invoice-reminder"),
+        AGENT_LINE,
+    ),
+    case(
+        "E-YAML-FEATURE",
+        "alias",
+        edit_line("agent: invoice-reminder", "invoice-reminder", "*a"),
+        AGENT_LINE,
+    ),
+    case("E-YAML-FEATURE", "merge key", replace_comment("<<: {}"), COMMENT_LINE),
+    case("E-YAML-FEATURE", "tag", edit_line("version: 1", "1", "!!str 1"), VERSION_LINE),
+    case("E-YAML-FEATURE", "complex key", replace_comment("? [a, b]"), COMMENT_LINE),
+    case("E-YAML-FEATURE", "second document", replace_comment("--- # second"), COMMENT_LINE),
+    case("E-YAML-DUPLICATE-KEY", "version twice", replace_comment("version: 1"), VERSION_LINE),
+    case(
+        "E-FM-NON-ASCII",
+        "Cyrillic e in a comment",
+        edit_line("- drive.delete", "# required", f"# r{CYRILLIC_E}quired"),
+        DELETE_LINE,
+    ),
+    case(
+        "E-HIDDEN-CHAR",
+        "zero width space in a front matter comment (not also non-ASCII)",
+        edit_line("- drive.delete", "# required", "# required\N{ZERO WIDTH SPACE}"),
+        DELETE_LINE,
+    ),
+    case(
+        "E-FIELD-MISSING",
+        "top-level field commented out",
+        edit_line("untrusted_input: strict", "untrusted_input:", "# untrusted_input:"),
+        1,
+    ),
+    case(
+        "E-FIELD-MISSING",
+        "nested field commented out",
+        edit_line("runs_per_day: 1", "runs_per_day:", "# runs_per_day:"),
+        LIMITS_LINE,
+    ),
+    case("E-FIELD-UNKNOWN", "Max_class", replace_comment("Max_class: R2"), COMMENT_LINE),
+    *[
+        case("E-FIELD-TYPE", label, edit_line("max_runtime_s: 300", "300", value), RUNTIME_LINE)
+        for label, value in NOT_INTEGERS.items()
+    ],
+    case(
+        "E-LIST-DUPLICATE",
+        "forbidden entry twice",
+        insert_line_after("- gmail.send_bulk", "  - drive.share"),
+        LAST_FORBIDDEN_LINE + 1,
+    ),
+]
+
+# Task 1.2: the file checks (validator-spec 3.1) and content safety (3.8).
 CASES = [
+    *FRONT_MATTER_CASES,
     case("E-ENCODING", "byte-order mark", lambda data: codecs.BOM_UTF8 + data, 1),
     case("E-ENCODING", "invalid byte", insert_after(PURPOSE, b"\xff"), PURPOSE_LINE),
     case("E-LINE-ENDINGS", "CR before the LF", insert_after(PURPOSE_END, "\r"), PURPOSE_LINE),
@@ -144,6 +280,26 @@ def test_mutation_yields_exactly_one_new_finding(code, mutation, expected_line):
         text = message(finding, lang)  # raises KeyError if the finding lacks a parameter
         assert "{" not in text and "}" not in text
     assert format_line(finding).startswith(f"{finding.severity} {code} {BASE_PATH}")
+
+
+def test_a_file_name_other_than_the_agent_yields_exactly_one_new_finding():
+    # The path is not part of the bytes, so this case changes the path that the validator gets.
+    def shape(f: Finding):
+        return (f.code, f.severity, f.line, f.column, tuple(f.params.items()))
+
+    known = Counter(shape(f) for f in findings_of(BASE))
+    new = []
+    for finding in validate_file(Path("policies/other-name.md"), BASE, CFG, CATALOG):
+        if known[shape(finding)]:
+            known[shape(finding)] -= 1
+        else:
+            new.append(finding)
+    assert [(f.code, f.line, f.column) for f in new] == [("E-FILENAME", None, None)]
+    assert new[0].severity == "error"
+    assert new[0].path == "policies/other-name.md"
+    assert new[0].params == {"name": "other-name.md", "agent": "invoice-reminder"}
+    assert message(new[0], "en") == "File name other-name.md must be invoice-reminder.md."
+    assert "invoice-reminder.md" in message(new[0], "nl")
 
 
 @pytest.mark.parametrize(("code", "kind", "label", "value"), CONTENT_SAMPLES)
@@ -277,3 +433,50 @@ def test_findings_are_sorted_whole_file_first_then_by_line_column_and_code():
         ("E-SECRET", WHY_LINE, column(WHY_LINE, aws)),
         ("E-ID-NUMBER", RISKS_LINE, column(RISKS_LINE, bsn)),
     ]
+
+
+# --- the front matter in validate_file
+
+
+def test_without_front_matter_only_the_file_and_content_checks_still_run():
+    data = replace("---\n# AIVEN", "--- \n# AIVEN")(BASE) + b"TODO\n"
+    codes = {f.code for f in findings_of(data)}
+    assert {"E-FM-MISSING", "E-PLACEHOLDER"} <= codes
+    assert not codes & {"E-FILENAME", "E-FIELD-MISSING", "E-YAML", "E-FM-NON-ASCII"}
+
+
+def test_e_fm_missing_is_reported_once_at_line_one():
+    found = [f for f in findings_of(b"no front matter here\n") if f.code == "E-FM-MISSING"]
+    assert [(f.line, f.column, f.params) for f in found] == [(1, None, {})]
+    for lang in ("en", "nl"):
+        assert "---" in message(found[0], lang)
+
+
+def test_a_file_that_is_all_nesting_is_a_finding_and_not_a_hang():
+    started = time.perf_counter()
+    findings = findings_of(b"---\n" + b"[" * 65_000 + b"\n---\n")
+    assert time.perf_counter() - started < 5  # reading all of it takes minutes
+    assert ("E-YAML", 2) in {(f.code, f.line) for f in findings}
+
+
+E_FILENAME_SKIPPED = {
+    "yaml feature": edit_line("agent: invoice-reminder", "invoice-reminder", "&a invoice-reminder"),
+    "wrong type": edit_line("agent: invoice-reminder", "invoice-reminder", "5"),
+    "missing": edit_line("agent: invoice-reminder", "agent:", "# agent:"),
+    "placeholder": edit_line("agent: invoice-reminder", "invoice-reminder", "TODO"),
+    "no front matter": replace("---\n# AIVEN", "--- \n# AIVEN"),
+}
+
+
+@pytest.mark.parametrize("mutation", E_FILENAME_SKIPPED.values(), ids=E_FILENAME_SKIPPED)
+def test_e_filename_needs_a_usable_agent(mutation):
+    findings = validate_file(Path("policies/other.md"), mutation(BASE), CFG, CATALOG)
+    assert "E-FILENAME" not in {f.code for f in findings}
+
+
+def test_the_template_is_reported_under_its_own_name():
+    findings = validate_file(
+        Path("templates/policy-template.md"), TEMPLATE_PATH.read_bytes(), CFG, CATALOG
+    )
+    assert (findings[0].code, findings[0].line) == ("E-FILENAME", None)
+    assert findings[0].params == {"name": "policy-template.md", "agent": "invoice-reminder"}

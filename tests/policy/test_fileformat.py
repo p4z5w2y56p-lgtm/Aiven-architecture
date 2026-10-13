@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from aiven.policy import constants
-from aiven.policy.fileformat import check_file, decode_text
+from aiven.policy.fileformat import check_file, decode_text, has_placeholder
 from aiven.policy.findings import Finding, load_messages, message
 from tests.support import gen
 from tests.support.characters import HIDDEN_CHARACTERS, VISIBLE_CHARACTERS
@@ -332,6 +332,14 @@ def test_a_placeholder_is_reported_with_its_own_name(word, token, template):
 @pytest.mark.parametrize("word", NOT_PLACEHOLDERS)
 def test_other_words_are_not_placeholders(word):
     assert check(f"see {word} here\n") == []
+
+
+@pytest.mark.parametrize("word", [*PLACEHOLDERS, *NOT_PLACEHOLDERS])
+def test_has_placeholder_is_the_test_of_the_file_check(word):
+    # The front matter checks ask this about a value: a field that holds a placeholder skips them.
+    text = f"see {word} here"
+    assert has_placeholder(text) == bool(check(text + "\n"))
+    assert has_placeholder(word) == bool(check(word + "\n"))
 
 
 def test_each_placeholder_is_reported_where_it_stands():

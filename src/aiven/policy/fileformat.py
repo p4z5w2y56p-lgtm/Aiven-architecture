@@ -28,6 +28,15 @@ _WORD = re.compile(r"\S+")
 _NOT_PRINTABLE_ASCII = re.compile(r"[^\x20-\x7e]")
 
 
+def has_placeholder(text: str) -> bool:
+    """Whether `text` holds a placeholder: `REPLACE_ME...`, `TODO`, `TBD` or `FIXME`.
+
+    This is the test of E-PLACEHOLDER. A field that holds a placeholder skips its other checks
+    (section 3.1), so the checks of a field ask it too.
+    """
+    return _PLACEHOLDER.search(text) is not None
+
+
 def decode_text(data: bytes) -> str:
     """The text that every check reads: one leading byte-order mark dropped, bad bytes replaced.
 
@@ -93,7 +102,7 @@ def _placeholder_findings(where: str, number: int, line: str) -> list[Finding]:
     whole word goes through `is_sensitive`, once, however many placeholders it holds. If it is
     sensitive, the token is `[hidden]`.
     """
-    if _PLACEHOLDER.search(line) is None:
+    if not has_placeholder(line):
         return []
     findings = []
     for word in _WORD.finditer(line):
