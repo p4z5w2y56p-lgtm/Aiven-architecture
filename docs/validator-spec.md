@@ -189,7 +189,7 @@ E-BODY-DRIFT closes a gap in the plan: you sign the body, but the gateway enforc
 |---|---|
 | E-AGENT-DUPLICATE | Two files declare the same `agent` |
 | E-PRINCIPAL-DUPLICATE | Two policies share a `principal` |
-| E-VERSION-ORDER | `version` is not the previous signed version + 1. In CI, "previous" comes from Git history; at load it is the active version. |
+| E-VERSION-ORDER | In CI: `version` is not the previous signed version + 1, with "previous" taken from Git history; a new agent starts at 1. At load the rule in 3.10 applies instead. |
 
 ### 3.10 At load only (`verify`)
 

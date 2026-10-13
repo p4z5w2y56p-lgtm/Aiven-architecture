@@ -288,7 +288,7 @@ Plus:
 **Interfaces (produces):**
 
 - `widening(prev: Policy, new: Policy) -> tuple[list[str], bool]`: the changes, and whether shadow restarts.
-- `check_set(items: list[tuple[Path, Policy]], previous: dict[str, Policy]) -> list[Finding]`
+- `check_duplicates(items: list[tuple[Path, Policy]]) -> list[Finding]` and `check_history(path: Path, policy: Policy, previous: Policy | None) -> list[Finding]` (split during M1, ruling R91: the gateway loader runs the duplicate check over the whole set and the history check per file, only where the history is known)
 
 **Tests:**
 
@@ -1094,7 +1094,7 @@ To switch an agent to Claude (available now), only these lines change:
 ```yaml
 model:
   provider: vertex-claude
-  model_id: claude-opus-5-5
+  model_id: <Claude model ID chosen in setup step S7>
   region: eu
   max_output_tokens: 16000
 ```

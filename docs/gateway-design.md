@@ -288,7 +288,7 @@ Agents run as Cloud Run jobs in `aiven-agents`, using the `aiven.agent` runtime.
 - **Gateway tools only.** Adapters send function or tool definitions only: no Google Search grounding, no web search, no other built-in tools (deployment check, AT-BYP-7).
 - **The switch** is a change in `agents/<id>/runtime.yaml`:
   - `provider` from `vertex-gemini` to `vertex-claude`;
-  - `model_id`, for example `claude-opus-5-5`;
+  - `model_id`, the Claude model chosen in setup step S7;
   - `region`, for example `eu` to keep processing in the EU.
 
   It also needs a price entry in `pricing/models.yaml`, and the model enabled in Model Garden. A conformance test runs one scripted conversation through both adapters and expects the same gateway calls.
