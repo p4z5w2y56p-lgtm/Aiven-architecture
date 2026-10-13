@@ -29,11 +29,16 @@ E-PLACEHOLDER, so such a class is not ranked here. The other fields are compared
 values are.
 
 The strings are plain ASCII (`->`), and `check_set` joins them with `; ` for W-WIDENS. They hold
-text from the file (tools, addresses): the `Finding` that quotes them cleans them, and shows up to
-2,000 characters of the whole list.
+text from the file: tools, addresses and the numbers of limits. Each such value goes through
+`content.safe_text` before it is grouped (ruling R77), so one that the guard would hide, a
+credential, a bank detail or an ID number, shows as `[hidden]` in its own place. Without that the
+`Finding` that quotes the joined list hides the whole of it when a single entry looks like one, and
+the tool and the limit next to a BSN-shaped address are lost with it. The `Finding` still judges
+the list as a whole, and shows up to 2,000 characters of it.
 """
 
 from aiven.policy.constants import POLICY_CLASSES
+from aiven.policy.content import safe_text
 from aiven.policy.model import Policy
 
 # The limits that widening looks at, in the order of the file. The spend is not one of them.
@@ -52,7 +57,9 @@ def widening(prev: Policy, new: Policy) -> tuple[list[str], bool]:
     if prev.untrusted_input == "strict" and new.untrusted_input == "taint":
         changes.append("untrusted_input: strict -> taint")
     if new.shadow_min_runs < prev.shadow_min_runs:
-        changes.append(f"shadow.min_runs: {prev.shadow_min_runs} -> {new.shadow_min_runs}")
+        changes.append(
+            f"shadow.min_runs: {_shown(prev.shadow_min_runs)} -> {_shown(new.shadow_min_runs)}"
+        )
     return changes, bool(added) or raised
 
 
@@ -74,7 +81,7 @@ def _limits(prev: Policy, new: Policy) -> list[str]:
     for name in _LIMITS:
         old, now = getattr(prev.limits, name), getattr(new.limits, name)
         if now > old:
-            changes.append(f"limits.{name}: {old} -> {now}")
+            changes.append(f"limits.{name}: {_shown(old)} -> {_shown(now)}")
     return changes
 
 
@@ -110,7 +117,12 @@ def _domain_listed(entry: str, listed: tuple[str, ...]) -> bool:
 
 def _grouped(field: str, added: list[str]) -> str:
     """The string of one field that gains entries: `tools: +a +b`."""
-    return f"{field}: " + " ".join(f"+{entry}" for entry in added)
+    return f"{field}: " + " ".join(f"+{_shown(entry)}" for entry in added)
+
+
+def _shown(value: object) -> str:
+    """A value of the file as the list shows it, cleaned by the guard: `[hidden]` if it must be."""
+    return safe_text(str(value))
 
 
 def _inside(path: str, root: str | None) -> bool:

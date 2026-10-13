@@ -17,6 +17,7 @@ from aiven.policy.content import _SHOWN as SHOWN
 from aiven.policy.findings import format_line, message
 from aiven.policy.model import Policy
 from aiven.policy.policyset import check_set
+from tests.support import gen
 from tests.support.bodies import policy_of
 from tests.support.frontmatter import DATA
 from tests.support.policies import valid_base
@@ -317,6 +318,24 @@ def test_a_widening_of_every_kind_is_shown_whole_in_the_line_and_in_both_languag
         assert changes in text
         assert ELLIPSIS not in text
     assert format_line(found).endswith(f"{changes}. Shadow mode starts again for 5 runs.")
+
+
+def test_an_address_that_looks_like_a_bsn_hides_only_itself_in_the_message():
+    # Ruling R77. The message used to be "more room: [hidden]." and lost the tool and the limit.
+    bsn = gen.valid_bsn()
+    before = variant(setting("scope.email_to", ["z@aivenstudios.com"]))
+    new = variant(
+        setting("version", 2),
+        with_tools(*TOOLS, "drive.read"),
+        setting("limits.runs_per_day", 2),
+        setting("scope.email_to", ["z@aivenstudios.com", f"{bsn}@aivenstudios.com"]),
+    )
+    (found,) = check_set(files(("invoice-reminder.md", new)), {AGENT: before})
+    changes = "tools: +drive.read; limits.runs_per_day: 1 -> 2; scope.email_to: +[hidden]"
+    assert found.params == {"changes": changes, "restart_runs": "10"}
+    for text in (format_line(found), message(found, "en"), message(found, "nl")):
+        assert changes in text
+        assert bsn not in text
 
 
 # --- the findings together

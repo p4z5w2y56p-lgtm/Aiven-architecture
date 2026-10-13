@@ -8,6 +8,7 @@ the real pipeline (tests/support/variants.py); `PREV` is the base.
 import pytest
 
 from aiven.policy.widening import widening
+from tests.support import gen
 from tests.support.bodies import policy_of
 from tests.support.frontmatter import DATA, without
 from tests.support.policies import valid_base
@@ -198,6 +199,89 @@ def test_addresses_where_there_were_none_widen():
     assert widening(before, PREV) == (["scope.email_to: +@aivenstudios.com"], False)
     one = variant(setting("scope.email_to", ["a@aivenstudios.com"]))
     assert widening(before, one) == (["scope.email_to: +a@aivenstudios.com"], False)
+
+
+# --- a value that the guard would hide is hidden alone (ruling R77)
+#
+# The `Finding` that quotes the list hides the whole of it when anything in it looks like a
+# credential, a bank detail or an ID number. So `widening` hides such a value itself, in its place,
+# and the tools and limits around it stay readable. The values are made at test time.
+
+
+def test_an_address_that_looks_like_a_bsn_is_hidden_alone():
+    bsn = gen.valid_bsn()
+    before = variant(setting("scope.email_to", ["z@aivenstudios.com"]))
+    after = variant(
+        with_tools(*TOOLS, "drive.read"),
+        setting("limits.runs_per_day", 2),
+        setting(
+            "scope.email_to",
+            ["z@aivenstudios.com", f"{bsn}@aivenstudios.com", "b@aivenstudios.com"],
+        ),
+    )
+    changes, restart = widening(before, after)
+    assert changes == [
+        "tools: +drive.read",
+        "limits.runs_per_day: 1 -> 2",
+        "scope.email_to: +[hidden] +b@aivenstudios.com",
+    ]
+    assert restart is True
+    assert bsn not in "".join(changes)
+
+
+def test_a_tool_that_looks_like_a_bsn_is_hidden_alone():
+    bsn = gen.valid_bsn()
+    new = variant(with_tools(*TOOLS, f"drive.{bsn}", "drive.read"))
+    changes, _ = widening(PREV, new)
+    assert changes == ["tools: +[hidden] +drive.read"]
+    assert bsn not in "".join(changes)
+
+
+def two_bsns() -> tuple[str, str]:
+    """Two different numbers that look like a BSN, made now."""
+    first = gen.valid_bsn()
+    return first, next(other for other in iter(gen.valid_bsn, None) if other != first)
+
+
+def test_a_number_that_looks_like_a_bsn_is_hidden_alone_in_a_limit_and_in_min_runs():
+    bsn = gen.valid_bsn()
+    # The new number of a limit that rose is hidden, and so is the old one.
+    after = variant(setting("limits.emails_per_day", int(bsn)), setting("limits.runs_per_day", 2))
+    changes, _ = widening(PREV, after)
+    assert changes == ["limits.emails_per_day: 10 -> [hidden]", "limits.runs_per_day: 1 -> 2"]
+    before = variant(setting("limits.records_per_run", int(bsn)))
+    changes, _ = widening(before, variant(setting("limits.records_per_run", 10**9)))
+    assert changes == ["limits.records_per_run: [hidden] -> 1000000000"]
+    # A lower min_runs: the old number is hidden, and so is the new one.
+    changes, _ = widening(variant(setting("shadow.min_runs", int(bsn))), PREV)
+    assert changes == ["shadow.min_runs: [hidden] -> 10"]
+    changes, _ = widening(
+        variant(setting("shadow.min_runs", 10**9 - 1)),
+        variant(setting("shadow.min_runs", int(bsn))),
+    )
+    assert changes == ["shadow.min_runs: 999999999 -> [hidden]"]
+
+
+def test_an_entry_is_hidden_alone_but_still_counts_for_the_comparison():
+    # The comparison is of the values as they are written. Two addresses that are hidden look alike
+    # in the text, but they are two entries, and an old address that is hidden still keeps the new
+    # one with the same text from being new.
+    one, two = two_bsns()
+    old = variant(setting("scope.email_to", [f"{one}@aivenstudios.com"]))
+    new = variant(setting("scope.email_to", [f"{one}@aivenstudios.com", f"{two}@aivenstudios.com"]))
+    assert widening(old, new) == (["scope.email_to: +[hidden]"], False)
+    assert widening(new, old) == ([], False)
+    # The same for the tools: [hidden] is not a tool that was there.
+    old_tools = variant(with_tools(*TOOLS, f"drive.{one}"))
+    new_tools = variant(with_tools(*TOOLS, f"drive.{one}", f"drive.{two}"))
+    assert widening(old_tools, new_tools) == (["tools: +[hidden]"], True)
+    assert widening(new_tools, old_tools) == ([], False)
+
+
+def test_each_hidden_entry_keeps_its_own_place_in_the_list():
+    one, two = two_bsns()
+    new = variant(with_tools(*TOOLS, f"drive.{one}", "drive.read", f"drive.{two}"))
+    assert widening(PREV, new) == (["tools: +[hidden] +drive.read +[hidden]"], True)
 
 
 # --- what is never listed
