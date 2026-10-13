@@ -435,9 +435,10 @@ def test_a_trust_anchor_that_cannot_be_used_is_e_internal_and_ssh_keygen_is_not_
     make_path, detail = UNUSABLE_ANCHORS[name]
     sig = signer.sign(BASE)
     calls = stub_run(monkeypatch)
+    made = spy_on(monkeypatch, tempfile, ["TemporaryDirectory"])
     result = verify_with(Signer(signer.key, make_path(tmp_path)), BASE, sig)
     assert result == (None, [internal(detail)])
-    assert calls == []
+    assert calls == [] and sum(made.values()) == 0  # not run, and nothing written for it
     assert str(tmp_path) not in shown(
         result[1]
     )  # where the trust anchor is stays out of the finding
@@ -456,9 +457,10 @@ def test_an_unreadable_file_of_allowed_signers_is_e_internal(signer, monkeypatch
 
     monkeypatch.setattr(Path, "open", refuse)
     calls = stub_run(monkeypatch)
+    made = spy_on(monkeypatch, tempfile, ["TemporaryDirectory"])
     result = verify_with(signer, BASE, sig)
     assert result == (None, [internal("PermissionError")])
-    assert calls == []
+    assert calls == [] and sum(made.values()) == 0
     assert "LEAK" not in shown(result[1])
 
 
