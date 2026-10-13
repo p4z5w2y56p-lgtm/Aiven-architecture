@@ -216,6 +216,12 @@ def _replace(old: str, new: str) -> str:
 BROKEN = {
     "wrong-schema": (_replace("aiven-catalog/v1", "aiven-catalog/v2"), "schema"),
     "missing-reserved": (_replace(RESERVED_LINE, ""), "reserved"),
+    # The extreme cases of a reserved list that lacks the entries of the platform (ruling R94).
+    "empty-reserved-list": (_replace(RESERVED_LINE, "reserved: []\n"), "non-empty list"),
+    "reserved-that-is-not-a-list": (
+        _replace(RESERVED_LINE, "reserved: payments.*\n"),
+        "non-empty list",
+    ),
     "unknown-top-level-key": (VALID + "extra: 1\n", "unknown key 'extra'"),
     "unknown-wrapper-in-wrappers": (
         _replace("agentbuilder: planned}", "agentbuilder: planned, sharepoint: planned}"),
