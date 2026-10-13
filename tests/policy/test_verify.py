@@ -16,15 +16,18 @@ Drive and Email wrappers built (`LIVE`), switched on for every agent, and a fold
 The real catalog has every wrapper planned.
 """
 
+import gc
 import hashlib
 import shutil
 import stat
 import subprocess
+import warnings
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
+from unittest.mock import Mock
 
 import pytest
 
@@ -842,6 +845,37 @@ def test_a_crash_in_the_checks_gives_e_internal_with_the_class_name_only(signer,
 def test_an_interrupt_is_not_swallowed(signer, which):
     with pytest.raises(KeyboardInterrupt):
         load(signer, BASE, **{which: raises(KeyboardInterrupt())})
+
+
+# --- a callback must answer True or False (ruling R83)
+
+
+async def answers_in_a_coroutine(*args):
+    """A callback written as `async def`: calling it gives a coroutine, and nobody awaits that."""
+    return True
+
+
+NOT_A_BOOL = {
+    "a string that says false": lambda *args: "false",
+    "None": lambda *args: None,
+    "zero": lambda *args: 0,
+    "one": lambda *args: 1,
+    "a dict": lambda *args: {"live": False},
+    "a Mock": lambda *args: Mock(),
+    "a Mock that says it is a bool": lambda *args: Mock(spec=bool),
+    "a coroutine of an async def": answers_in_a_coroutine,
+}
+
+
+@pytest.mark.parametrize("which", ["wrapper_live", "folder_check"])
+@pytest.mark.parametrize("name", NOT_A_BOOL)
+def test_a_callback_that_does_not_answer_true_or_false_gives_e_internal(signer, which, name):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = load(signer, BASE, **{which: NOT_A_BOOL[name]})
+        gc.collect()  # a coroutine that was never awaited warns when it is collected
+    assert result == (None, [internal("TypeError")])
+    assert [str(warning.message) for warning in caught] == []
 
 
 # --- validate.py: the policy and the findings from one run of the checks

@@ -29,17 +29,21 @@ At load W-TOOL-NOT-LIVE does not exist: it is E-TOOL-NOT-LIVE (section 3.4). A t
 its wrapper is built in the catalog and the caller says the wrapper is switched on for the agent
 (`wrapper_live`). Only a tool that passed its own rules is judged (`tool_problem`), at the line of
 its entry. The Drive folder is checked by the caller as well (`folder_check`): the validator cannot
-see ancestry, which only Drive knows (section 8).
+see ancestry, which only Drive knows (section 8). Both callbacks are plain functions, not
+coroutines, and answer `True` or `False` and nothing else (ruling R83): a string, `None`, a number,
+a Mock or the coroutine of an `async def` is no answer, however true it looks, and ends the load in
+E-INTERNAL.
 
 Whatever goes wrong fails closed, and says only what went wrong (ruling R56): ssh-keygen is not
-there or takes too long, a callback raises, or a check has a bug. The result is no policy and one
-E-INTERNAL, with the name of the exception class as its `detail`. The text of an exception can hold
-text of the file, so it is never used.
+there or takes too long, a callback raises or answers wrongly, or a check has a bug. The result is
+no policy and one E-INTERNAL, with the name of the exception class as its `detail`. The text of an
+exception can hold text of the file, so it is never used.
 
 `verify` handles one file. The checks across all policies (3.9) are done by the loader that loads
 them, with `check_set`.
 """
 
+import inspect
 import subprocess
 import tempfile
 from collections.abc import Callable
@@ -91,6 +95,8 @@ def verify(
       on for the agent.
     - `folder_check(folder_id, path)` says whether the folder is in the Sandbox drive and its real
       path is `path` (None if the policy has no path).
+    - Both callbacks are synchronous and answer `True` or `False`. Any other answer raises
+      TypeError inside `verify`, so it is E-INTERNAL.
 
     The policy is None when any finding is an error. See the module docstring.
     """
@@ -145,6 +151,22 @@ def _signature_holds(data: bytes, sig: bytes, allowed_signers: Path) -> bool:
     return done.returncode == 0
 
 
+def _answer(callback: Callable[..., object], *args: str | None) -> bool:
+    """What `callback(*args)` answers, which has to be `True` or `False` (ruling R83).
+
+    Anything else is not taken for a yes or a no: a string, `None`, a number, a Mock, or the
+    coroutine that an `async def` callback gives, which nobody awaits. They would all be read as an
+    answer, and most of them as "yes". It is a fault of the caller, so it raises, and the load ends
+    in E-INTERNAL. The coroutine is closed first, so that no warning about it leaks out.
+    """
+    answer = callback(*args)
+    if type(answer) is not bool:  # not isinstance: a Mock(spec=bool) says it is a bool
+        if inspect.iscoroutine(answer):
+            answer.close()
+        raise TypeError("a callback must answer True or False")
+    return answer
+
+
 def _version_order(where: str, policy: Policy, active: ActiveVersion | None) -> list[Finding]:
     """E-VERSION-ORDER: older than the active version, or the same version in other bytes.
 
@@ -180,7 +202,7 @@ def _tools_not_live(
         wrapper = catalog.actions[tool].wrapper
         if wrapper not in asked:
             built = catalog.wrapper_status[wrapper] != "planned"
-            asked[wrapper] = built and wrapper_live(wrapper, policy.agent)
+            asked[wrapper] = built and _answer(wrapper_live, wrapper, policy.agent)
         if not asked[wrapper]:
             params = {"tool": tool, "wrapper": WRAPPER_NAMES[wrapper]}
             findings.append(
@@ -194,7 +216,7 @@ def _folder_not_in_sandbox(
 ) -> list[Finding]:
     """E-SCOPE-NOT-IN-SANDBOX: the policy has a folder ID, and the caller does not vouch for it."""
     folder_id, folder_path = policy.scope.drive_folder_id, policy.scope.drive_folder_path
-    if folder_id is None or folder_check(folder_id, folder_path):
+    if folder_id is None or _answer(folder_check, folder_id, folder_path):
         return []
     params = {"id": folder_id, "path": folder_path or ""}
     return [Finding("E-SCOPE-NOT-IN-SANDBOX", "error", where, params=params)]
