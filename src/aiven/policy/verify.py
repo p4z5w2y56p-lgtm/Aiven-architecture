@@ -8,7 +8,9 @@ stops at the first step that fails (rulings R43 and R56):
    it cannot be this large.
 2. No signature is E-SIG-MISSING.
 3. `ssh-keygen -Y verify` must accept the signature, or it is E-SIG-INVALID. A signature file over
-   16 KiB is refused first, before it is written anywhere (ruling R80).
+   16 KiB is refused first, before it is written anywhere (ruling R80). The file of allowed signers
+   must be a readable regular file; if it is not, that is a fault of the setup and not of the
+   policy, and it is E-INTERNAL (ruling R82).
 4. The file is validated, once (`validate_policy`).
 5. The checks that are only possible at load run (3.10): the version against the active one
    (E-VERSION-ORDER), the wrappers (E-TOOL-NOT-LIVE) and the Drive folder (E-SCOPE-NOT-IN-SANDBOX).
@@ -45,6 +47,7 @@ them, with `check_set`.
 """
 
 import inspect
+import stat
 import subprocess
 import tempfile
 from collections.abc import Callable
@@ -61,6 +64,10 @@ from aiven.policy.validate import report_order, validate_policy
 
 # Long enough for a slow machine, short enough that a hung ssh-keygen cannot hold up a load.
 SSH_KEYGEN_TIMEOUT_S = 10
+
+
+class NotARegularFile(Exception):
+    """The file of allowed signers is a folder, a pipe or a device. Only the name is ever shown."""
 
 
 @dataclass(frozen=True)
@@ -90,7 +97,8 @@ def verify(
     - `path` only names the file: nothing is read from it. Its name gives the agent of
       E-SIG-MISSING.
     - `sig` is the content of `<agent>.md.sig`, or None if there is no such file.
-    - `allowed_signers` is the trust anchor, the copy in the control project.
+    - `allowed_signers` is the trust anchor, the copy in the control project. It has to be a
+      readable regular file (a symlink to one will do), or the result is E-INTERNAL.
     - `active` is the version that is loaded now, or None if the agent has none.
     - `wrapper_live(wrapper, agent)` says whether the wrapper (`drive`, `email`, ...) is switched
       on for the agent.
@@ -128,10 +136,12 @@ def verify(
 def _signature_holds(data: bytes, sig: bytes, allowed_signers: Path) -> bool:
     """Whether `ssh-keygen -Y verify` accepts `sig` as the signature of `data` (section 2).
 
-    A signature over `MAX_SIG_BYTES` is none (ruling R80), and is refused before it is written.
+    A signature over `MAX_SIG_BYTES` is none (ruling R80), and is refused before it is written. A
+    file of allowed signers that cannot be used raises (ruling R82), before ssh-keygen is run.
     """
     if len(sig) > MAX_SIG_BYTES:
         return False
+    _check_trust_anchor(allowed_signers)
     with tempfile.TemporaryDirectory(prefix="aiven-policy-") as folder:
         sig_file = Path(folder) / "policy.sig"
         sig_file.write_bytes(sig)
@@ -155,6 +165,22 @@ def _signature_holds(data: bytes, sig: bytes, allowed_signers: Path) -> bool:
             check=False,
         )
     return done.returncode == 0
+
+
+def _check_trust_anchor(allowed_signers: Path) -> None:
+    """Raise unless `allowed_signers` is a regular file that this process can read (ruling R82).
+
+    ssh-keygen would only say that it could not verify, and E-SIG-INVALID tells the reader that the
+    file changed after it was signed. A trust anchor that is missing or unreadable would put that
+    on every agent, although the fault is in the setup. So the load ends in E-INTERNAL, with the
+    name of the error as its detail: FileNotFoundError, PermissionError, NotARegularFile and so on.
+    A symlink is followed, as ssh-keygen follows it. The type is looked at before the file is
+    opened, because opening a pipe waits for whoever writes to it.
+    """
+    if not stat.S_ISREG(allowed_signers.stat().st_mode):
+        raise NotARegularFile
+    with allowed_signers.open("rb"):
+        pass
 
 
 def _answer(callback: Callable[..., object], *args: str | None) -> bool:

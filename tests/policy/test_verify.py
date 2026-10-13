@@ -135,9 +135,12 @@ def signer(tmp_path) -> Signer:
 
 
 @pytest.fixture
-def nowhere(tmp_path) -> Signer:
-    """A signer whose files do not exist, for the tests that stand in for ssh-keygen."""
-    return Signer(tmp_path / "key", tmp_path / "allowed_signers")
+def stand_in(tmp_path) -> Signer:
+    """A signer for the tests that stand in for ssh-keygen: no key, and a file of allowed signers
+    that exists (verify checks that) and that nobody reads."""
+    allowed = tmp_path / "allowed_signers"
+    allowed.write_text("nothing that ssh-keygen reads\n")
+    return Signer(tmp_path / "key", allowed)
 
 
 # --- calling verify
@@ -399,16 +402,79 @@ def test_a_truncated_signature_fails(signer):
     assert verify_with(signer, BASE, sig[: len(sig) // 2]) == (None, [INVALID])
 
 
-def test_a_missing_file_of_allowed_signers_fails_closed(signer, nowhere):
-    sig = signer.sign(BASE)
-    assert verify_with(nowhere, BASE, sig) == (None, [INVALID])
-
-
 def test_nothing_that_ssh_keygen_says_is_in_the_finding(signer):
     _, findings = verify_with(signer, BASE, b"not a signature\n")
     assert findings == [INVALID]
     for words in ("Could not verify", "incorrect signature", "missing header", "sshsig"):
         assert words not in shown(findings)
+
+
+# --- the trust anchor (ruling R82)
+#
+# E-SIG-INVALID tells the reader that the file changed after it was signed. A missing or unreadable
+# file of allowed signers would put that on every agent, although the fault is in the setup: it is
+# E-INTERNAL, with the name of the error, and ssh-keygen is not run.
+
+
+def below_a_file(tmp_path: Path) -> Path:
+    (tmp_path / "a-file").write_text("x")
+    return tmp_path / "a-file" / "allowed_signers"
+
+
+UNUSABLE_ANCHORS = {
+    "missing": (lambda tmp_path: tmp_path / "nowhere", "FileNotFoundError"),
+    "below a file": (below_a_file, "NotADirectoryError"),
+    "a folder": (lambda tmp_path: tmp_path, "NotARegularFile"),
+}
+
+
+@pytest.mark.parametrize("name", UNUSABLE_ANCHORS)
+def test_a_trust_anchor_that_cannot_be_used_is_e_internal_and_ssh_keygen_is_not_run(
+    signer, tmp_path, monkeypatch, name
+):
+    make_path, detail = UNUSABLE_ANCHORS[name]
+    sig = signer.sign(BASE)
+    calls = stub_run(monkeypatch)
+    result = verify_with(Signer(signer.key, make_path(tmp_path)), BASE, sig)
+    assert result == (None, [internal(detail)])
+    assert calls == []
+    assert str(tmp_path) not in shown(
+        result[1]
+    )  # where the trust anchor is stays out of the finding
+
+
+def test_an_unreadable_file_of_allowed_signers_is_e_internal(signer, monkeypatch):
+    # A process that runs as root can read any file, so a chmod would prove nothing here (CI does
+    # not run as root, and this container does). The refusal of the system is stood in for.
+    sig = signer.sign(BASE)
+    real_open = Path.open
+
+    def refuse(self, *args, **kwargs):
+        if self == signer.allowed_signers:
+            raise PermissionError(LEAK)
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", refuse)
+    calls = stub_run(monkeypatch)
+    result = verify_with(signer, BASE, sig)
+    assert result == (None, [internal("PermissionError")])
+    assert calls == []
+    assert "LEAK" not in shown(result[1])
+
+
+def test_a_file_of_allowed_signers_that_is_a_symlink_is_followed(signer, tmp_path):
+    # A mounted secret or config file is often one. ssh-keygen follows it, and so does the check.
+    link = tmp_path / "allowed_signers_link"
+    link.symlink_to(signer.allowed_signers)
+    policy, findings = load(Signer(signer.key, link), BASE)
+    assert (policy is not None, findings) == (True, [])
+
+
+def test_a_file_of_allowed_signers_that_trusts_nobody_is_still_e_sig_invalid(signer, tmp_path):
+    # That is a signature that does not verify. Only a file that cannot be used is E-INTERNAL.
+    empty = tmp_path / "empty_allowed_signers"
+    empty.write_text("")
+    assert verify_with(Signer(signer.key, empty), BASE, signer.sign(BASE)) == (None, [INVALID])
 
 
 # --- the signature is small (ruling R80)
@@ -420,17 +486,17 @@ def test_the_signature_cap_is_16_kib():
     assert constants.MAX_SIG_BYTES == SIG_CAP
 
 
-def test_a_signature_over_16_kib_is_refused_before_anything_is_written(monkeypatch, nowhere):
+def test_a_signature_over_16_kib_is_refused_before_anything_is_written(monkeypatch, stand_in):
     calls = stub_run(monkeypatch)
     made = spy_on(monkeypatch, tempfile, ["TemporaryDirectory"])
-    assert verify_with(nowhere, BASE, b"x" * (SIG_CAP + 1)) == (None, [INVALID])
+    assert verify_with(stand_in, BASE, b"x" * (SIG_CAP + 1)) == (None, [INVALID])
     assert calls == []  # ssh-keygen was not run
     assert sum(made.values()) == 0  # and no folder was made for the signature
 
 
-def test_a_signature_of_exactly_16_kib_still_goes_to_ssh_keygen(monkeypatch, nowhere):
+def test_a_signature_of_exactly_16_kib_still_goes_to_ssh_keygen(monkeypatch, stand_in):
     calls = stub_run(monkeypatch)
-    verify_with(nowhere, BASE, b"x" * SIG_CAP)
+    verify_with(stand_in, BASE, b"x" * SIG_CAP)
     assert [call.sig for call in calls] == [b"x" * SIG_CAP]
 
 
@@ -447,9 +513,9 @@ def test_a_genuine_signature_padded_past_16_kib_is_refused(signer):
 # --- the call to ssh-keygen
 
 
-def test_ssh_keygen_gets_exactly_these_arguments(monkeypatch, nowhere):
+def test_ssh_keygen_gets_exactly_these_arguments(monkeypatch, stand_in):
     calls = stub_run(monkeypatch)
-    verify_with(nowhere, BASE, b"sig")
+    verify_with(stand_in, BASE, b"sig")
     (call,) = calls
     assert len(call.args) == 1  # the one list
     assert call.argv[:-1] == [
@@ -457,7 +523,7 @@ def test_ssh_keygen_gets_exactly_these_arguments(monkeypatch, nowhere):
         "-Y",
         "verify",
         "-f",
-        str(nowhere.allowed_signers),
+        str(stand_in.allowed_signers),
         "-I",
         "matthijs",
         "-n",
@@ -471,33 +537,33 @@ def test_ssh_keygen_gets_exactly_these_arguments(monkeypatch, nowhere):
     "returncode, valid", [(0, True), (1, False), (2, False), (255, False), (-9, False)]
 )
 def test_an_exit_status_of_zero_is_a_valid_signature_and_anything_else_is_not(
-    monkeypatch, nowhere, returncode, valid
+    monkeypatch, stand_in, returncode, valid
 ):
     stub_run(monkeypatch, returncode=returncode)
-    policy, findings = verify_with(nowhere, BASE, b"sig")
+    policy, findings = verify_with(stand_in, BASE, b"sig")
     assert (policy is not None, [found.code for found in findings]) == (
         valid,
         [] if valid else ["E-SIG-INVALID"],
     )
 
 
-def test_nothing_of_the_file_reaches_the_arguments(monkeypatch, nowhere):
+def test_nothing_of_the_file_reaches_the_arguments(monkeypatch, stand_in):
     hostile = b"; touch hacked\n-O verify-time=1\n$(id) `id` -f /etc/passwd\n" + BASE
     odd_name = Path("policies/-n git; touch hacked $(id).md")
     calls = stub_run(monkeypatch)
-    verify_with(nowhere, BASE, b"sig")
-    verify_with(nowhere, hostile, b"sig", path=odd_name)
+    verify_with(stand_in, BASE, b"sig")
+    verify_with(stand_in, hostile, b"sig", path=odd_name)
     plain, other = calls
     assert other.argv[:-1] == plain.argv[:-1]
     assert other.kwargs["input"] == hostile  # the file goes in on stdin, and only there
 
 
 def test_the_signature_is_in_a_private_folder_of_its_own_that_is_gone_afterwards(
-    monkeypatch, nowhere
+    monkeypatch, stand_in
 ):
     calls = stub_run(monkeypatch)
     for _ in range(2):
-        verify_with(nowhere, BASE, b"the signature")
+        verify_with(stand_in, BASE, b"the signature")
     first, second = calls
     assert first.sig == second.sig == b"the signature"
     assert first.folder_mode == second.folder_mode == 0o700
@@ -506,10 +572,10 @@ def test_the_signature_is_in_a_private_folder_of_its_own_that_is_gone_afterwards
     assert not second.sig_path.parent.exists()
 
 
-def test_the_output_of_ssh_keygen_never_reaches_a_finding(monkeypatch, nowhere):
+def test_the_output_of_ssh_keygen_never_reaches_a_finding(monkeypatch, stand_in):
     leak = b"LEAK-0123456789"
     stub_run(monkeypatch, returncode=255, stdout=leak, stderr=leak)
-    result = verify_with(nowhere, BASE, b"sig")
+    result = verify_with(stand_in, BASE, b"sig")
     assert result == (None, [INVALID])
     assert "LEAK" not in shown(result[1])
 
@@ -838,9 +904,9 @@ def test_a_missing_ssh_keygen_gives_e_internal(signer, tmp_path, monkeypatch):
     assert verify_with(signer, BASE, sig) == (None, [internal("FileNotFoundError")])
 
 
-def test_a_timeout_gives_e_internal_and_the_signature_folder_is_removed(monkeypatch, nowhere):
+def test_a_timeout_gives_e_internal_and_the_signature_folder_is_removed(monkeypatch, stand_in):
     calls = stub_run(monkeypatch, error=subprocess.TimeoutExpired("ssh-keygen", 10, output=LEAK))
-    assert verify_with(nowhere, BASE, b"sig") == (None, [internal("TimeoutExpired")])
+    assert verify_with(stand_in, BASE, b"sig") == (None, [internal("TimeoutExpired")])
     assert not calls[0].sig_path.parent.exists()
 
 
@@ -850,10 +916,10 @@ def test_a_timeout_gives_e_internal_and_the_signature_folder_is_removed(monkeypa
     ids=["PermissionError", "OSError", "SubprocessError"],
 )
 def test_any_failure_to_run_ssh_keygen_gives_e_internal_with_the_class_name_only(
-    monkeypatch, nowhere, error
+    monkeypatch, stand_in, error
 ):
     stub_run(monkeypatch, error=error)
-    policy, findings = verify_with(nowhere, BASE, b"sig")
+    policy, findings = verify_with(stand_in, BASE, b"sig")
     assert (policy, findings) == (None, [internal(type(error).__name__)])
     assert "LEAK" not in shown(findings)
     assert type(error).__name__ in message(findings[0], "en")
