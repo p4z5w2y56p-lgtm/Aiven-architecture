@@ -117,7 +117,9 @@ def rewrite(data: bytes, p: Policy, catalog: Catalog) -> bytes:
     if start is not None:
         return data[:start] + generated
     head = data + _gap(data)
-    if _section_start(head + generated) != len(head):
+    # Where the sections go, the first of them must be a heading that is found. (A line that looks
+    # like it and is none makes `_section_start` raise, and else nothing is found.)
+    if _section_start(head + generated) is None:
         raise ValueError(_NOT_HEADINGS)
     return head + generated
 

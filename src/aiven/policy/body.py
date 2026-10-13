@@ -166,16 +166,15 @@ def _misplaced(twos: list[Heading]) -> int | None:
     A `##` that is not at the top level of the document (in a quote or a list) is no section,
     whatever its name, and it is the one that is reported (ruling R64).
     """
-    tops = [heading for heading in twos if heading.top]
-    names = [heading.name for heading in tops]
     unknown = next((h for h in twos if not h.top or h.name not in SECTIONS), None)
     if unknown is not None:
         return unknown.row
+    names = [heading.name for heading in twos]  # each of them is a section of the five names
     if names == list(SECTIONS):
         return None
     if any(name not in names for name in SECTIONS):
         return 0  # a section is missing, and there is no heading to point at
-    wrong = (h for i, h in enumerate(tops) if i >= len(SECTIONS) or h.name != SECTIONS[i])
+    wrong = (h for i, h in enumerate(twos) if i >= len(SECTIONS) or h.name != SECTIONS[i])
     return next(wrong).row
 
 
@@ -235,8 +234,10 @@ def _bullets(section: list[Token]) -> Iterator[tuple[int, str, bool]]:
     """(row, name, explains) of each list item whose paragraph starts with a code span.
 
     The item explains the tool of that name when the text behind the code span starts with a colon
-    and has a reason after it. A list item of any depth counts, an ordered one too. A section can
-    end inside an item, at a heading in it, and then the item has no paragraph to look at.
+    and has a reason after it. A list item of any depth counts, an ordered one too. An item that does
+    not start with a paragraph (a heading in it, for one) names no tool. A section ends at the
+    heading of the next section, so it does not end inside an item; if the tokens were cut off there
+    all the same, the item would be left alone and not be an error.
     """
     for index, token in enumerate(section):
         if token.type != "list_item_open" or not token.map:
@@ -372,9 +373,7 @@ def _cells(line: str, nested: bool) -> list[str]:
     text = line[_ONLY_MARKS.match(line).end() :] if nested else line
     cells = escapedSplit(text.strip())
     if cells and cells[0] == "":
-        cells.pop(0)
-    if cells and cells[-1] == "":
-        cells.pop()
+        cells.pop(0)  # the pipe in front of the first cell
     return cells
 
 

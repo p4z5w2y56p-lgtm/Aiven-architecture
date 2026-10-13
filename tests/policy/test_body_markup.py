@@ -248,6 +248,13 @@ def test_a_row_with_the_cells_of_the_header_or_fewer_or_only_empty_ones_past_it_
     assert only(run(after_purpose(HEAD + row)), "E-BODY-HTML") == []
 
 
+@pytest.mark.parametrize("row", ["   | 1 | 2 |", "  | 1 | 2 |  ", " 1 | 2 ", "   1 | 2"])
+def test_a_row_that_is_indented_or_has_spaces_at_its_end_has_the_cells_that_it_has(row):
+    assert only(run(after_purpose(HEAD + row)), "E-BODY-HTML") == []
+    body = after_purpose(HEAD + row + " | secret")
+    assert [f.line for f in only(run(body), "E-BODY-HTML")] == [at("| secret", body)]
+
+
 def test_a_cell_with_an_escaped_pipe_is_one_cell():
     assert only(run(after_purpose(HEAD + "| 1 | a \\| b |")), "E-BODY-HTML") == []
     body = after_purpose(HEAD + "| 1 | 2 \\| 3 | 4 |")
@@ -397,9 +404,18 @@ def test_a_url_that_markup_cuts_in_pieces_is_found_in_what_is_rendered_too(url):
     assert places(run(body)) == [("E-BODY-LINK", at(PURPOSE, body))]
 
 
-def test_a_url_that_a_code_span_cuts_in_pieces_is_found_too():
-    body = purpose_with("See htt`p`://evil.test here.")
+@pytest.mark.parametrize(
+    "url", ["htt`p`://evil.test", "`www`.evil.test", "`https`://evil.test", "h`ttp`s://evil.test"]
+)
+def test_a_url_that_a_code_span_cuts_in_pieces_is_found_too(url):
+    body = purpose_with(f"See {url} here.")
     assert places(run(body)) == [("E-BODY-LINK", at(PURPOSE, body))]
+
+
+def test_a_url_with_a_hidden_character_in_it_is_a_url_and_the_character_is_html():
+    body = purpose_with("See www&#8203;.evil.test here.")
+    line = at(PURPOSE, body)
+    assert places(run(body)) == [("E-BODY-HTML", line), ("E-BODY-LINK", line)]
 
 
 def test_what_is_rendered_gives_no_second_finding_on_a_line_where_the_lines_gave_one():
@@ -408,6 +424,13 @@ def test_what_is_rendered_gives_no_second_finding_on_a_line_where_the_lines_gave
     # without a URL as it is written, the line gets one finding for all of what is rendered
     body = purpose_with("https&#58;//a.test and www&#46;b.test")
     assert [f.line for f in only(run(body), "E-BODY-LINK")] == [at(PURPOSE, body)]
+
+
+def test_a_row_of_a_table_gets_one_finding_for_the_urls_that_are_built_in_its_cells():
+    body = after_purpose(f"{HEAD}| www&#46;a.test | www&#46;b.test |")
+    assert [f.line for f in only(run(body), "E-BODY-LINK")] == [at("| www&#46;a", body)]
+    body = after_purpose(f"{HEAD}| https://a.test | www&#46;b.test |")
+    assert [f.line for f in only(run(body), "E-BODY-LINK")] == [at("| https://a", body)]
 
 
 def test_a_url_is_found_on_the_line_where_it_is_in_a_paragraph_of_several_lines():

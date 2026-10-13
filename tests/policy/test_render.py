@@ -257,6 +257,37 @@ def test_a_value_without_a_backtick_is_in_a_code_span_of_one_backtick_with_no_pa
     assert "Agent `invoice-reminder`," in signoff_of()
 
 
+@pytest.mark.parametrize(
+    ("value", "span"),
+    [
+        ("a", "`a`"),
+        ("a`b", "``a`b``"),
+        ("a`b`c", "``a`b`c``"),
+        ("`a", "`` `a ``"),
+        ("a`", "`` a` ``"),
+        ("`", "`` ` ``"),
+        ("``", "``` `` ```"),
+        ("a``b`c", "```a``b`c```"),
+    ],
+)
+def test_the_fence_is_one_backtick_longer_than_the_longest_run_in_the_value(value, span):
+    # CommonMark: a space on each side where the value starts or ends with a backtick.
+    assert f"Identity: runs as {span}. Calls" in enforced_of(replace(POLICY, principal=value))
+
+
+def test_a_tool_of_a_catalog_that_is_made_by_hand_with_a_backtick_in_it_stays_in_its_span():
+    tool = "ops.run`x"
+    catalog = replace(CATALOG, actions={**CATALOG.actions, tool: Action(tool, "R1", "drive", "u.")})
+    enforced = render_generated(replace(POLICY, tools=("sheets.read", tool)), catalog)[0]
+    assert code_spans_in(enforced).count(tool) == 2  # in the table, and in the list of undo
+
+
+@pytest.mark.parametrize("value", TRICKY)
+def test_a_folder_id_without_a_path_is_in_one_code_span_too(value):
+    scope = Scope(value, None, ())
+    assert code_spans_in(scope_of(replace(POLICY, scope=scope))) == [value]
+
+
 # --- limits, scope, shadow mode
 
 

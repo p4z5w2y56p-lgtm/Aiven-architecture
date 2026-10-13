@@ -10,10 +10,11 @@ from dataclasses import replace
 
 import pytest
 
-from aiven.policy.body import check_body
+from aiven.policy.body import _bullets, _drift, _last_row, _Report, check_body
 from aiven.policy.fileformat import decode_text
 from aiven.policy.findings import Finding, format_line, message
 from aiven.policy.frontmatter import split
+from aiven.policy.markdown import headings, parse
 from aiven.policy.validate import validate_file
 from tests.support import gen
 from tests.support.bodies import (
@@ -393,6 +394,53 @@ def test_characters_that_the_reader_cannot_see_are_not_text(hidden):
     assert empty_of(section_with("Purpose", "A sentence that is long." + hidden * 3)) == []
 
 
+@pytest.mark.parametrize(
+    "shown",
+    [
+        "\N{LATIN SMALL LETTER E WITH ACUTE}",
+        "\N{CJK UNIFIED IDEOGRAPH-4E2D}",
+        "\N{GREEK SMALL LETTER ALPHA}",
+        "\N{EURO SIGN}",
+    ],
+)
+def test_characters_that_show_are_text_also_when_they_are_not_ascii(shown):
+    assert empty_of(section_with("Purpose", shown * 20)) == []
+    assert [name for name, _ in empty_of(section_with("Purpose", shown * 19))] == ["Purpose"]
+    assert tools_of(edited(BULLET, f"- `gmail.draft`: {shown}")) == []
+
+
+def test_a_list_item_that_is_cut_off_is_left_alone_and_is_not_an_error():
+    # A section does not end inside an item, but the check must not depend on that.
+    tokens = parse("- `a`: reason\n")
+    item = next(index for index, token in enumerate(tokens) if token.type == "list_item_open")
+    assert [name for _, name, _ in _bullets(tokens)] == ["a"]
+    assert list(_bullets(tokens[: item + 1])) == []  # nothing behind the item
+    assert list(_bullets(tokens[: item + 2])) == []  # the paragraph is opened, and nothing more
+
+
+def test_a_nested_heading_does_not_end_the_text_of_a_section_it_is_in():
+    # A heading of level 2 in a quote is reported, and the text on both sides of it is Purpose's.
+    body = section_with("Purpose", "Short.\n\n> ## Quoted\n\n" + "x" * 30)
+    assert empty_of(body) == []
+    assert [f.line for f in only(run(body), "E-BODY-SECTIONS")] == [at("> ## Quoted", body)]
+
+
+@pytest.mark.parametrize("name", ["Purpose", "Why each tool"])
+def test_a_copy_of_the_heading_of_a_free_section_in_a_quote_is_not_the_section_to_judge(name):
+    # In front of the real one it must not stand in for it: its text would be empty, or it would
+    # have no bullets. Only the copy is reported, for it is not one of the five sections.
+    body = edited(f"## {name}\n", f"> ## {name}\n\n## {name}\n")
+    assert codes(run(body)) == ["E-BODY-SECTIONS"]
+
+
+def test_a_heading_of_level_2_in_a_quote_does_not_move_the_end_of_the_first_three_sections():
+    # Behind it the fourth `##` heading would be Data and risks, and a heading of level 3 in it
+    # would be reported. The quoted one is the only finding.
+    body = added_after(PURPOSE, "\n> ## Quoted")
+    body = added_after("- Reads: only the tracker", "\n### Details", body)
+    assert [f.line for f in only(run(body), "E-BODY-SECTIONS")] == [at("> ## Quoted", body)]
+
+
 def test_a_section_that_is_not_there_is_not_empty():
     assert only(run(body_of(*SECTION_NAMES[1:]), policy=None), "E-BODY-EMPTY") == []
 
@@ -554,8 +602,8 @@ def test_a_bullet_for_a_tool_entry_that_failed_its_rules_is_not_extra_because_it
 
 
 @pytest.mark.parametrize("marks", ["- ", "1. ", "> - ", "- - ", "* "])
-def test_a_heading_in_a_list_item_ends_the_section_there_and_is_an_extra_section(marks):
-    # The section ends in the middle of the list item, which has no paragraph to look at.
+def test_a_heading_in_a_list_item_is_an_extra_section_and_the_item_names_no_tool(marks):
+    # The item starts with a heading, and has no paragraph to look at.
     body = added_after("- `gmail.send`: sends", f"{marks}## Nested")
     found = run(body)
     assert [f.line for f in only(found, "E-BODY-SECTIONS")] == [at("## Nested", body)]
@@ -713,6 +761,31 @@ def test_the_boundaries_of_the_sections_are_not_trusted_so_drift_waits_until_the
 def test_a_heading_in_setext_style_differs_on_its_own_line():
     body = edited(ENFORCED, "Enforced rules (generated)\n--------------------------")
     assert drift_of(body) == [drift("Enforced rules (generated)", ENFORCED_LINE)]
+
+
+@pytest.mark.parametrize(
+    ("lines", "last"),
+    [([""], 0), (["a"], 0), (["a", ""], 0), (["a", "", ""], 1), (["a", "b", "c"], 2)],
+)
+def test_the_last_line_of_a_file_is_the_one_before_the_final_lf_and_never_before_the_first(
+    lines, last
+):
+    assert _last_row(lines) == last
+
+
+def test_drift_goes_by_the_headings_at_the_top_level_where_it_is_made():
+    # `check_body` judges drift only when the sections are right (ruling R58), and then no copy of
+    # a heading is in a quote. So the rule that a quoted copy is not the section, which `rewrite`
+    # has too, cannot be seen through `check_body`: it is pinned here, on drift itself.
+    body = added_after(PURPOSE, f"\n> {ENFORCED}\n\nNot the section.\n\n> {SIGNOFF}")
+    assert body.count(ENFORCED) == 2 and body.count(SIGNOFF) == 2
+    report = _Report(str(BASE_PATH), FIRST_LINE)
+    assert _drift(report, body.split("\n"), headings(parse(body)), POLICY, CATALOG) == []
+    stale = body.replace(STOP, "Stop: nothing")
+    found = _drift(report, stale.split("\n"), headings(parse(stale)), POLICY, CATALOG)
+    assert [(f.params["section"], f.line) for f in found] == [
+        ("Enforced rules (generated)", at("Stop: nothing", stale))
+    ]
 
 
 def test_drift_is_not_checked_without_a_policy_or_when_it_is_switched_off():
