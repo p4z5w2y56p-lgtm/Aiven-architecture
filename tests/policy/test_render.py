@@ -10,17 +10,23 @@ A section is the text of a file from its heading to the next heading, or to the 
 the first one ends with the blank line before the next heading, and the second with one LF.
 """
 
+import random
 import re
+from copy import deepcopy
 from dataclasses import replace
 
 import pytest
 
+from aiven.policy.body import check_body
 from aiven.policy.catalog import Action
 from aiven.policy.constants import POLICY_CLASSES
+from aiven.policy.fileformat import decode_text
+from aiven.policy.frontmatter import split
 from aiven.policy.model import Limits, Scope
 from aiven.policy.render import render_generated, rewrite
 from aiven.policy.validate import validate_file
-from tests.support.bodies import ENFORCED, SIGNOFF, generated_of, policy_of, rerendered
+from tests.support.bodies import ENFORCED, SIGNOFF, generated_of, only, policy_of, rerendered
+from tests.support.frontmatter import DATA, emit
 from tests.support.policies import AGENTS_PROJECT, BASE_PATH, FOLDER_ID, TEMPLATE_PATH, valid_base
 from tests.support.rules import CATALOG, CFG
 from tests.support.spec_tables import code_spans, line_starting_with
@@ -428,6 +434,51 @@ def test_a_heading_in_the_front_matter_is_a_comment_and_not_the_section():
     cut = data.rindex(ENFORCED.encode())
     assert data.index(ENFORCED.encode()) < cut
     assert rewrite(data, POLICY, CATALOG) == data[:cut] + SECTIONS.encode()
+
+
+# --- the renderer and the check of drift say the same, for any policy
+
+
+ACTIONS = [action.id for action in CATALOG.actions.values() if action.cls in POLICY_CLASSES]
+
+
+def random_front_matter(rng: random.Random) -> str:
+    """The front matter of a policy with other tools, limits, scope, mode and runs."""
+    data = deepcopy(DATA)
+    data["agent"] = rng.choice(["invoice-reminder", "a1b", "x-y-z"])
+    data["version"] = rng.choice([1, 2, 9999])
+    data["tools"] = rng.sample(ACTIONS, k=rng.randint(1, 6))
+    data["max_class"] = rng.choice(POLICY_CLASSES)
+    data["untrusted_input"] = rng.choice(["strict", "taint"])
+    data["forbidden"] = rng.sample(data["forbidden"], k=4) + rng.sample(
+        ACTIONS, k=rng.randint(0, 2)
+    )
+    data["limits"] = {name: rng.choice([0, 1, 7, 50]) for name in data["limits"]}
+    data["shadow"]["min_runs"] = rng.choice([1, 2, 10, 100])
+    scope = rng.choice(["both", "drive", "email", "none"])
+    if scope in ("drive", "none"):
+        del data["scope"]["email_to"]
+    if scope in ("email", "none"):
+        del data["scope"]["drive_folder_id"], data["scope"]["drive_folder_path"]
+    if scope == "none":
+        del data["scope"]
+    elif "email_to" in data["scope"]:
+        data["scope"]["email_to"] = [f"a{n}@aivenstudios.com" for n in range(rng.randint(1, 3))]
+    return "\n".join(emit(data)) + "\n"
+
+
+def test_what_is_rendered_is_not_a_difference_and_rendering_again_changes_nothing():
+    rng = random.Random(20261015)
+    for number in range(150):
+        front = random_front_matter(rng)
+        file = f"---\n{front}---\n\n# some-agent\n\n## Purpose\n\nSome text.\n".encode()
+        policy = policy_of(file)
+        rendered = rewrite(file, policy, CATALOG)  # the sections are added, as there are none yet
+        _, body, first_line = split(decode_text(rendered))
+        found = check_body(body, first_line, policy, CATALOG)
+        assert only(found, "E-BODY-DRIFT") == [], number
+        assert rewrite(rendered, policy, CATALOG) == rendered, number
+        assert generated_of(rendered.decode("utf-8")) == render_generated(policy, CATALOG), number
 
 
 def test_the_euro_sign_is_written_as_utf8():

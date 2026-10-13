@@ -2,7 +2,7 @@
 
 `valid_base()` is the template turned into a real policy: the two placeholders are filled in, and
 since the generated sections are a faithful render of the front matter, a plain text substitution
-equals re-rendering. Task 1.5 adds a test that proves this.
+equals re-rendering. `test_valid_base_matches_render` (test_render.py) proves this.
 """
 
 from pathlib import Path

@@ -14,9 +14,11 @@ valid id is E-AGENT-ID and not also a wrong title (ruling R28), and drift is jud
 front matter has no error, because a render from an invalid front matter is noise (ruling R29).
 
 E-BODY-SECTIONS is one finding for the `##` headings, and one for each other heading that is out of
-place. Of the `##` headings, one that is not a section is reported on its own line, then a section
-that is missing on the first line of the body, and then the first heading that is not where the
-five sections have it. A heading is a heading wherever it stands, in a quote or a list too.
+place (a second title, a heading of level 3 to 6 outside the first three sections). The finding for
+the `##` headings stands on the first one that is not one of the five names. If there is none and a
+section is missing, it stands on the first line of the body, and else on the first heading that is
+not where the five sections have it. A heading is a heading wherever it stands, in a quote or a
+list too.
 
 E-BODY-HTML and E-BODY-LINK also cover text that the reader never sees, because a parser keeps
 it from them: a link reference definition shows nothing, and markdown-it drops what is nested 20
