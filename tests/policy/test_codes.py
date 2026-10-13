@@ -1053,8 +1053,8 @@ def test_mutation_yields_exactly_one_new_finding(code, mutation, expected_line, 
 
 def test_a_valid_set_has_no_finding():
     # What the set cases start from: a new agent at version 1, and the next version of a known one.
-    # Its files are whole valid files (rendered again): validate_file has only the warnings of the
-    # base, and check_set has nothing.
+    # Its files are whole valid files (rendered again): validate_file has no error, here only the
+    # warnings of the base, and check_set has nothing.
     first = variant_file(render=True)
     second = variant_file(NEXT_VERSION, render=True)
     for data in (first, second):
@@ -1068,6 +1068,22 @@ def test_the_rendered_files_of_the_set_cases_are_whole_valid_files(changes):
     # The cases that render say that their files are valid ones: no error, as for the base.
     found = findings_of(variant_file(*changes, render=True))
     assert {f.code for f in found} == {"W-TOOL-NOT-LIVE"}
+
+
+@pytest.mark.parametrize(
+    ("change", "warning"),
+    [
+        (setting("untrusted_input", "taint"), "W-UNTRUSTED-TAINT"),
+        (setting("shadow.min_runs", 5), "W-SHADOW-LOW"),
+    ],
+    ids=["the mode taint", "min_runs below 10"],
+)
+def test_a_rendered_variant_can_have_warnings_but_no_error(change, warning):
+    # "Whole valid file" means no error. The warnings of the base stay, and a mode or a number of
+    # runs that the policy warns about adds its own.
+    found = findings_of(variant_file(NEXT_VERSION, change, render=True))
+    assert {f.code for f in found} == {"W-TOOL-NOT-LIVE", warning}
+    assert all(f.severity == "warning" for f in found)
 
 
 def test_a_rendered_variant_is_the_policy_of_its_rendered_file():

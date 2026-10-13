@@ -17,10 +17,11 @@ renderer refuses, so by default the sections are left alone. (A set of versions 
 With `render=True` the generated sections are rendered again from the new front matter
 (`rerendered`). That makes a whole valid file of a change that only touches values which the
 sections show: the version, a limit, the scope, the mode, the runs of shadow mode. Then
-`validate_file` has the warnings of the base and nothing more, and the file can go through the
-whole CLI. It is not for every change: a tool also needs its bullet in Why each tool, a principal
-that is not the agent's own is E-PRINCIPAL, and the renderer refuses a mode that is neither
-`strict` nor `taint`.
+`validate_file` reports no error, and the file can go through the whole CLI. It can still report
+warnings: the three of the base (no wrapper is live), W-UNTRUSTED-TAINT for the mode `taint`, and
+W-SHADOW-LOW for a `min_runs` below 10. It is not for every change: a tool also needs its bullet in
+Why each tool, a principal that is not the agent's own is E-PRINCIPAL, and the renderer refuses a
+mode that is neither `strict` nor `taint`.
 """
 
 from collections.abc import Callable
