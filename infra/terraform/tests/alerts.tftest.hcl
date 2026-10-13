@@ -83,12 +83,10 @@ run "failing_closed_for_more_than_a_minute_is_emailed" {
 
   assert {
     condition = alltrue([
-      google_monitoring_alert_policy.control_unreachable.conditions[0].condition_threshold[0].filter == "metric.type=\"logging.googleapis.com/user/aiven/control-unreachable\" AND resource.type=\"cloud_run_revision\"",
-      google_monitoring_alert_policy.control_unreachable.conditions[0].condition_threshold[0].comparison == "COMPARISON_GT",
-      google_monitoring_alert_policy.control_unreachable.conditions[0].condition_threshold[0].threshold_value == 0,
-      google_monitoring_alert_policy.control_unreachable.conditions[0].condition_threshold[0].duration == "60s",
+      google_monitoring_alert_policy.control_unreachable.conditions[0].condition_matched_log[0].filter == "logName=\"projects/aiven-control-test/logs/aiven-audit\" AND jsonPayload.reason=\"CONTROL_UNREACHABLE\"",
+      google_monitoring_alert_policy.control_unreachable.alert_strategy[0].notification_rate_limit[0].period == "300s",
     ])
-    error_message = "Policy 2 fires when such refusals go on for more than 60 seconds (ruling R111)."
+    error_message = "Policy 2 emails a CONTROL_UNREACHABLE refusal in the audit log, at most once per 5 minutes (rulings R111, R165)."
   }
 }
 

@@ -5,7 +5,7 @@
 #    function's own log line with alert: true, written when the audit log did not take its entry
 #    (ruling R130). A log sink routes the audit entries to their bucket, and that is what the
 #    alert reads (ruling R139).
-# 2. The gateway failing closed for more than a minute: refusals with reason CONTROL_UNREACHABLE.
+# 2. The gateway failing closed: refusals with reason CONTROL_UNREACHABLE, one email per 5 minutes.
 
 resource "google_monitoring_notification_channel" "email" {
   project      = var.project
@@ -72,37 +72,32 @@ resource "google_logging_metric" "control_unreachable" {
 
 resource "google_monitoring_alert_policy" "control_unreachable" {
   project               = var.project
-  display_name          = "AIVEN: the gateway fails closed for more than a minute"
+  display_name          = "AIVEN: the gateway fails closed (control unreachable)"
   combiner              = "OR"
   severity              = "CRITICAL"
   notification_channels = [google_monitoring_notification_channel.email.id]
 
+  # A log match on the audit entries themselves, like policy 1. A threshold on the metric above was
+  # refused by Monitoring at the first apply, with and without a resource type (ruling R165), so the
+  # metric stays for charts only. One email per 5 minutes at most, from the first refusal.
   conditions {
-    display_name = "CONTROL_UNREACHABLE refusals for more than 60 s"
+    display_name = "A CONTROL_UNREACHABLE refusal in the audit log"
 
-    condition_threshold {
-      # Monitoring wants a resource type. The gateway runs on Cloud Run, and the audit entries it
-      # writes there carry that type (Cloud Logging's client finds it itself).
-      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.control_unreachable.name}\" AND resource.type=\"cloud_run_revision\""
-      comparison      = "COMPARISON_GT"
-      threshold_value = 0
-      duration        = "60s"
-
-      aggregations {
-        alignment_period     = "60s"
-        per_series_aligner   = "ALIGN_SUM"
-        cross_series_reducer = "REDUCE_SUM"
-      }
-
-      trigger {
-        count = 1
-      }
+    condition_matched_log {
+      filter = "logName=\"projects/${var.project}/logs/aiven-audit\" AND jsonPayload.reason=\"CONTROL_UNREACHABLE\""
     }
+  }
+
+  alert_strategy {
+    notification_rate_limit {
+      period = "300s"
+    }
+    auto_close = "1800s"
   }
 
   documentation {
     mime_type = "text/markdown"
     subject   = "AIVEN: the gateway fails closed"
-    content   = "The gateway has refused calls for more than a minute because it could not read control (gateway-design section 8). Check Firestore `control` and the gateway's logs; the kill switch break glass is in gateway-design section 8."
+    content   = "The gateway refuses calls because it could not read control (gateway-design section 8). Check Firestore `control` and the gateway's logs; the kill switch break glass is in gateway-design section 8."
   }
 }

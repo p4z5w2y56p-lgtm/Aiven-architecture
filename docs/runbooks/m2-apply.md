@@ -157,8 +157,9 @@ What the plan must show, part by part:
     channels, shows it).
   - Alert policy "an audit entry with an alert": every entry of log `aiven-audit` with
     `jsonPayload.alert=true`, and the functions' own log lines with `alert: true`.
-  - Alert policy "the gateway fails closed for more than a minute", on the log-based metric
-    `aiven/control-unreachable` (refusals with reason `CONTROL_UNREACHABLE` in the audit log).
+  - Alert policy "the gateway fails closed (control unreachable)": every audit entry with reason
+    `CONTROL_UNREACHABLE`, at most one email per 5 minutes (ruling R165). The log-based metric
+    `aiven/control-unreachable` counts them, for charts.
   - Function `credit-reminder` (as `credit-reminder`, internal only, `CREDIT_EXPIRY=2027-01-04`),
     and Cloud Scheduler job `credit-reminder` at `0 9 20 12 *`, Europe/Amsterdam, with an OIDC
     token of `credit-reminder`. Only `credit-reminder` may invoke the function.

@@ -234,7 +234,7 @@ Log-based alert policies in control send Matthijs an email for every audit entry
 - three-refusal stops
 - policy load failures
 - snapshot failures
-- fail-closed periods longer than 1 minute
+- fail-closed refusals (control unreachable), at most one email per 5 minutes (ruling R165)
 - the budget stop
 
 ## 11. Deployment checks (what no policy file can enforce)
