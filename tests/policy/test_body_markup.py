@@ -212,6 +212,81 @@ def test_a_hidden_character_that_is_written_is_the_business_of_e_hidden_char_and
         assert only(run(purpose_with(f"text {char} text")), "E-BODY-HTML") == [], repr(char)
 
 
+# --- table cells that the parser drops (ruling R66)
+
+
+HEAD = "| a | b |\n|---|---|\n"
+
+
+@pytest.mark.parametrize(
+    "cell",
+    ["secret text", "<b>x</b>", "<!-- c -->", "[x](y)", "![x](y)", "`code`", "&#8203;", "*x*"],
+    ids=["text", "tags", "a comment", "a link", "an image", "code", "a reference", "emphasis"],
+)
+def test_text_in_a_cell_past_the_header_is_dropped_by_the_parser_and_is_reported_on_its_row(cell):
+    body = after_purpose(f"{HEAD}| 1 | 2 | {cell} |")
+    assert places(run(body)) == [("E-BODY-HTML", at(f"| 1 | 2 | {cell}", body))]
+
+
+def test_every_cell_past_the_header_is_one_finding_for_the_row():
+    body = after_purpose(f"{HEAD}| 1 | 2 | x | y | z |\n| 3 | 4 | w |")
+    assert [f.line for f in only(run(body), "E-BODY-HTML")] == [
+        at("| 1 | 2 | x", body),
+        at("| 3 | 4 | w", body),
+    ]
+
+
+@pytest.mark.parametrize(
+    "row", ["| 1 | 2 |", "| 1 | 2 | |", "| 1 | 2 |  |   |", "| 1 |", "|", "| 1 | 2 |\t|"]
+)
+def test_a_row_with_the_cells_of_the_header_or_fewer_or_only_empty_ones_past_it_is_fine(row):
+    assert only(run(after_purpose(HEAD + row)), "E-BODY-HTML") == []
+
+
+def test_a_cell_with_an_escaped_pipe_is_one_cell():
+    assert only(run(after_purpose(HEAD + "| 1 | a \\| b |")), "E-BODY-HTML") == []
+    body = after_purpose(HEAD + "| 1 | 2 \\| 3 | 4 |")
+    assert [f.line for f in only(run(body), "E-BODY-HTML")] == [at("| 1 | 2 \\|", body)]
+
+
+def test_a_table_without_outer_pipes_counts_its_cells_the_same_way():
+    ok = after_purpose("a | b\n--|--\n1 | 2")
+    assert only(run(ok), "E-BODY-HTML") == []
+    body = after_purpose("a | b\n--|--\n1 | 2 | 3")
+    assert [f.line for f in only(run(body), "E-BODY-HTML")] == [at("1 | 2 | 3", body)]
+
+
+def test_each_table_has_its_own_number_of_cells():
+    two, three = "| a | b |\n|---|---|\n", "| a | b | c |\n|---|---|---|\n"
+    body = after_purpose(f"{two}| 1 | 2 |\n\n{three}| x | y | z |\n\n{two}| p | q | r |")
+    assert [f.line for f in only(run(body), "E-BODY-HTML")] == [at("| p | q | r |", body)]
+
+
+@pytest.mark.parametrize(
+    "prefix", ["> ", "- ", "> > ", "1. "], ids=["a quote", "a list", "two quotes", "a number"]
+)
+def test_a_table_in_a_quote_or_a_list_is_counted_without_the_marks_in_front_of_it(prefix):
+    rest = " " * len(prefix) if prefix[0] in "-1" else prefix
+    ok = after_purpose(f"{prefix}| a | b |\n{rest}|---|---|\n{rest}| 1 | 2 |")
+    assert only(run(ok), "E-BODY-HTML") == []
+    body = after_purpose(f"{prefix}| a | b |\n{rest}|---|---|\n{rest}| 1 | 2 | secret |")
+    assert [f.line for f in only(run(body), "E-BODY-HTML")] == [at("| 1 | 2 | secret", body)]
+
+
+def test_html_and_a_link_in_a_cell_of_the_table_are_found_as_they_always_were():
+    body = after_purpose(f"{HEAD}| 1 | <b>x</b> |\n| 2 | [x](y) |\n| 3 | ![x](y) |")
+    assert places(run(body)) == [
+        ("E-BODY-HTML", at("| 1 | <b>", body)),
+        ("E-BODY-HTML", at("| 1 | <b>", body)),
+        ("E-BODY-LINK", at("| 2 | [x]", body)),
+        ("E-BODY-LINK", at("| 3 | ![x]", body)),
+    ]
+
+
+def test_the_tables_of_the_generated_sections_are_not_extra_cells():
+    assert run() == []
+
+
 # --- E-BODY-LINK
 
 

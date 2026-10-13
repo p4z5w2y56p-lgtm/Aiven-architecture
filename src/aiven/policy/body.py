@@ -43,6 +43,7 @@ from collections.abc import Generator, Iterator
 from itertools import zip_longest
 from pathlib import Path
 
+from markdown_it.rules_block.table import escapedSplit
 from markdown_it.token import Token
 
 from aiven.policy.catalog import Catalog
@@ -275,7 +276,7 @@ def _markup(report: _Report, tokens: list[Token], lines: list[str]) -> list[Find
     for token in tokens:
         if token.type == "inline" and token.map:
             findings += _inline(report, token, written)
-    return findings + _hidden(report, tokens, lines)
+    return findings + _extra_cells(report, tokens, lines) + _hidden(report, tokens, lines)
 
 
 def _inline(report: _Report, inline: Token, written: set[int]) -> list[Finding]:
@@ -319,6 +320,43 @@ def _walk(children: list[Token], row: int) -> Generator[tuple[Token, int], None,
         elif child.type == "html_inline":
             row += child.content.count("\n")
     return row
+
+
+def _extra_cells(report: _Report, tokens: list[Token], lines: list[str]) -> list[Finding]:
+    """A row of a table with text in a cell behind the last cell of the header.
+
+    The header has the cells of the table. A row with more has its other cells dropped, and the
+    parser makes no token for them: text, tags, a link or an image there is never shown. The row
+    is split as the parser splits it (`escapedSplit`, the outer pipes off), and a row with fewer
+    cells, or with empty ones behind the header, has nothing to hide.
+    """
+    findings = []
+    columns, nested, head = 0, False, False
+    for token in tokens:
+        if token.type == "table_open":
+            columns, nested = 0, token.level > 0
+        elif token.type in ("thead_open", "thead_close"):
+            head = token.type == "thead_open"
+        elif token.type == "th_open":
+            columns += 1
+        elif token.type == "tr_open" and not head and token.map:
+            if any(cell.strip() for cell in _cells(lines[token.map[0]], nested)[columns:]):
+                findings.append(report.at("E-BODY-HTML", token.map[0]))
+    return findings
+
+
+def _cells(line: str, nested: bool) -> list[str]:
+    """The cells of a row of a table, as the table rule of the parser gets them from the line.
+
+    In a quote or a list the rule is given the line without the marks in front of it.
+    """
+    text = line[_ONLY_MARKS.match(line).end() :] if nested else line
+    cells = escapedSplit(text.strip())
+    if cells and cells[0] == "":
+        cells.pop(0)
+    if cells and cells[-1] == "":
+        cells.pop()
+    return cells
 
 
 def _hidden(report: _Report, tokens: list[Token], lines: list[str]) -> list[Finding]:
