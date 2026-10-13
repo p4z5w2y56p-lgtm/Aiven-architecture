@@ -13,7 +13,10 @@ in which `new` gives the agent more room, in this order, and whether shadow mode
 4. in the scope, in this order: a folder ID that is set and is not the old one
    (`scope.drive_folder_id: changed`), a folder path that is neither the old path nor a folder
    inside it (`scope.drive_folder_path: changed`), and the `email_to` entries that the old list
-   does not have, grouped like the tools (`scope.email_to: +<entry> +<entry>`);
+   does not allow, grouped like the tools (`scope.email_to: +<entry> +<entry>`). The old list
+   allows the entries that it has, and each address `name@d` when it has `@d` (ruling R74): a
+   domain entry allows the addresses of that exact domain, and none of a subdomain (section 3.3).
+   A new domain entry is a widening, also when addresses in that domain were listed;
 5. `untrusted_input` from `strict` to `taint`: `untrusted_input: strict -> taint`;
 6. a lower `shadow.min_runs`: `shadow.min_runs: 10 -> 5`.
 
@@ -83,10 +86,26 @@ def _scope(prev: Policy, new: Policy) -> list[str]:
     path = now.drive_folder_path
     if path is not None and not _inside(path, old.drive_folder_path):
         changes.append("scope.drive_folder_path: changed")
-    added = [entry for entry in now.email_to if entry not in old.email_to]
+    added = [
+        entry
+        for entry in now.email_to
+        if entry not in old.email_to and not _domain_listed(entry, old.email_to)
+    ]
     if added:
         changes.append(_grouped("scope.email_to", added))
     return changes
+
+
+def _domain_listed(entry: str, listed: tuple[str, ...]) -> bool:
+    """Whether the list has the domain entry `@d` for the entry, an address `name@d`.
+
+    The domain is what follows the first `@`, as `limits_scope` reads an entry, so an odd entry
+    (`a@b@d`) is judged by the longer domain, and is more likely to be listed as new. An entry
+    with no `@` has no domain. A domain entry `@d` is only allowed by having `@d` itself, and
+    addresses in `d` do not make it so.
+    """
+    _, at, domain = entry.partition("@")
+    return bool(at) and f"@{domain}" in listed
 
 
 def _grouped(field: str, added: list[str]) -> str:

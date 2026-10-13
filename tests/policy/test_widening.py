@@ -142,15 +142,62 @@ def test_new_addresses_are_one_change_in_the_order_of_the_new_list():
     )
 
 
-def test_an_address_in_a_domain_that_was_listed_is_still_a_new_entry():
-    # The comparison is by entry: it does not ask what the old entries cover.
+def test_an_address_in_a_domain_that_was_listed_is_not_a_widening():
+    # The old list has @aivenstudios.com, which already allows every address of the domain
+    # (ruling R74).
     new = variant(setting("scope.email_to", ["@aivenstudios.com", "a@aivenstudios.com"]))
-    assert widening(PREV, new) == (["scope.email_to: +a@aivenstudios.com"], False)
+    assert widening(PREV, new) == ([], False)
+
+
+def test_a_domain_is_a_widening_even_when_addresses_in_it_were_listed():
+    before = variant(setting("scope.email_to", ["a@aivenstudios.com", "b@aivenstudios.com"]))
+    after = variant(
+        setting("scope.email_to", ["a@aivenstudios.com", "b@aivenstudios.com", "@aivenstudios.com"])
+    )
+    assert widening(before, after) == (["scope.email_to: +@aivenstudios.com"], False)
+
+
+def test_a_domain_allows_its_own_addresses_and_not_those_of_a_subdomain_or_another_domain():
+    # `@d` matches that exact domain (validator-spec 3.3). Covered and new addresses are mixed.
+    new = variant(
+        setting(
+            "scope.email_to",
+            [
+                "@aivenstudios.com",
+                "a@aivenstudios.com",
+                "b@client.nl",
+                "c@aivenstudios.com",
+                "d@sub.aivenstudios.com",
+            ],
+        )
+    )
+    assert widening(PREV, new) == (
+        ["scope.email_to: +b@client.nl +d@sub.aivenstudios.com"],
+        False,
+    )
+
+
+def test_an_odd_entry_is_not_allowed_by_a_domain_entry():
+    # Entries that fail E-SCOPE-EMAIL are still compared. The domain is what follows the first @,
+    # and an entry with no @ has none.
+    before = variant(setting("scope.email_to", ["@", "@aivenstudios.com"]))
+    after = variant(
+        setting("scope.email_to", ["@", "@aivenstudios.com", "foo", "a@b@aivenstudios.com"])
+    )
+    assert widening(before, after) == (["scope.email_to: +foo +a@b@aivenstudios.com"], False)
+
+
+def test_an_address_is_new_when_the_old_list_has_no_domain_entry_for_it():
+    before = variant(setting("scope.email_to", ["a@aivenstudios.com"]))
+    after = variant(setting("scope.email_to", ["a@aivenstudios.com", "b@aivenstudios.com"]))
+    assert widening(before, after) == (["scope.email_to: +b@aivenstudios.com"], False)
 
 
 def test_addresses_where_there_were_none_widen():
     before = variant(without("scope.email_to"))
     assert widening(before, PREV) == (["scope.email_to: +@aivenstudios.com"], False)
+    one = variant(setting("scope.email_to", ["a@aivenstudios.com"]))
+    assert widening(before, one) == (["scope.email_to: +a@aivenstudios.com"], False)
 
 
 # --- what is never listed
@@ -175,6 +222,10 @@ NARROWINGS = {
     "fewer addresses": (
         (setting("scope.email_to", ["@aivenstudios.com", "a@aivenstudios.com"]),),
         (),
+    ),
+    "a domain replaced by an address in it": (
+        (),
+        (setting("scope.email_to", ["a@aivenstudios.com"]),),
     ),
     "the addresses in another order": (
         (setting("scope.email_to", ["@aivenstudios.com", "a@aivenstudios.com"]),),
