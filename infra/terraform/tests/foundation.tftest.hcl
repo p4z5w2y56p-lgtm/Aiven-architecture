@@ -73,7 +73,9 @@ run "the_roles_on_the_projects_are_exactly_those_of_gateway_design_section_3" {
       "aiven-agents-test roles/aiplatform.user serviceAccount:agent-invoice-reminder@aiven-agents-test.iam.gserviceaccount.com",
       "aiven-agents-test roles/aiplatform.user serviceAccount:agent-payment-nudge@aiven-agents-test.iam.gserviceaccount.com",
       "aiven-agents-test roles/billing.projectManager serviceAccount:budget-stop@aiven-control-test.iam.gserviceaccount.com",
+      "aiven-agents-test roles/browser serviceAccount:budget-stop@aiven-control-test.iam.gserviceaccount.com",
       "aiven-gateway-test roles/billing.projectManager serviceAccount:budget-stop@aiven-control-test.iam.gserviceaccount.com",
+      "aiven-gateway-test roles/browser serviceAccount:budget-stop@aiven-control-test.iam.gserviceaccount.com",
       "aiven-gateway-test roles/datastore.user serviceAccount:gateway@aiven-gateway-test.iam.gserviceaccount.com",
       "aiven-gateway-test roles/datastore.viewer serviceAccount:control-ui@aiven-control-test.iam.gserviceaccount.com",
       "aiven-control-test roles/datastore.user serviceAccount:control-ui@aiven-control-test.iam.gserviceaccount.com",
@@ -89,8 +91,8 @@ run "the_roles_on_the_projects_are_exactly_those_of_gateway_design_section_3" {
   }
 
   assert {
-    condition     = length(output.project_iam) == 12 + 2
-    error_message = "Twelve roles, and one per agent, each granted once (docs/runbooks/m2-apply.md, part 4)."
+    condition     = length(output.project_iam) == 14 + 2
+    error_message = "Fourteen roles, and one per agent, each granted once (docs/runbooks/m2-apply.md, part 4)."
   }
 }
 

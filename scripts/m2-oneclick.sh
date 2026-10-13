@@ -845,9 +845,10 @@ drills() {
   fi
   say "   Switching on the drill's copy of the budget stop (it stops $V_scratch_project only)..."
   drill_switch on
-  # A new trigger takes a moment before it delivers (Eventarc).
-  say "   Giving the copy's trigger 90 seconds to be ready..."
-  sleep 90
+  # A new trigger and new roles take a moment to reach the copy: at the first drill, Eventarc's
+  # calls were refused (403) until 2.5 minutes after the copy was made (ruling R167).
+  say "   Giving the copy's trigger and roles 2 minutes to be ready..."
+  sleep 120
 
   # BD-1: a notification at the stop amount unlinks the scratch project within 5 minutes.
   since="$(now)"

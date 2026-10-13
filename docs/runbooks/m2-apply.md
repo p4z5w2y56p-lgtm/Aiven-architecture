@@ -129,8 +129,9 @@ What the plan must show, part by part:
     those of agents.
   - The service accounts: `gateway`, `control-ui`, `budget-stop`, `credit-reminder`,
     `function-builder` (it builds the two functions), and `agent-<id>` for each agent.
-  - Thirteen roles on the projects, plus one `aiplatform.user` per agent; every member is written
-    out in full. One has a condition: `function-builder` reads Cloud Functions' staging buckets
+  - Fifteen roles on the projects, plus one `aiplatform.user` per agent; every member is written
+    out in full. `budget-stop` holds `billing.projectManager` and `browser` on agents and gateway:
+    it reads a project's billing, then unlinks it (ruling R167). One has a condition: `function-builder` reads Cloud Functions' staging buckets
     (`gcf-v2-sources-*`) and no other bucket. No role is granted to a person.
 - **Stores (Task 2.2)**
   - Buckets `<control>-policies` (versioned) and `<control>-snapshots` (retention 30 days, not

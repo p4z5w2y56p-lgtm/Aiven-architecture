@@ -243,6 +243,10 @@ def _apis(google: Google, d: Deployment) -> Result:
 # --- iam: agents hold aiplatform.user, and run.invoker on the gateway service (ruling R101)
 
 
+# What the budget stop holds on each project it stops (gateway-design section 3, ruling R167).
+STOPPER_ROLES = ("roles/billing.projectManager", "roles/browser")
+
+
 def _agent(member: str, d: Deployment) -> str | None:
     """The account name of an agent's member (agent-<id>), or None for any other member."""
     suffix = f"@{d.agents_project}.iam.gserviceaccount.com"
@@ -257,6 +261,8 @@ def check_iam(google: Google, d: Deployment) -> list[Result]:
 
 def _iam(google: Google, d: Deployment) -> list[Result]:
     held: list[tuple[str, str, str]] = []  # (project, role, agent)
+    stopper = f"serviceAccount:budget-stop@{d.control_project}.iam.gserviceaccount.com"
+    stopper_holds: set[tuple[str, str]] = set()  # (project, role)
     for project in d.projects:
         policy = google.post(
             f"{CRM}/projects/{project}:getIamPolicy",
@@ -267,6 +273,8 @@ def _iam(google: Google, d: Deployment) -> list[Result]:
             for member in binding.get("members", []):
                 if (agent := _agent(member, d)) is not None:
                     held.append((project, binding["role"], agent))
+                if member == stopper and "condition" not in binding:
+                    stopper_holds.add((project, binding["role"]))
     vertex = {
         agent
         for project, role, agent in held
@@ -288,6 +296,18 @@ def _iam(google: Google, d: Deployment) -> list[Result]:
             "iam agents other roles",
             others,
             "no agent holds another role on the agents, gateway or control project",
+        ),
+        # The budget stop reads a project's billing (resourcemanager.projects.get, in browser),
+        # then unlinks it (billing.projectManager); the first drill had the second only (R167).
+        _verdict(
+            "iam budget-stop",
+            [
+                f"no {role} on {project}"
+                for project in (d.agents_project, d.gateway_project)
+                for role in STOPPER_ROLES
+                if (project, role) not in stopper_holds
+            ],
+            f"it holds {' and '.join(STOPPER_ROLES)} on the agents and gateway projects",
         ),
     ]
     # Whether the service exists, asked of the service itself: Cloud Run answers getIamPolicy of a

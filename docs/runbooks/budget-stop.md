@@ -48,8 +48,10 @@ The real budget stop stays on throughout.
    `gcloud billing projects describe <scratch-project> --format="value(billingEnabled)"` prints
    `True`.
 2. Set `budget_stop_drill = true` in `infra/terraform/terraform.tfvars`, then `terraform apply`.
-   Terraform adds the topic and function `budget-stop-drill`, and lets `budget-stop` unlink the
-   scratch project.
+   Terraform adds the topic and function `budget-stop-drill`, and gives `budget-stop` the two
+   roles it holds on the real projects, on the scratch project as well: `billing.projectManager`
+   to unlink it, and `browser` to read its billing first (ruling R167). Wait 2 minutes after the
+   apply: a new trigger and new roles take that long to reach the copy.
 3. Publish a notification at the amount, and note the time:
 
    ```sh
@@ -75,7 +77,7 @@ The real budget stop stays on throughout.
      second logs `already_stopped` and writes none.
    - The function's log lines: `gcloud functions logs read budget-stop-drill --region=europe-west4 --project=<control-project>`.
 6. Link billing on the scratch project again, set `budget_stop_drill = false`, and
-   `terraform apply`: the copy, its topic and its role on the scratch project are gone.
+   `terraform apply`: the copy, its topic and its roles on the scratch project are gone.
 
 ## Credit
 

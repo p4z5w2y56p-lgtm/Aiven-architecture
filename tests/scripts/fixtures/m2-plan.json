@@ -27,6 +27,16 @@
        }
       },
       {
+       "address": "module.agents.google_project_iam_member.project[\"roles/browser budget-stop\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:budget-stop@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-agents-mock",
+        "role": "roles/browser"
+       }
+      },
+      {
        "address": "module.agents.google_project_service.api[\"aiplatform.googleapis.com\"]",
        "mode": "managed",
        "type": "google_project_service",
@@ -612,6 +622,16 @@
        }
       },
       {
+       "address": "module.gateway.google_project_iam_member.project[\"roles/browser budget-stop\"]",
+       "mode": "managed",
+       "type": "google_project_iam_member",
+       "values": {
+        "member": "serviceAccount:budget-stop@aiven-control-mock.iam.gserviceaccount.com",
+        "project": "aiven-gateway-mock",
+        "role": "roles/browser"
+       }
+      },
+      {
        "address": "module.gateway.google_project_iam_member.project[\"roles/datastore.user gateway\"]",
        "mode": "managed",
        "type": "google_project_iam_member",
@@ -1190,6 +1210,16 @@
    "type": "google_project_iam_member"
   },
   {
+   "address": "module.agents.google_project_iam_member.project[\"roles/browser budget-stop\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
    "address": "module.agents.google_project_service.api[\"aiplatform.googleapis.com\"]",
    "change": {
     "actions": [
@@ -1741,6 +1771,16 @@
   },
   {
    "address": "module.gateway.google_project_iam_member.project[\"roles/billing.projectManager budget-stop\"]",
+   "change": {
+    "actions": [
+     "create"
+    ]
+   },
+   "mode": "managed",
+   "type": "google_project_iam_member"
+  },
+  {
+   "address": "module.gateway.google_project_iam_member.project[\"roles/browser budget-stop\"]",
    "change": {
     "actions": [
      "create"

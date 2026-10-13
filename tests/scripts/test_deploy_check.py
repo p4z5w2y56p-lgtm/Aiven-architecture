@@ -100,18 +100,21 @@ def planned() -> dict:
         ]
     }
     owner = {"role": "roles/owner", "members": [f"user:{OWNER}"]}
-    stopper = {
-        "role": "roles/billing.projectManager",
-        "members": [f"serviceAccount:budget-stop@{CONTROL}.{SA}"],
-    }
+
+    def stopper() -> list[dict[str, object]]:  # bindings of their own for each project
+        return [
+            {"role": role, "members": [f"serviceAccount:budget-stop@{CONTROL}.{SA}"]}
+            for role in ("roles/billing.projectManager", "roles/browser")
+        ]
+
     table[f"{CRM}/projects/{AGENTS}:getIamPolicy"] = {
         "bindings": [
             owner,
-            stopper,
+            *stopper(),
             {"role": "roles/aiplatform.user", "members": [f"serviceAccount:{AGENT}"]},
         ]
     }
-    table[f"{CRM}/projects/{GATEWAY}:getIamPolicy"] = {"bindings": [owner, stopper]}
+    table[f"{CRM}/projects/{GATEWAY}:getIamPolicy"] = {"bindings": [owner, *stopper()]}
     table[f"{CRM}/projects/{CONTROL}:getIamPolicy"] = {
         "bindings": [
             owner,
@@ -232,7 +235,7 @@ def test_a_deployment_as_planned_passes_every_check(capsys, monkeypatch):
         "NOTE iam gateway service: it does not exist yet (M3); then agents may only invoke it",
         "NOTE stores aiven-audit lock: not locked; the lock waits for Matthijs's confirmation (ruling R105)",
     ]
-    assert len(lines_of(lines, "PASS")) == 18
+    assert len(lines_of(lines, "PASS")) == 19
     assert all(line.split(" ", 1)[0] in ("PASS", "NOTE") for line in lines)
 
 
@@ -332,6 +335,36 @@ def test_an_agent_account_that_terraform_does_not_know_is_still_an_agent(capsys,
     )
     assert failing(capsys, monkeypatch, table, "iam") == [
         f"FAIL iam agents other roles: agent-old-one holds roles/logging.viewer on {CONTROL}"
+    ]
+
+
+def test_the_budget_stop_holds_both_its_roles_on_the_projects_it_stops(capsys, monkeypatch):
+    status, lines, _ = run(capsys, monkeypatch, planned(), "iam")
+    assert status == 0
+    assert (
+        "PASS iam budget-stop: it holds roles/billing.projectManager and roles/browser on the "
+        "agents and gateway projects"
+    ) in lines
+
+
+@pytest.mark.parametrize("project", [AGENTS, GATEWAY])
+def test_a_budget_stop_that_cannot_read_billing_fails(capsys, monkeypatch, project):
+    # Without browser it cannot read the billing of a project, and does not stop it (R167).
+    table = planned()
+    bindings = table[f"{CRM}/projects/{project}:getIamPolicy"]["bindings"]
+    bindings[:] = [b for b in bindings if b["role"] != "roles/browser"]
+    assert failing(capsys, monkeypatch, table, "iam") == [
+        f"FAIL iam budget-stop: no roles/browser on {project}"
+    ]
+
+
+def test_a_role_of_the_budget_stop_under_a_condition_does_not_count(capsys, monkeypatch):
+    table = planned()
+    for binding in table[f"{CRM}/projects/{GATEWAY}:getIamPolicy"]["bindings"]:
+        if binding["role"] == "roles/billing.projectManager":
+            binding["condition"] = {"title": "never", "expression": "false"}
+    assert failing(capsys, monkeypatch, table, "iam") == [
+        f"FAIL iam budget-stop: no roles/billing.projectManager on {GATEWAY}"
     ]
 
 

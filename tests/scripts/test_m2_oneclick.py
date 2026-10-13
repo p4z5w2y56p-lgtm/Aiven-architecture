@@ -20,6 +20,7 @@ from aiven.m2_oneclick import (
     ALERT_POLICY,
     DRILL_ADDRESSES,
     DRILL_FUNCTION,
+    DRILL_ROLES,
     ValuesError,
     clean_result,
     main,
@@ -234,7 +235,7 @@ def resource(doc: dict[str, Any], address: str) -> dict[str, Any]:
 def test_the_plan_of_a_fresh_deployment_matches_the_runbook():
     done = summarize(plan(), "main")
     assert done.status == 0 and done.refused == []
-    assert done.lines[0] == "Terraform plan: 87 to create, 0 to change, 0 to replace, 0 to delete."
+    assert done.lines[0] == "Terraform plan: 89 to create, 0 to change, 0 to replace, 0 to delete."
     rows = done.lines[1:-1]
     assert len(rows) == 11 and all(row.startswith("  ok  ") for row in rows), rows
     assert any("aiven-alert 10 EUR, aiven-stop 25 EUR" in row for row in rows)
@@ -316,7 +317,9 @@ def test_deletes_in_the_main_plan_are_shown():
     assert "  The copy of the drill is still there and goes: 1 resources." in done.lines
 
 
-def drill_plan(mode: str, *, stops: str = "aiven-scratch-mock") -> dict[str, Any]:
+def drill_plan(
+    mode: str, *, stops: str = "aiven-scratch-mock", roles_on: str = "aiven-scratch-mock"
+) -> dict[str, Any]:
     """A plan after the apply: the drill's resources come or go, the alert policy changes."""
     doc = plan()
     for change in doc["resource_changes"]:
@@ -351,6 +354,19 @@ def drill_plan(mode: str, *, stops: str = "aiven-scratch-mock") -> dict[str, Any
                 },
             }
         )
+        for role in DRILL_ROLES:
+            control["resources"].append(
+                {
+                    "address": f'module.control.google_project_iam_member.drill["{role}"]',
+                    "mode": "managed",
+                    "type": "google_project_iam_member",
+                    "values": {
+                        "member": "serviceAccount:budget-stop@aiven-control-mock.iam.gserviceaccount.com",
+                        "project": roles_on,
+                        "role": role,
+                    },
+                }
+            )
     return doc
 
 
@@ -365,6 +381,40 @@ def test_a_drill_function_that_would_stop_another_project_is_refused():
     done = summarize(doc, "drill-on", "aiven-scratch-mock")
     assert done.status == 3
     assert any("would stop aiven-agents-mock,aiven-gateway-mock" in r for r in done.refused)
+
+
+def test_the_drill_holds_both_roles_of_the_budget_stop_on_scratch():
+    # Unlinking takes billing.projectManager, and reading a project's billing first takes
+    # resourcemanager.projects.get, which browser has (the first drill failed without it, R167).
+    assert DRILL_ROLES == ("roles/billing.projectManager", "roles/browser")
+    roles = {a for a in DRILL_ADDRESSES if a.startswith("module.control.google_project_iam")}
+    assert roles == {
+        'module.control.google_project_iam_member.drill["roles/billing.projectManager"]',
+        'module.control.google_project_iam_member.drill["roles/browser"]',
+    }
+
+
+def test_a_drill_role_on_another_project_is_refused():
+    doc = drill_plan("drill-on", roles_on="aiven-agents-mock")
+    done = summarize(doc, "drill-on", "aiven-scratch-mock")
+    assert done.status == 3
+    assert sum("a drill role must be on aiven-scratch-mock only" in r for r in done.refused) == 2
+
+
+def test_the_one_drill_role_of_before_counts_as_the_drill_in_the_main_plan():
+    doc = plan()
+    doc["resource_changes"].append(
+        {
+            "address": "module.control.google_project_iam_member.drill[0]",
+            "mode": "managed",
+            "type": "google_project_iam_member",
+            "change": {"actions": ["delete"]},
+        }
+    )
+    done = summarize(doc, "main")
+    assert done.status == 0
+    assert "  The copy of the drill is still there and goes: 1 resources." in done.lines
+    assert not any("WARNING" in line for line in done.lines)
 
 
 @pytest.mark.parametrize("mode", ["drill-on", "drill-off"])
@@ -383,7 +433,7 @@ def test_the_drill_switched_off_removes_the_drill_only():
 
 def test_plan_summary_on_the_command_line(capsys):
     assert main(["plan-summary", str(FIXTURE)]) == 0
-    assert capsys.readouterr().out.startswith("Terraform plan: 87 to create")
+    assert capsys.readouterr().out.startswith("Terraform plan: 89 to create")
 
 
 def test_a_plan_that_cannot_be_read_is_exit_2_with_the_class_only(tmp_path, capsys):

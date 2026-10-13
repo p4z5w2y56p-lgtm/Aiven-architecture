@@ -288,14 +288,27 @@ def _shown(value: Any) -> str:
 
 DRILL = "budget-stop-drill"
 DRILL_FUNCTION = f'module.control.google_cloudfunctions2_function.stop["{DRILL}"]'
+# The budget stop's two roles on the scratch project while the drill is on (ruling R167).
+DRILL_ROLES = ("roles/billing.projectManager", "roles/browser")
+DRILL_ROLE_ADDRESSES = frozenset(
+    f'module.control.google_project_iam_member.drill["{role}"]' for role in DRILL_ROLES
+)
 DRILL_ADDRESSES = frozenset(
     {
         f'module.control.google_pubsub_topic.stop["{DRILL}"]',
         DRILL_FUNCTION,
         f'module.control.google_cloud_run_v2_service_iam_member.stop_invoker["{DRILL}"]',
-        "module.control.google_project_iam_member.drill[0]",
     }
+    | DRILL_ROLE_ADDRESSES
 )
+# Any role of the drill on scratch, also drill[0], the one role it had before ruling R167.
+DRILL_ROLE_PREFIX = "module.control.google_project_iam_member.drill["
+
+
+def _of_drill(address: str) -> bool:
+    return address in DRILL_ADDRESSES or address.startswith(DRILL_ROLE_PREFIX)
+
+
 # Its filter names the drill's function while the drill is on (alerts.tf).
 ALERT_POLICY = "module.control.google_monitoring_alert_policy.alert_entries"
 
@@ -381,8 +394,8 @@ def summarize(plan: dict[str, Any], mode: str, scratch: str | None = None) -> Su
     if mode == "main":
         lines += _main_rows(resources)
         risky = acted["delete"] + acted["replace"]
-        drill = [address for address in risky if address in DRILL_ADDRESSES]
-        other = [address for address in risky if address not in DRILL_ADDRESSES]
+        drill = [address for address in risky if _of_drill(address)]
+        other = [address for address in risky if not _of_drill(address)]
         if drill:
             lines.append(
                 f"  The copy of the drill is still there and goes: {len(drill)} resources."
@@ -414,6 +427,13 @@ def summarize(plan: dict[str, Any], mode: str, scratch: str | None = None) -> Su
                 )
             else:
                 lines.append(f"  The drill function stops {scratch} only.")
+            elsewhere = sorted(
+                f"{r['address']} is on {r.get('values', {}).get('project') or 'no project'}"
+                for r in resources
+                if r["address"] in DRILL_ROLE_ADDRESSES
+                and r.get("values", {}).get("project") != scratch
+            )
+            refused += [f"a drill role must be on {scratch} only: {where}" for where in elsewhere]
 
     if not refused:
         lines.append(
@@ -471,14 +491,14 @@ def _main_rows(resources: list[dict[str, Any]]) -> list[str]:
             f"{by_type['google_service_account']} (runbook: 5 + {agents} agent)",
         )
     )
-    project_roles = by_type["google_project_iam_member"] - (
-        1 if "module.control.google_project_iam_member.drill[0]" in values else 0
+    project_roles = by_type["google_project_iam_member"] - sum(
+        1 for address in values if address.startswith(DRILL_ROLE_PREFIX)
     )
     rows.append(
         _row(
-            project_roles == 13 + agents,
+            project_roles == 15 + agents,
             "roles on the projects",
-            f"{project_roles} (runbook: 13 + {agents} agent)",
+            f"{project_roles} (runbook: 15 + {agents} agent)",
         )
     )
     names = sorted(

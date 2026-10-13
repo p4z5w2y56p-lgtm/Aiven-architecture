@@ -155,10 +155,11 @@ run "the_drill_adds_a_copy_for_the_scratch_project_only" {
 
   assert {
     condition = alltrue([
-      length(google_project_iam_member.drill) == 1,
-      google_project_iam_member.drill[0].project == "aiven-scratch-test",
-      google_project_iam_member.drill[0].role == "roles/billing.projectManager",
+      toset([for binding in google_project_iam_member.drill : "${binding.project} ${binding.role} ${binding.member}"]) == toset([
+        "aiven-scratch-test roles/billing.projectManager serviceAccount:budget-stop@aiven-control-test.iam.gserviceaccount.com",
+        "aiven-scratch-test roles/browser serviceAccount:budget-stop@aiven-control-test.iam.gserviceaccount.com",
+      ]),
     ])
-    error_message = "During the drill, the budget stop may unlink the scratch project."
+    error_message = "During the drill, the budget stop may read and unlink the billing of the scratch project (ruling R167)."
   }
 }

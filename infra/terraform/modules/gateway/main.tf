@@ -18,23 +18,26 @@ locals {
     gateway = "serviceAccount:${google_service_account.gateway.account_id}@${var.project}.iam.gserviceaccount.com"
   }
 
-  project_iam = {
-    # Its own working database, to read and write.
-    "roles/datastore.user gateway" = {
-      role   = "roles/datastore.user"
-      member = local.members.gateway
-    }
-    # The control UI reads the working database: pending confirms, proposals and runs.
-    "roles/datastore.viewer control-ui" = {
-      role   = "roles/datastore.viewer"
-      member = var.control_ui_member
-    }
-    # The budget stop unlinks billing from this project (gateway-design section 9).
-    "roles/billing.projectManager budget-stop" = {
-      role   = "roles/billing.projectManager"
-      member = var.budget_stop_member
-    }
-  }
+  project_iam = merge(
+    {
+      # Its own working database, to read and write.
+      "roles/datastore.user gateway" = {
+        role   = "roles/datastore.user"
+        member = local.members.gateway
+      }
+      # The control UI reads the working database: pending confirms, proposals and runs.
+      "roles/datastore.viewer control-ui" = {
+        role   = "roles/datastore.viewer"
+        member = var.control_ui_member
+      }
+    },
+    {
+      # The budget stop reads and unlinks the billing of this project (gateway-design sections 3
+      # and 9): Google's guide to disabling billing takes both roles (ruling R167).
+      for role in ["roles/billing.projectManager", "roles/browser"] :
+      "${role} budget-stop" => { role = role, member = var.budget_stop_member }
+    },
+  )
 }
 
 resource "google_project_service" "api" {

@@ -148,8 +148,9 @@ resource "google_cloudfunctions2_function" "stop" {
     service_account_email = google_service_account.account["budget-stop"].email
   }
 
-  # The builder reads the source from Cloud Functions' staging bucket (functions.tf).
-  depends_on = [google_project_iam_member.builder_reads_staging]
+  # The builder reads the source from Cloud Functions' staging bucket (functions.tf). The drill's
+  # roles come first, so that they have had the build's minutes to reach the copy (ruling R167).
+  depends_on = [google_project_iam_member.builder_reads_staging, google_project_iam_member.drill]
 }
 
 # Eventarc calls the function as budget-stop; nothing else may.
@@ -163,11 +164,12 @@ resource "google_cloud_run_v2_service_iam_member" "stop_invoker" {
   member   = local.members["budget-stop"]
 }
 
-# While the drill is on, the budget stop may unlink billing from the scratch project as well.
+# While the drill is on, the budget stop may read and unlink the billing of the scratch project as
+# well, with the same two roles it holds on the agents and gateway projects (ruling R167).
 resource "google_project_iam_member" "drill" {
-  count = var.budget_stop_drill ? 1 : 0
+  for_each = toset(var.budget_stop_drill ? ["roles/billing.projectManager", "roles/browser"] : [])
 
   project = var.scratch_project
-  role    = "roles/billing.projectManager"
+  role    = each.key
   member  = local.members["budget-stop"]
 }

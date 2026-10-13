@@ -26,11 +26,10 @@ locals {
       "roles/aiplatform.user ${name}" => { role = "roles/aiplatform.user", member = member }
     },
     {
-      # The budget stop unlinks billing from this project (gateway-design section 9).
-      "roles/billing.projectManager budget-stop" = {
-        role   = "roles/billing.projectManager"
-        member = var.budget_stop_member
-      }
+      # The budget stop reads and unlinks the billing of this project (gateway-design sections 3
+      # and 9): Google's guide to disabling billing takes both roles (ruling R167).
+      for role in ["roles/billing.projectManager", "roles/browser"] :
+      "${role} budget-stop" => { role = role, member = var.budget_stop_member }
     },
   )
 }
