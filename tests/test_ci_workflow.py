@@ -195,3 +195,18 @@ def test_the_coverage_gate_covers_every_package():
     words = run.split()
     assert "--cov=aiven" in words
     assert "--cov-branch" in words and "--cov-fail-under=95" in words
+
+
+def test_the_tests_run_against_a_pinned_firestore_emulator():
+    # Ruling R169: the store's emulator half runs in CI, and a skip there is a failure.
+    every = steps()
+    names = [step.get("name", step.get("run", "")) for step in every]
+    emulator = names.index("Firestore emulator v1.19.7, checked against its SHA-256")
+    tests = next(i for i, step in enumerate(every) if "pytest --cov" in step.get("run", ""))
+    assert emulator < tests
+    script = every[emulator]["run"]
+    assert "cloud-firestore-emulator-v1.19.7.jar" in script and "sha256sum -c -" in script
+    assert every[tests]["env"] == {
+        "FIRESTORE_EMULATOR_HOST": "127.0.0.1:8681",
+        "AIVEN_REQUIRE_EMULATOR": "1",
+    }

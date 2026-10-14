@@ -24,7 +24,24 @@ jobs:
       - run: uv run ruff check
       - run: uv run ruff format --check
       - run: shellcheck scripts/m2-oneclick.sh .githooks/pre-commit tests/scripts/oneclick_mock/*
+      # The gateway's working store is tested against the Firestore emulator as well as a fake
+      # (ruling R169): Firebase's jar, checked against its SHA-256, on the runner's own Java. Here
+      # the emulator half must run: AIVEN_REQUIRE_EMULATOR turns its skip into a failure.
+      - name: Firestore emulator v1.19.7, checked against its SHA-256
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/firestore-emulator.jar" https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-v1.19.7.jar
+          echo "20d51a69362c96343095722025a7856400ae8c05ea40ce9e76adef87212eeb7a  $RUNNER_TEMP/firestore-emulator.jar" | sha256sum -c -
+          nohup java -jar "$RUNNER_TEMP/firestore-emulator.jar" --host=127.0.0.1 --port=8681 > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fs http://127.0.0.1:8681/ > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/emulator.log"
+          exit 1
       - run: uv run pytest --cov=aiven --cov-branch --cov-fail-under=95
+        env:
+          FIRESTORE_EMULATOR_HOST: "127.0.0.1:8681"
+          AIVEN_REQUIRE_EMULATOR: "1"
       - name: Template self-test (validator-spec section 9)
         run: |
           # The template has errors of its own, so the validator must exit 1. Exit 0 would mean
