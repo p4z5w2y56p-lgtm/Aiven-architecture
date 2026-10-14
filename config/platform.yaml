@@ -1,0 +1,16 @@
+# The platform values of the deployment (docs/validator-spec.md section 6): IDs and addresses
+# only, never a credential, a key or a token. CI refuses anything else here (aiven-check-config).
+# scripts/m2-oneclick.sh wrote it from platform.example.yaml and the answers it was given.
+
+# The project that holds the agents' service accounts. It is the project in every policy's `principal`.
+agents_project: aiven-agents-819c3e
+
+# AIVEN accounts whose edits to a Drive file do not make a run untrusted (docs/drive-wrapper.md section 5).
+trusted_authors:
+  - m.vanhoorn@aivenstudios.com
+
+# The gateway's own service account (docs/drive-wrapper.md section 1).
+gateway_principal: gateway@aiven-gateway-819c3e.iam.gserviceaccount.com
+
+# The ID of the Shared Drive "AIVEN Architecture Sandbox" (setup step S5).
+sandbox_drive_id: "0ANG6akvi_bACUk9PVA"

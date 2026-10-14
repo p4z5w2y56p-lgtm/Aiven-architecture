@@ -1,0 +1,71 @@
+M2 one-click result
+Written: 2026-10-14T00:20:18Z (run started 2026-10-13T23:45:06Z)
+Mode: full run
+Commit: 32e8e38
+Account: m.vanhoorn@aivenstudios.com
+Projects: agents aiven-agents-819c3e, gateway aiven-gateway-819c3e, control aiven-control-819c3e, scratch aiven-scratch-819c3e
+Billing account: 012A60-DF87B5-BE025D (EUR)
+Alert address: m.vanhoorn@aivenstudios.com
+Sandbox drive: 0ANG6akvi_bACUk9PVA
+Alert emails received: yes
+
+Steps:
+  PASS tools: gcloud, uv, Terraform 1.16.4 (/Users/matthijsvanhoorn/Aiven-architecture/.m2-oneclick/bin/terraform)
+  PASS login: m.vanhoorn@aivenstudios.com; both logins are revoked when the script ends
+  PASS values: checked with aiven-check-config; organisation 413705847272
+  PASS org-policy-admin: you have it already
+  PASS bootstrap-apis: the 4 APIs are on
+  PASS state-bucket: gs://aiven-control-819c3e-tfstate, europe-west4, versioned
+  PASS apply: applied
+  PASS credit-reminder: done before (2026-10-13T22:57:50Z); not run again, so no second email
+  PASS bd1-unlink: billing of aiven-scratch-819c3e unlinked 15s after publishing
+  PASS bd1-audit: a budget_stop audit entry
+  PASS bd1-real-projects: billing of the agents and gateway projects still on
+  PASS bd2-relink: billing of aiven-scratch-819c3e linked again
+  PASS bd2-below: at 24.99 the function logs below
+  PASS bd2-below-billing: billing stays on
+  PASS bd2-disabled: switched off, the function logs disabled
+  PASS bd2-disabled-billing: billing stays on
+  PASS bd2-first: the first notification unlinks again
+  PASS bd2-second: the second logs already_stopped
+  PASS bd2-one-entry: one budget_stop audit entry for the two
+  PASS drills: BD-1 and BD-2 passed; scratch linked again, drill copy removed
+  MANUAL sandbox-member: In Google Drive, open Shared drives > AIVEN Architecture Sandbox > Manage members, add gateway@aiven-gateway-819c3e.iam.gserviceaccount.com as Contributor, untick Notify people, and Share.
+  MANUAL sandbox-check: There, check that the members are exactly you (Manager) and gateway@aiven-gateway-819c3e.iam.gserviceaccount.com (Contributor), and that access for non-members is off.
+  PASS deploy-check: 17 PASS, 2 NOTE (expected in M2: gateway service, audit lock, maybe the Firestore TTL)
+
+Plan summary:
+Terraform plan: 2 to create, 0 to change, 0 to replace, 0 to delete.
+  ok  organisation policies   7 (runbook: 6, and control's exception to domain restricted sharing)
+  ok  APIs                    29: control 17, agents 5, gateway 7 (runbook: 17, 5, 7)
+  ok  service accounts        6 (runbook: 5 + 1 agent)
+  ok  roles on the projects   16 (runbook: 15 + 1 agent)
+  ok  buckets                 3: aiven-control-819c3e-functions, aiven-control-819c3e-policies, aiven-control-819c3e-snapshots
+  ok  audit log bucket        aiven-audit, 365 days, not locked
+  ok  Firestore databases     2 (control, gateway)
+  ok  budgets                 aiven-alert 10 EUR, aiven-stop 25 EUR
+  ok  functions               budget-stop, credit-reminder
+  ok  scheduler job           credit-reminder, 20 December 09:00
+  ok  alerts                  2 alert policies, email to m.vanhoorn@aivenstudios.com
+Safety: no service account key, no lock (the audit log lock stays off), no role for a person.
+
+aiven-deploy-check all:
+PASS keys aiven-agents-819c3e: no user-managed key on its 2 service accounts
+PASS keys aiven-gateway-819c3e: no user-managed key on its 2 service accounts
+PASS keys aiven-control-819c3e: no user-managed key on its 6 service accounts
+PASS apis agents: Drive, Sheets and Gmail are off in aiven-agents-819c3e
+PASS iam agents vertex: every agent has roles/aiplatform.user on the agents project
+PASS iam agents other roles: no agent holds another role on the agents, gateway or control project
+PASS iam budget-stop: it holds roles/billing.projectManager and roles/browser on the agents and gateway projects
+NOTE iam gateway service: it does not exist yet (M3); then agents may only invoke it
+PASS stores aiven-control-819c3e-policies: versioned, uniform access, never public, europe-west4
+PASS stores aiven-control-819c3e-snapshots: every object kept 30 days, then deleted
+PASS stores aiven-audit: keeps 365 days
+NOTE stores aiven-audit lock: not locked; the lock waits for Matthijs's confirmation (ruling R105)
+PASS stores aiven-audit routing: log aiven-audit goes to its own bucket only
+PASS stores firestore control: native, europe-west4, protected from deletion
+PASS stores firestore gateway: native, europe-west4, protected from deletion
+PASS stores firestore gateway ttl: runs expire by expire_at
+PASS stores firestore gateway ttl: calls expire by expire_at
+PASS budgets aiven-alert: gross cost, 10 EUR a month, over the three projects
+PASS budgets aiven-stop: gross cost, 25 EUR a month, over the three projects, to topic budget-stop
