@@ -2,7 +2,7 @@
 
 AIVEN STUDIOS' safety layer for agents. Every agent action passes through a gateway that enforces a signed policy file per agent, so no agent can do damage that cannot be undone.
 
-Status: Phase 1 (internal only). M1, the policy validator `aiven-policy`, is done and reviewed. M2, the platform infrastructure, is built and reviewed: Terraform for the agents, gateway and control projects, the audit log writer, the budget stop, the alerts and the credit reminder, the config guard and the deploy checks. It waits for Matthijs's apply, one command on his Mac (`bash scripts/m2-oneclick.sh`, runbook `docs/runbooks/m2-apply.md`). M3, the gateway core, is planned (`docs/plans/2026-10-13-m3-gateway.md`) and starts after the apply.
+Status: Phase 1 (internal only). M1, the policy validator `aiven-policy`, is done and reviewed. M2, the platform infrastructure, is built and reviewed: Terraform for the agents, gateway and control projects, the audit log writer, the budget stop, the alerts and the credit reminder, the config guard and the deploy checks. It is applied (2026-10-14, `bash scripts/m2-oneclick.sh`, runbook `docs/runbooks/m2-apply.md`): budget-stop drills BD-1 and BD-2 passed, and the deploy check shows every line PASS apart from the two NOTEs expected in M2 (no gateway service yet; the audit log lock waits for Matthijs's word). The results are in `m2-result.txt`, the values in `config/platform.yaml` and `infra/terraform/terraform.tfvars`. M3, the gateway core, is planned (`docs/plans/2026-10-13-m3-gateway.md`) and starts when Matthijs says go.
 
 | Path | Contents |
 |---|---|
