@@ -45,6 +45,12 @@ exception can hold text of the file, so it is never used.
 
 `verify` handles one file. The checks across all policies (3.9) are done by the loader that loads
 them: `check_duplicates` over the whole set, and `check_history` for each file.
+
+The caller names the namespace, the ssh-keygen and the folder for the signature (M3 Task 3.0, flags
+#2 and #4). The defaults are the command line's: namespace `aiven-policy-v1`, `ssh-keygen` from the
+PATH, and the system's temporary folder. The gateway passes `/usr/bin/ssh-keygen`, fixed in its
+code, and a private folder that it made at startup. `verify_signature` is the signature check alone,
+for the catalog, which is signed under `aiven-catalog-v1`.
 """
 
 import inspect
@@ -107,6 +113,10 @@ def verify(
     folder_check: Callable[[str, str | None], bool],
     cfg: PlatformConfig,
     catalog: Catalog,
+    *,
+    namespace: str = NAMESPACE,
+    ssh_keygen: str = "ssh-keygen",
+    tmpdir: Path | None = None,
 ) -> tuple[Policy | None, list[Finding]]:
     """The policy of the file `data` that is called `path`, and the findings, in report order.
 
@@ -122,6 +132,7 @@ def verify(
       path is `path` (None if the policy has no path).
     - Both callbacks are synchronous and answer `True` or `False`. Any other answer raises
       TypeError inside `verify`, so it is E-INTERNAL.
+    - `namespace`, `ssh_keygen` and `tmpdir` are those of `verify_signature`.
 
     The policy is None when any finding is an error. A result with no policy and no error cannot be
     (a file gives no policy only for an error), and is E-INTERNAL if it ever happens. See the
@@ -134,7 +145,9 @@ def verify(
         agent = path.name.removesuffix(".md")
         return None, [Finding("E-SIG-MISSING", "error", where, params={"agent": agent})]
     try:
-        if not _signature_holds(data, sig, allowed_signers):
+        if not verify_signature(
+            data, sig, allowed_signers, namespace=namespace, ssh_keygen=ssh_keygen, tmpdir=tmpdir
+        ):
             return None, [Finding("E-SIG-INVALID", "error", where)]
         checked = validate_policy(path, data, cfg, catalog)
         findings = [found for found in checked.findings if found.code != "W-TOOL-NOT-LIVE"]
@@ -153,21 +166,34 @@ def verify(
     return (None if failed else policy), findings
 
 
-def _signature_holds(data: bytes, sig: bytes, allowed_signers: Path) -> bool:
+def verify_signature(
+    data: bytes,
+    sig: bytes,
+    allowed_signers: Path,
+    *,
+    namespace: str,
+    ssh_keygen: str = "ssh-keygen",
+    tmpdir: Path | None = None,
+) -> bool:
     """Whether `ssh-keygen -Y verify` accepts `sig` as the signature of `data` (section 2).
 
+    The signer is `matthijs`, under `namespace`. `ssh_keygen` is run by the name or path given, as
+    the first item of the arguments, with no shell. The signature is written to a folder of its own
+    (0700, removed afterwards) inside `tmpdir`, or inside the system's temporary folder.
+
     A signature over `MAX_SIG_BYTES` is none (ruling R80), and is refused before it is written. A
-    file of allowed signers that cannot be used raises (ruling R82), before ssh-keygen is run.
+    file of allowed signers that cannot be used raises (ruling R82), before ssh-keygen is run; so
+    does an ssh-keygen that cannot be run or takes too long. The caller fails closed on either.
     """
     if len(sig) > MAX_SIG_BYTES:
         return False
     _check_trust_anchor(allowed_signers)
-    with tempfile.TemporaryDirectory(prefix="aiven-policy-") as folder:
+    with tempfile.TemporaryDirectory(prefix="aiven-policy-", dir=tmpdir) as folder:
         sig_file = Path(folder) / "policy.sig"
         sig_file.write_bytes(sig)
         done = subprocess.run(
             [
-                "ssh-keygen",
+                ssh_keygen,
                 "-Y",
                 "verify",
                 "-f",
@@ -175,7 +201,7 @@ def _signature_holds(data: bytes, sig: bytes, allowed_signers: Path) -> bool:
                 "-I",
                 SIGNER,
                 "-n",
-                NAMESPACE,
+                namespace,
                 "-s",
                 str(sig_file),
             ],

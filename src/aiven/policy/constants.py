@@ -13,6 +13,9 @@ SCHEMA = "aiven-policy/v1"
 SIGNER = "matthijs"
 SIGNER_NAME = "Matthijs van Hoorn"
 NAMESPACE = "aiven-policy-v1"
+# The catalog is signed under a namespace of its own, so that a policy signature can never pass for
+# a catalog signature, nor the reverse (M1 review, flag #2).
+CATALOG_NAMESPACE = "aiven-catalog-v1"
 
 # Classes a policy may use. R3 is disabled in v1; R4 is never allowed.
 POLICY_CLASSES = ("R0", "R1", "R2")

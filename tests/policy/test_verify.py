@@ -983,3 +983,82 @@ def test_a_callback_that_does_not_answer_true_or_false_gives_e_internal(signer, 
         gc.collect()  # a coroutine that was never awaited warns when it is collected
     assert result == (None, [internal("TypeError")])
     assert [str(warning.message) for warning in caught] == []
+
+
+# --- the namespace and the ssh-keygen that the caller gives (M3 Task 3.0, flags #2 and #4)
+
+BOTH = "aiven-policy-v1,aiven-catalog-v1"
+
+
+@pytest.fixture
+def both(tmp_path) -> Signer:
+    """The key of "matthijs", trusted for the policy and the catalog namespace (flag #2)."""
+    return make_signer(tmp_path / "both", namespaces=BOTH)
+
+
+def test_catalog_namespace_refuses_a_policy_signature(both):
+    data = b"schema: aiven-catalog/v1\n"
+    policy_sig = both.sign(data, namespace="aiven-policy-v1")
+    catalog_sig = both.sign(data, namespace="aiven-catalog-v1")
+    check = verify_module.verify_signature
+    anchor = both.allowed_signers
+    assert check(data, catalog_sig, anchor, namespace=constants.CATALOG_NAMESPACE) is True
+    assert check(data, policy_sig, anchor, namespace=constants.CATALOG_NAMESPACE) is False
+
+
+def test_policy_namespace_refuses_a_catalog_signature(both):
+    assert verify_with(both, BASE, both.sign(BASE))[0] is not None
+    catalog_sig = both.sign(BASE, namespace=constants.CATALOG_NAMESPACE)
+    assert verify_with(both, BASE, catalog_sig) == (None, [INVALID])
+
+
+def test_the_two_namespaces_are_different():
+    assert constants.CATALOG_NAMESPACE == "aiven-catalog-v1"
+    assert constants.NAMESPACE == "aiven-policy-v1"
+
+
+def test_ssh_keygen_is_called_by_the_path_given(monkeypatch, stand_in):
+    calls = stub_run(monkeypatch)
+    anchor = stand_in.allowed_signers
+    verify(
+        BASE_PATH, BASE, b"sig", anchor, None, all_live, in_sandbox, CFG, LIVE,
+        ssh_keygen="/usr/bin/ssh-keygen",
+    )  # fmt: skip
+    verify_module.verify_signature(
+        b"data", b"sig", anchor, namespace="aiven-catalog-v1", ssh_keygen="/usr/bin/ssh-keygen"
+    )
+    policy_call, catalog_call = calls
+    assert policy_call.argv[0] == catalog_call.argv[0] == "/usr/bin/ssh-keygen"
+    assert policy_call.argv[policy_call.argv.index("-n") + 1] == "aiven-policy-v1"
+    assert catalog_call.argv[catalog_call.argv.index("-n") + 1] == "aiven-catalog-v1"
+
+
+def test_the_signature_folder_is_made_in_the_folder_given(monkeypatch, stand_in, tmp_path):
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    calls = stub_run(monkeypatch)
+    verify_module.verify_signature(
+        b"data", b"sig", stand_in.allowed_signers, namespace="aiven-catalog-v1", tmpdir=private
+    )
+    (call,) = calls
+    assert call.sig_path.parent.parent == private
+    assert call.folder_mode == 0o700
+    assert list(private.iterdir()) == []  # removed afterwards
+
+
+def test_a_signature_over_16_kib_is_none_for_the_catalog_too(monkeypatch, stand_in):
+    calls = stub_run(monkeypatch)
+    too_big = b"s" * (constants.MAX_SIG_BYTES + 1)
+    check = verify_module.verify_signature(
+        b"data", too_big, stand_in.allowed_signers, namespace="aiven-catalog-v1"
+    )
+    assert check is False and calls == []
+
+
+def test_the_cli_still_uses_the_policy_namespace(monkeypatch, stand_in):
+    # The defaults of verify are the command line's: ssh-keygen from PATH, the policy namespace.
+    calls = stub_run(monkeypatch)
+    verify_with(stand_in, BASE, b"sig")
+    (call,) = calls
+    assert call.argv[0] == "ssh-keygen"
+    assert call.argv[call.argv.index("-n") + 1] == "aiven-policy-v1"
