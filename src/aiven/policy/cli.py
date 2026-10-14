@@ -125,6 +125,12 @@ FILE_AND_BODY_CODES = frozenset(
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the command line and give the exit code: 0, 1 or 2 (see the module)."""
     _escape_what_cannot_be_encoded()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["publish"]:
+        # Publishing talks to Google with Matthijs's login (publish.py), and has a parser of its own.
+        from aiven.policy import publish
+
+        return publish.main(argv[1:])
     args = _parser().parse_args(argv)
     caught = False
     try:
@@ -267,6 +273,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     verifying.add_argument("--active-sha256", help="the hash of the file of that version")
     verifying.set_defaults(run=_verify, json=False, parser=verifying)
+    commands.add_parser(
+        "publish",
+        help="publish a signed policy, the catalog or the trust anchor (aiven-policy publish -h)",
+        add_help=False,
+    )
     return parser
 
 

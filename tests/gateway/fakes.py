@@ -435,8 +435,27 @@ class FakeBlob:
     """An object of the fake bucket. `size` may say more than `data` holds: a huge object is
     served as zeros on demand, so a test can have a 1 GiB object without 1 GiB of memory."""
 
-    def __init__(self, bucket: "FakeBucket", name: str, data: bytes | None, size: int) -> None:
+    def __init__(
+        self, bucket: "FakeBucket", name: str, data: bytes | None, size: int, generation: int = 1
+    ) -> None:
         self.bucket, self.name, self.data, self.size = bucket, name, data, size
+        self.generation = generation
+
+    def upload_from_string(
+        self, data: bytes, content_type: str = "", if_generation_match: int | None = None
+    ) -> None:
+        from google.api_core.exceptions import PreconditionFailed
+
+        self.bucket.uploads.append(self.name)
+        if self.bucket.fail_upload_of == self.name:
+            raise PreconditionFailed("the object changed (stand-in)")
+        current = self.bucket.objects.get(self.name)
+        generation = 0 if current is None else current.generation
+        if if_generation_match is not None and if_generation_match != generation:
+            raise PreconditionFailed("the object changed (stand-in)")
+        self.bucket.objects[self.name] = FakeBlob(
+            self.bucket, self.name, bytes(data), len(data), generation + 1
+        )
 
     def download_as_bytes(self, start: int = 0, end: int | None = None) -> bytes:
         last = (self.size if self.data is None else len(self.data)) - 1
@@ -456,6 +475,8 @@ class FakeBucket:
         self.objects: dict[str, FakeBlob] = {}
         self.served = 0
         self.metadata_lies: dict[str, int] = {}
+        self.uploads: list[str] = []
+        self.fail_upload_of: str | None = None
 
     def put(self, name: str, data: bytes) -> None:
         size = self.metadata_lies.get(name, len(data))
@@ -466,3 +487,30 @@ class FakeBucket:
 
     def get_blob(self, name: str) -> FakeBlob | None:
         return self.objects.get(name)
+
+    def blob(self, name: str) -> FakeBlob:
+        """A handle to upload to `name`, as google.cloud.storage's Bucket.blob gives."""
+        return FakeBlob(self, name, None, 0)
+
+
+class FakeReleases:
+    """`releases/policy_versions` for the publish step: a record per agent, written only when it
+    is still the one the publisher read (a transaction in Firestore)."""
+
+    def __init__(self) -> None:
+        self.records: dict[str, Any] = {}
+        self.writes: list[tuple[str, Any]] = []
+        self.uploads_seen: list[list[str]] = []
+        self.bucket: FakeBucket | None = None
+
+    def get(self, agent: str) -> Any:
+        return self.records.get(agent)
+
+    def put_if(self, agent: str, expected: Any, new: Any) -> bool:
+        if self.bucket is not None:
+            self.uploads_seen.append(list(self.bucket.uploads))
+        if self.records.get(agent) != expected:
+            return False
+        self.records[agent] = new
+        self.writes.append((agent, new))
+        return True
