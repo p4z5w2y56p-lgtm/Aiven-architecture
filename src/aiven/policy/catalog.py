@@ -85,8 +85,12 @@ def load_catalog(path: Path) -> Catalog:
     reserved list that lacks an entry of the platform (ruling R94), and for anything else that is
     not valid catalog v1."""
     path = Path(path)
-    raw = path.read_bytes()
-    where = path.name
+    return parse_catalog(path.read_bytes(), path.name)
+
+
+def parse_catalog(raw: bytes, where: str) -> Catalog:
+    """The catalog in `raw`, as `load_catalog` reads it; `where` names it in an error. The gateway
+    gives it the bytes it verified, so that it never parses bytes Matthijs did not sign."""
     try:
         doc = YAML(typ="safe").load(raw.decode("utf-8"))
     except (UnicodeDecodeError, YAMLError) as error:

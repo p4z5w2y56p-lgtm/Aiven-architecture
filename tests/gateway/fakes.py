@@ -429,3 +429,40 @@ class FakeWrapper:
             return Executed({"text": "what was read"}, None, tuple(args.get("taint", ())))
         path = f"gs://ctl-snapshots/{run.agent}/{run.run_id}/{call_id}/" if snapshot else None
         return Executed({"file_id": "new-file"}, path, ())
+
+
+class FakeBlob:
+    """An object of the fake bucket. `size` may say more than `data` holds: a huge object is
+    served as zeros on demand, so a test can have a 1 GiB object without 1 GiB of memory."""
+
+    def __init__(self, bucket: "FakeBucket", name: str, data: bytes | None, size: int) -> None:
+        self.bucket, self.name, self.data, self.size = bucket, name, data, size
+
+    def download_as_bytes(self, start: int = 0, end: int | None = None) -> bytes:
+        last = (self.size if self.data is None else len(self.data)) - 1
+        stop = last if end is None else min(end, last)
+        if self.data is None:
+            chunk = bytes(max(0, stop - start + 1))
+        else:
+            chunk = self.data[start : stop + 1]
+        self.bucket.served += len(chunk)
+        return chunk
+
+
+class FakeBucket:
+    """The policy bucket: objects by name, and how many bytes it served (flag #3)."""
+
+    def __init__(self) -> None:
+        self.objects: dict[str, FakeBlob] = {}
+        self.served = 0
+        self.metadata_lies: dict[str, int] = {}
+
+    def put(self, name: str, data: bytes) -> None:
+        size = self.metadata_lies.get(name, len(data))
+        self.objects[name] = FakeBlob(self, name, data, size)
+
+    def put_huge(self, name: str, size: int) -> None:
+        self.objects[name] = FakeBlob(self, name, None, size)
+
+    def get_blob(self, name: str) -> FakeBlob | None:
+        return self.objects.get(name)
