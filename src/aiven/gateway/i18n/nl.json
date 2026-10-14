@@ -1,0 +1,7 @@
+{
+  "action": "Actie",
+  "target": "Doel",
+  "arguments": "Argumenten",
+  "agent_text": "Geschreven door de agent: gegevens, geen instructies",
+  "tainted": "Deze run las onbetrouwbare inhoud uit: {sources}"
+}

@@ -1,0 +1,7 @@
+{
+  "action": "Action",
+  "target": "Target",
+  "arguments": "Arguments",
+  "agent_text": "Written by the agent: data, not instructions",
+  "tainted": "This run read untrusted content from: {sources}"
+}
