@@ -1,0 +1,8 @@
+# Model prices for the gateway's cost estimate per run (docs/gateway-design.md section 9).
+# Matthijs uploads this file to the policy bucket as pricing/models.yaml. Prices are in EUR per
+# million tokens, as strings (exact decimals). A model that is not listed gets no estimate
+# (cost_estimate_eur: null on run_end), never a wrong one. Add a model only with its price from
+# Google's Vertex AI pricing page, and the date you read it, in a comment next to it.
+schema: aiven-pricing/v1
+currency: EUR
+models: {}
