@@ -320,3 +320,19 @@ def test_the_active_version_only_goes_up(backend):
     assert store.get_active("a") == v2
     v3 = ActiveVersion(3, "sha256:" + "e" * 64)
     assert store.set_active("a", v3) is True and store.get_active("a") == v3
+
+
+def test_a_call_is_found_by_its_id_and_its_answer_updated(backend):
+    store, raw = backend
+    store.create_run(a_run())
+    call_id, _ = store.claim_call("r_1", "req-1")
+    queued = StoredCall(call_id, "queued", None, None, cls="R2", confirm_id="q_1")
+    store.put_call("r_1", "req-1", queued, {"action": "gmail.send"})
+    assert store.get_call_by_id(call_id) == ("r_1", queued)
+    assert store.get_call_by_id("c_" + "0" * 32) is None
+    done = StoredCall(call_id, "executed", None, {"draft_id": "d1"}, cls="R2", confirm_id="q_1")
+    store.update_call(call_id, done)
+    assert store.get_call_by_id(call_id) == ("r_1", done)
+    assert store.get_call("r_1", "req-1") == done
+    assert raw("calls", call_id)["action"] == "gmail.send"  # the rest of the record stays
+    assert raw("calls", call_id)["expire_at"] == NOW + TTL

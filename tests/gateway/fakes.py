@@ -171,6 +171,15 @@ class FakeStore:
                 | {"run_id": run_id, "expire_at": self._clock() + WORKING_TTL}
             )
 
+    def get_call_by_id(self, call_id: str) -> tuple[str, StoredCall] | None:
+        with self._lock:
+            doc = self._col("calls").get(call_id)
+            return None if doc is None else (doc["run_id"], self._stored(doc))
+
+    def update_call(self, call_id: str, call: StoredCall) -> None:
+        with self._lock:
+            self._col("calls")[call_id].update(asdict(call))
+
     def calls_by_outcome(self, run_id: str) -> dict[str, int]:
         with self._lock:
             return dict(
@@ -244,3 +253,179 @@ class FakeStore:
                 return False
             self._col("active")[agent] = {"version": active.version, "sha256": active.sha256}
             return True
+
+
+# --- the other stand-ins of the pipeline's tests (plan Tasks 3.4 to 3.8)
+
+
+class FakeControl:
+    """Control as the gateway reads it: switches, wrapper lists, decisions, sign-offs, releases.
+
+    `down = True` makes every read raise ControlUnavailable; `reads` counts the reads of `read`.
+    """
+
+    def __init__(self) -> None:
+        self.kill_global = False
+        self.killed: set[str] = set()
+        self.enabled: dict[str, list[str]] = {}
+        self.decisions: dict[str, Any] = {}
+        self.signoffs: dict[str, Any] = {}
+        self.versions: dict[str, Any] = {}
+        self.cleared: dict[str, str] = {}
+        self.down = False
+        self.reads = 0
+
+    def _up(self) -> None:
+        from aiven.gateway.control import ControlUnavailable
+
+        if self.down:
+            raise ControlUnavailable("control could not be read (Stand-in)")
+
+    def read(self, agent: str, wrapper: str | None) -> Any:
+        from aiven.gateway.decide import ControlSnapshot
+
+        self._up()
+        self.reads += 1
+        enabled = wrapper is not None and agent in self.enabled.get(wrapper, [])
+        return ControlSnapshot(self.kill_global, agent in self.killed, enabled)
+
+    def wrapper_live(self, wrapper: str, agent: str) -> bool:
+        self._up()
+        return agent in self.enabled.get(wrapper, [])
+
+    def policy_version(self, agent: str) -> Any:
+        self._up()
+        return self.versions.get(agent)
+
+    def policy_versions(self) -> dict[str, Any]:
+        self._up()
+        return dict(self.versions)
+
+    def decision(self, confirm_id: str) -> Any:
+        self._up()
+        return self.decisions.get(confirm_id)
+
+    def signoff(self, agent: str) -> Any:
+        self._up()
+        return self.signoffs.get(agent)
+
+    def taint_cleared(self, file_id: str, revision: str) -> bool:
+        self._up()
+        return self.cleared.get(file_id) == revision
+
+
+class FakeAudit:
+    """The audit log: keeps each entry; `fail_on` names the events whose write fails."""
+
+    def __init__(self) -> None:
+        self.entries: list[Any] = []
+        self.fail_on: set[str] = set()
+
+    def write(self, entry: Any) -> None:
+        from aiven.common.audit import AuditWriteFailed
+
+        if entry.event in self.fail_on or "*" in self.fail_on:
+            raise AuditWriteFailed("the audit log did not take the entry (Stand-in)")
+        self.entries.append(entry)
+
+    def events(self) -> list[str]:
+        return [entry.event for entry in self.entries]
+
+    def of(self, event: str) -> list[Any]:
+        return [entry for entry in self.entries if entry.event == event]
+
+
+class FakePolicies:
+    """The policy registry as the pipeline uses it: verified policies by principal and agent."""
+
+    def __init__(self, catalog: Any, *policies: Any, pricing: Any = None) -> None:
+        self.catalog = catalog
+        self.pricing = pricing
+        self.policies = {policy.agent: policy for policy in policies}
+        self.refreshed: list[tuple[Any, bool]] = []
+
+    def for_principal(self, email: str) -> Any:
+        return next((p for p in self.policies.values() if p.principal == email), None)
+
+    def for_agent(self, agent: str) -> Any:
+        return self.policies.get(agent)
+
+    def refresh(self, now: Any, *, force: bool = False) -> None:
+        self.refreshed.append((now, force))
+
+
+class FakeWrapper:
+    """A wrapper that keeps what it was asked, for G-4 and G-10 ("receives nothing").
+
+    It classes by the catalog, with these hooks in `args`: `trashed` makes an update a
+    drive.delete (smuggled), `shared` escalates R1 to R2, `bad` is BAD_ARGS, `outside` is out of
+    scope, `records` and `recipients` are counted, and `taint` lists the files a read taints with.
+    `refuse_with` makes `execute` refuse; `fail` makes it fail with an unknown outcome.
+    """
+
+    def __init__(self, name: str, catalog: Any) -> None:
+        self.name = name
+        self.catalog = catalog
+        self.executed: list[tuple[str, dict[str, Any], bool]] = []
+        self.revision = "1"
+        self.refuse_with: str | None = None
+        self.fail = False
+        self.audit_seen: list[int] = []  # entries in the audit log at each execute
+        self.audit: FakeAudit | None = None
+
+    def classify(self, action: str, args: dict[str, Any], policy: Any) -> Any:
+        from aiven.gateway.decide import Classification
+        from aiven.gateway.wrapper import WrapperRefusal
+
+        if "bad" in args:
+            raise WrapperRefusal("BAD_ARGS")
+        if args.get("trashed"):
+            action = "drive.delete"
+        known = self.catalog.actions.get(action)
+        cls = None if known is None else known.cls
+        effective = "R2" if args.get("shared") and cls == "R1" else cls
+        return Classification(
+            action=action,
+            cls=cls,
+            effective_cls=effective,
+            in_scope=not args.get("outside", False),
+            records=args.get("records", 1 if cls in ("R1", "R2") else 0),
+            email_recipients=args.get("recipients", 0),
+            taint_sources=tuple(args.get("taint", ())),
+            reserved=False,
+        )
+
+    def target(self, action: str, args: dict[str, Any], policy: Any) -> dict[str, Any]:
+        return {"file_id": args.get("file_id", "f1"), "revision": self.revision}
+
+    def agent_text(self, action: str, args: dict[str, Any]) -> dict[str, str]:
+        return {"content": args["content"]} if "content" in args else {}
+
+    def execute(
+        self,
+        action: str,
+        args: dict[str, Any],
+        policy: Any,
+        run: Any,
+        call_id: str,
+        *,
+        snapshot: bool,
+        expect_target: dict[str, Any] | None,
+    ) -> Any:
+        from aiven.gateway.wrapper import Executed, WrapperFailure, WrapperRefusal
+
+        if self.audit is not None:
+            self.audit_seen.append(len(self.audit.entries))
+        if expect_target is not None and expect_target != self.target(action, args, policy):
+            raise WrapperRefusal("STALE_TARGET")
+        if self.refuse_with:
+            raise WrapperRefusal(self.refuse_with, alert=self.refuse_with == "SNAPSHOT_FAILED")
+        if self.fail:
+            self.executed.append((action, dict(args), snapshot))
+            raise WrapperFailure("the write timed out after reaching Google")
+        self.executed.append((action, dict(args), snapshot))
+        known = self.catalog.actions[action]
+        if known.cls == "R0":
+            return Executed({"text": "what was read"}, None, tuple(args.get("taint", ())))
+        path = f"gs://ctl-snapshots/{run.agent}/{run.run_id}/{call_id}/" if snapshot else None
+        return Executed({"file_id": "new-file"}, path, ())

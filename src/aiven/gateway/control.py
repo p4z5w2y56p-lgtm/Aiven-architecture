@@ -29,6 +29,7 @@ from typing import Any, Literal, Protocol, TypeVar
 
 from aiven.gateway.decide import ControlSnapshot
 from aiven.gateway.types import CLASSES, Class
+from aiven.policy.constants import AGENT_ID_PATTERN
 from aiven.policy.content import safe_text
 
 _SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
@@ -219,9 +220,16 @@ class FirestoreControl:
         return self._guarded(read)
 
 
+# The gateway's own IDs and codes, shown as they are: safe_text may take a run of hex digits for a
+# digest and hide it, and the line is no use without them. Anything else goes through safe_text.
+_OWN = re.compile(rf"[rcq]_[0-9a-f]{{20,40}}|[A-Z][A-Z0-9_]{{0,39}}|{AGENT_ID_PATTERN}")
+
+
 def _shown(value: str | None) -> str | None:
     if value is None:
         return None
+    if len(value) <= 40 and _OWN.fullmatch(value):
+        return value
     shown = safe_text(str(value))
     return shown[:_LINE_VALUE_CHARS]
 

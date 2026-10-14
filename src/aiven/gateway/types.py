@@ -21,6 +21,18 @@ Outcome = Literal["executed", "proposed", "queued", "refused"]
 PENDING = "pending"
 
 
+@dataclass(frozen=True)
+class Caller:
+    """Who calls: the email of a verified Google ID token, and which API it may use (section 4).
+
+    `kind` is "control" for the control UI's account and "agent" for every other account; an agent
+    still needs a policy whose `principal` is its email.
+    """
+
+    email: str
+    kind: Literal["agent", "control"]
+
+
 def rank(cls: Class) -> int:
     """The order of the classes: R0 < R1 < R2 < R3 < R4."""
     return CLASSES.index(cls)

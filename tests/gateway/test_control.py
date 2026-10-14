@@ -23,6 +23,8 @@ from aiven.gateway.control import (
     fail_closed_line,
 )
 from aiven.gateway.decide import ControlSnapshot
+from aiven.gateway.runs import new_id
+from aiven.gateway.store import call_id_for
 from tests.support.gen import valid_iban
 
 AT = datetime(2026, 10, 14, 9, 0, tzinfo=UTC)
@@ -211,3 +213,18 @@ def test_fallback_line_holds_no_content(capsys):
     line = json.loads(out)
     assert iban not in out
     assert len(line["agent"]) <= 120 and line["call_id"] is None
+
+
+def test_the_fallback_line_shows_the_gateways_own_ids_as_they_are(capsys):
+    # A run or call ID is hex, which safe_text may take for a digest and hide; the line needs it.
+    for _ in range(200):
+        call_id = call_id_for(new_id("r_"), "q")
+        fail_closed_line(
+            "CONTROL_UNREACHABLE",
+            run_id="r_" + "0" * 26,
+            call_id=call_id,
+            agent="invoice-reminder",
+            audit_write_failed=False,
+        )
+        line = json.loads(capsys.readouterr().out)
+        assert (line["call_id"], line["agent"]) == (call_id, "invoice-reminder")

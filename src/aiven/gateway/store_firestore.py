@@ -229,6 +229,16 @@ class FirestoreStore:
         doc |= {"run_id": run_id, "expire_at": self._clock() + WORKING_TTL}
         self._doc("calls", call.call_id).set(doc)
 
+    def get_call_by_id(self, call_id: str) -> tuple[str, StoredCall] | None:
+        snapshot = self._doc("calls", call_id).get()
+        if not snapshot.exists:
+            return None
+        doc = snapshot.to_dict()
+        return doc["run_id"], _call_of(doc)
+
+    def update_call(self, call_id: str, call: StoredCall) -> None:
+        self._doc("calls", call_id).update(_call_doc(call))
+
     def calls_by_outcome(self, run_id: str) -> dict[str, int]:
         counts: dict[str, int] = {}
         query = self._db.collection("calls").where(
